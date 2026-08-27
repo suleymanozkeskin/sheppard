@@ -1,0 +1,32 @@
+<!doctype html>
+<html class="dark" data-theme="dark" lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sheppard</title>
+    <script>
+      (() => {
+        const defaultMode = "dark"
+        let mode = defaultMode
+        try {
+          const raw = globalThis.localStorage?.getItem("msgr.theme.v1")
+          const parsed = raw === null || raw === undefined ? null : JSON.parse(raw)
+          if (parsed !== null && typeof parsed === "object" && (parsed.mode === "dark" || parsed.mode === "light" || parsed.mode === "system")) mode = parsed.mode
+        } catch {
+          mode = defaultMode
+        }
+        const prefersDark = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true
+        const resolved = mode === "system" ? (prefersDark ? "dark" : "light") : mode
+        document.documentElement.setAttribute("data-theme", resolved)
+        document.documentElement.classList.toggle("dark", resolved === "dark")
+        document.documentElement.style.colorScheme = resolved
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
