@@ -39,9 +39,9 @@ const workspace: HerdrWorkspaceView = {
 }
 
 describe("workspace presentation", () => {
-  test("counts occupied panes without a participant as unmanaged", () => {
+  test("keeps runtime status separate from chat linkage", () => {
     expect(unmanagedAgentCount(workspace)).toBe(1)
-    expect(paneStatusLabel(workspace.panes[1]!)).toBe("unmanaged")
+    expect(paneStatusLabel(workspace.panes[1]!)).toBe("done")
   })
 
   test("derives a smaller full-block budget from a shorter page body", () => {

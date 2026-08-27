@@ -49,6 +49,7 @@ export function SpawnAgentPage({ controller, mode, navigate, roleName, workspace
   const effortUnavailable = state.effortUnavailable
   const targetWorkspaceLabel = state.selectedWorkspace?.label ?? state.selectedWorkspaceId
   const roleSummary = state.selectedRole?.summary
+  const restoreSpawnAgentFocus = controller.restoreSpawnAgentFocus
 
   useEffect(() => {
     if (assignedPaneId === undefined || assignedHandle === undefined || actionState.status !== "working") return
@@ -63,12 +64,12 @@ export function SpawnAgentPage({ controller, mode, navigate, roleName, workspace
       if (globalThis.document.querySelector('[data-combobox-open="true"]') !== null) return
       event.preventDefault()
       event.stopPropagation()
-      controller.restoreSpawnAgentFocus()
+      restoreSpawnAgentFocus()
       navigate(initialWorkspaceId === undefined ? { kind: "agents" } : { kind: "workspace", workspaceId: initialWorkspaceId })
     }
     globalThis.addEventListener("keydown", onKeyDown, true)
     return () => globalThis.removeEventListener("keydown", onKeyDown, true)
-  }, [controller.restoreSpawnAgentFocus, initialWorkspaceId, navigate])
+  }, [initialWorkspaceId, navigate, restoreSpawnAgentFocus])
 
   const roleOptionList = useMemo(() => roleOptions(state.roles), [state.roles])
   const workspaceOptionList = useMemo(() => workspaceOptions(controller.workspaceData.workspaces), [controller.workspaceData.workspaces])

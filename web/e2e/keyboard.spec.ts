@@ -226,11 +226,13 @@ test.beforeEach(async ({ page }) => {
 })
 
 test("@guard dispatches the default navigation and utility actions", async ({ page }) => {
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("All channels")
+  const searchScope = page.locator("[data-search-header-scope]")
+  await expect(searchScope).toHaveAttribute("data-search-header-scope", "all")
   await page.keyboard.press("s")
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("Current channel")
+  await expect(searchScope).toHaveAttribute("data-search-header-scope", "channel")
+  await expect(page.locator("#message-search")).toHaveAttribute("placeholder", "Search this chat…")
   await page.keyboard.press("s")
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("All channels")
+  await expect(searchScope).toHaveAttribute("data-search-header-scope", "all")
 
   await page.keyboard.press("]")
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "research" })).toBeVisible()
@@ -274,7 +276,7 @@ test("@guard does not dispatch single-key actions from text inputs", async ({ pa
   await page.keyboard.press("s")
   await page.keyboard.press("]")
   await expect(search).toHaveValue("s]")
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("All channels")
+  await expect(page.locator("[data-search-header-scope]")).toHaveAttribute("data-search-header-scope", "all")
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
   await expectFocusedMessage(page, 1)
 

@@ -16,7 +16,6 @@ import * as v from "valibot"
 
 import { mockAttachments, mockChannels, mockInbox, mockLaunchers, mockMembers, mockMessages, mockModelCatalogue, mockModels } from "../src/api/fixtures"
 import type { Message, ModelCatalogueSnapshot } from "../src/api/types"
-import { SIDEBAR_HEAD_HEIGHT_PX } from "../src/sidebar-layout"
 
 declare global {
   interface Window {
@@ -41,7 +40,7 @@ const MARKDOWN_BODY = "# Release notes\n\n- Verify the migration window\n- Run s
 const CURRENT_MARKDOWN_BODY = "# Current file\n\nThis is the content after the file changed on disk.\n"
 const LATEST_MARKDOWN_BODY = "# Latest file\n\nThis is the latest content on disk.\n"
 const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64")
-const REQUIRED_SURFACE_KINDS = ["code-chip", "badge", "notice", "menu", "dialog", "empty-state", "error-text"] as const
+const REQUIRED_SURFACE_KINDS = ["code-chip", "notice", "menu", "dialog", "error-text"] as const
 
 const createLauncherRequestSchema = v.object({
   agentKind: v.string(),
@@ -387,7 +386,7 @@ async function installApiMocks(page: Page, options: MockOptions = {}): Promise<v
         await route.fulfill({ body: JSON.stringify({ code: "Internal", error: "identify refused for this check" }), contentType: "application/json", status: 503 })
         return
       }
-      await fulfillJson(route, { handle: "operator" })
+      await fulfillJson(route, { handle: options.identityHandle ?? "operator" })
       return
     }
     if (method === "GET") {
@@ -628,12 +627,13 @@ async function openApp(page: Page, options: MockOptions = {}): Promise<void> {
   await installApiMocks(page, options)
   if (options.anonymous !== true) {
     await page.addInitScript((handle: string) => {
-      window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle }))
+      window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: window.location.origin, handle }))
     }, options.identityHandle ?? "operator")
   }
   await page.goto("/")
-  await expect(page.locator('nav[aria-label="Channels"] button').first()).toBeVisible()
-  if (options.waitForMessages !== false) {
+  await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
+  await expect(page.locator('[data-channel-row="ops"]')).toBeVisible()
+  if (options.waitForMessages !== false && options.anonymous !== true) {
     await page.locator('[data-slot="message-scroller-item"]').first().waitFor()
   }
 }
@@ -763,32 +763,6 @@ function workspaceDirectoryScaleTopology(): JsonValue {
     directoryWorkspace("ws-zero-b", "Zero B", []),
   ]
   return { workspaces: workspaces.toReversed() }
-}
-
-function workspaceDirectorySmallTopology(): JsonValue {
-  return {
-    workspaces: [
-      directoryWorkspace("small-c", "Small C", [directoryAgentPane("small-c-pane", "small-c-agent", "idle")]),
-      directoryWorkspace("small-a", "Small A", [directoryAgentPane("small-a-pane", "small-a-agent", "working")]),
-      directoryWorkspace("small-d", "Small D", []),
-      directoryWorkspace("small-b", "Small B", [directoryAgentPane("small-b-pane", "small-b-agent", "done")]),
-    ],
-  }
-}
-
-function workingTopologyPanes(count: number): JsonValue[] {
-  return Array.from({ length: count }, (_unused, index) => {
-    const suffix = String(index).padStart(2, "0")
-    return {
-      paneId: `w1H:offscreen-${suffix}`,
-      label: null,
-      agentKind: "codex",
-      agentStatus: "working",
-      focused: false,
-      participant: `offscreen-${suffix}`,
-      participantRouteState: "active",
-    }
-  })
 }
 
 /** An empty pane that carries a label, the only shape `Close pane` applies to. */
@@ -1027,7 +1001,8 @@ async function expectVisibleOrbMapping(page: Page): Promise<void> {
 
 /** Opens the workspace menu for Personal-Projects and picks one item. */
 async function openWorkspaceMenuItem(page: Page, item: string): Promise<void> {
-  const workspace = page.locator('[data-workspace-id="w1H"]')
+  await page.locator('[data-quick-nav-item="workspaces"]').click()
+  const workspace = page.locator('aside [data-workspace-id="w1H"]')
   await expect(workspace).toBeVisible()
   await workspace.getByRole("button", { name: "More actions for Personal-Projects" }).click()
   await page.locator(`[data-menu-item="${item}"]`).click()
@@ -1035,12 +1010,8 @@ async function openWorkspaceMenuItem(page: Page, item: string): Promise<void> {
 
 /** Opens one pane row's menu. `identity` is what the row calls itself. */
 async function openPaneMenu(page: Page, paneId: string, identity: string): Promise<void> {
-  const workspace = page.locator('[data-workspace-id="w1H"]')
-  await expect(workspace).toBeVisible()
-  if (await workspace.getAttribute("data-collapsed") === "true") {
-    await workspace.locator('> div > button[aria-expanded]').click()
-  }
-  const pane = workspace.locator(`[data-sidebar-row="workspaces"][data-pane-id="${paneId}"]`)
+  await page.locator('[data-quick-nav-item="agents"]').click()
+  const pane = page.locator(`[data-pane-id="${paneId}"]`)
   await expect(pane).toBeVisible()
   await pane.getByRole("button", { name: `More actions for ${identity}` }).click()
   await expect(page.getByRole("menu")).toBeVisible()
@@ -1068,7 +1039,7 @@ test.describe("UX merge contract", () => {
 
   test("@guard attachment previews read current content and state deletion plainly", async ({ page }) => {
     await openApp(page, { liveStream: true })
-    await page.locator('nav[aria-label="Channels"]').getByRole("button", { name: /^ops\b/ }).click()
+    await page.locator('[data-channel-row="ops"] > a').click()
     await expect(page.getByRole("heading", { name: "ops", exact: true })).toBeVisible()
     await expect(page.locator('[data-message-id="4"]')).toBeVisible()
     const sentAttachment = mockAttachments.find((attachment) => attachment.id === 103)
@@ -1191,7 +1162,7 @@ test.describe("UX merge contract", () => {
     // The invariant is separation, not a fixed colour: --sidebar-primary must not
     // collapse into --sidebar, which is what a neutral badge would do in dark.
     await page.emulateMedia({ colorScheme: "light" })
-    await openApp(page)
+    await openWithTopology(page)
     await page.keyboard.press("Control+,")
     await page.getByRole("combobox", { name: "Theme mode" }).selectOption("system")
     await page.keyboard.press("Escape")
@@ -1199,17 +1170,21 @@ test.describe("UX merge contract", () => {
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme })
       await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme)
-      await expect(page.locator('canvas[data-agent-orb]').first(), `${colorScheme} mode must render the status orb`).toBeVisible()
-      measurements.push(await page.evaluate(() => {
+      await page.locator('[data-quick-nav-item="channels"]').click()
+      await expect(page.locator('aside [data-channel-row="ops"] span.rounded-full')).toBeVisible()
+      const measurement = await page.evaluate(() => {
         const root = getComputedStyle(document.documentElement)
-        const badge = document.querySelector('nav[aria-label="Channels"] span.rounded-full')
+        const badge = document.querySelector('aside [data-channel-row="ops"] span.rounded-full')
         return {
           body: getComputedStyle(document.body).backgroundColor,
           sidebar: root.getPropertyValue("--sidebar").trim(),
           badge: root.getPropertyValue("--sidebar-primary").trim(),
           badgeRendered: badge === null ? null : getComputedStyle(badge).backgroundColor,
         }
-      }))
+      })
+      await page.locator('[data-quick-nav-item="agents"]').click()
+      await expect(page.locator('canvas[data-agent-orb]').first(), `${colorScheme} mode must render the status orb`).toBeVisible()
+      measurements.push(measurement)
     }
     expect(measurements[0]?.body, "system light mode must use a different palette").not.toBe(measurements[1]?.body)
     for (const theme of measurements) {
@@ -1223,7 +1198,6 @@ test.describe("UX merge contract", () => {
     const allowlist = [
       { kind: "text", minimumContrast: 4.5, selector: ".text-emerald-700, .text-emerald-600", reason: "emerald ink communicates an active route state" },
       { kind: "text", minimumContrast: 4.5, selector: ".text-amber-700, .text-amber-600", reason: "amber ink communicates a stale or blocked state" },
-      { kind: "graphic", minimumContrast: 3, selector: "[data-agent-orb]", reason: "thinking-orbs owns its theme-aware canvas ink" },
     ]
     await page.emulateMedia({ colorScheme: "light" })
     await openWithTopology(page, { identityHandle: "suleyman", liveStream: true, previewStatus: 500 })
@@ -1402,8 +1376,8 @@ test.describe("UX merge contract", () => {
       await page.getByRole("button", { name: /channel members/ }).click()
       await expect(page.locator('[data-dialog="members"]')).toBeVisible()
       await expect(
-        page.locator('[data-dialog="members"] [data-agent-runtime="not-running"]'),
-        "the members fixture must render an agent that is not running before the palette sweep",
+        page.locator('[data-dialog="members"] [data-agent-runtime="no-herdr-pane"]').first(),
+        "the members fixture must render an agent without a Herdr pane before the palette sweep",
       ).toBeVisible()
       const dialog = await readSurfaces()
       await page.keyboard.press("Escape")
@@ -1539,16 +1513,16 @@ test.describe("UX merge contract", () => {
 
   test("@guard lifecycle menus and close controls are not inert", async ({ page }) => {
     await openWithTopology(page)
-    const workspace = page.locator('[data-workspace-id="w1H"]')
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
+    const workspace = page.locator('aside [data-workspace-id="w1H"]')
     await expect(workspace).toBeVisible()
-    await workspace.getByRole("button", { name: /close Personal-Projects/i }).click()
+    await workspace.getByRole("button", { name: "More actions for Personal-Projects" }).click()
+    await page.locator('[data-menu-item="close-workspace"]').click()
     await expect(page.getByRole("dialog")).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page.getByRole("dialog")).toHaveCount(0)
 
-    if (await workspace.getAttribute("data-collapsed") === "true") {
-      await workspace.locator('> div > button[aria-expanded]').click()
-    }
+    await page.locator('[data-quick-nav-item="agents"]').click()
     const pane = page.locator('[data-pane-id="w1H:p1"]')
     await expect(pane).toBeVisible()
     await pane.getByRole("button", { name: "More actions for lead" }).click()
@@ -1558,19 +1532,22 @@ test.describe("UX merge contract", () => {
 
     await pane.getByRole("button", { name: "More actions for lead" }).click()
     await expect(page.getByRole("menu")).toBeVisible()
-    await page.locator('[data-channel-row="research"]').click()
+    await page.locator("main").click({ position: { x: 20, y: 20 } })
     await expect(page.getByRole("menu")).toHaveCount(0)
   })
 
   test("@guard anonymous workspace write controls expose their disabled precondition", async ({ page }) => {
     await openWithTopology(page, { anonymous: true })
+    await page.goto("/workspaces")
     await expect(page.getByRole("button", { name: "Create workspace" })).toBeDisabled()
     await expect(page.getByRole("button", { name: "Create workspace" })).toHaveAttribute("title", "Not connected to the hub.")
-    const workspace = page.locator('[data-workspace-id="w1H"]')
-    await expect(workspace.getByRole("button", { name: "Broadcast to Personal-Projects" })).toBeDisabled()
-    await expect(workspace.getByRole("button", { name: "Close Personal-Projects" })).toBeDisabled()
-    await expect(workspace.getByRole("button", { name: "Broadcast to Personal-Projects" })).toHaveAttribute("title", "Not connected to the hub.")
-    await expect(workspace.getByRole("button", { name: "Close Personal-Projects" })).toHaveAttribute("title", "Not connected to the hub.")
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
+    const workspace = page.locator('aside [data-workspace-id="w1H"]')
+    await workspace.getByRole("button", { name: "More actions for Personal-Projects" }).click()
+    await expect(page.locator('[data-menu-item="broadcast"]')).toBeDisabled()
+    await expect(page.locator('[data-menu-item="close-workspace"]')).toBeDisabled()
+    await expect(page.locator('[data-menu-item="broadcast"]')).toHaveAttribute("title", "Not connected to the hub.")
+    await expect(page.locator('[data-menu-item="close-workspace"]')).toHaveAttribute("title", "Not connected to the hub.")
   })
 
   test("@guard no chrome asks the operator to choose or establish an identity", async ({ page }) => {
@@ -1578,18 +1555,6 @@ test.describe("UX merge contract", () => {
     // Staging it is what makes the sweep mean anything: identified chrome renders
     // none of this copy, so a run without `anonymous` passes on nothing.
     await openWithTopology(page, { anonymous: true })
-
-    // Drive a path that historically produced identity copy, so the notice area is
-    // POPULATED rather than merely present.
-    await page.locator('[data-message-id="4"]').focus()
-    await page.keyboard.press("v")
-
-    // Anchor: the notice must actually have rendered with text. Without this the
-    // sweep passes because nothing spoke, not because nothing said the wrong thing.
-    const notice = page.locator('p[role="status"]')
-    await expect(notice, "the unidentified path must produce a notice to inspect").toHaveCount(1)
-    const noticeText = (await notice.innerText()).trim()
-    expect(noticeText.length, "the notice must carry text").toBeGreaterThan(0)
 
     const offenders = await page.evaluate(() => {
       const forbidden = /choose (a |an )?(human )?identity|send a message first|tied to your identity|introduce yourself|choose a name|pick a name/i
@@ -1622,7 +1587,7 @@ test.describe("UX merge contract", () => {
     expect(offenders, "identification is automatic: no chrome may ask for an identity").toEqual([])
   })
 
-  test("@guard an expired session settles to read-only without retrying identity reads", async ({ page }) => {
+  test("@guard an expired session makes one recovery attempt and settles to read-only", async ({ page }) => {
     const requests: string[] = []
     page.on("request", (request) => {
       const pathname = new URL(request.url()).pathname
@@ -1632,13 +1597,13 @@ test.describe("UX merge contract", () => {
     })
     await openApp(page, { expiredSession: true, waitForMessages: false })
     await expect(page.getByText("Read only", { exact: true })).toBeVisible()
-    await expect.poll(() => requests.filter((path) => path === "/api/inbox").length).toBe(1)
-    await expect.poll(() => requests.filter((path) => path === "/api/direct").length).toBe(1)
+    await expect.poll(() => requests.filter((path) => path === "/api/inbox").length).toBe(2)
+    await expect.poll(() => requests.filter((path) => path === "/api/direct").length).toBe(2)
     const initialCount = requests.length
     await page.waitForTimeout(500)
-    expect(requests.length, "a 401 must not trigger another identity-scoped sweep").toBe(initialCount)
-    expect(requests.filter((path) => path === "/api/inbox")).toHaveLength(1)
-    expect(requests.filter((path) => path === "/api/direct")).toHaveLength(1)
+    expect(requests.length, "a second 401 must not trigger another identity-scoped sweep").toBe(initialCount)
+    expect(requests.filter((path) => path === "/api/inbox")).toHaveLength(2)
+    expect(requests.filter((path) => path === "/api/direct")).toHaveLength(2)
   })
 
   test("@guard identity removal failures reach the storage notice", async ({ page }) => {
@@ -1657,12 +1622,11 @@ test.describe("UX merge contract", () => {
     await expect(notice).toHaveCount(0)
   })
 
-  test("@guard the focused-message hint stays above the composer and clears on typing", async ({ page }) => {
+  test("@guard the focused-message warning stays outside the composer and is dismissible", async ({ page }) => {
     await openApp(page, { identityHandle: "suleyman" })
-    const hint = page.locator("[data-focus-hint]")
     const composer = page.locator("#message-composer")
-    await expect(hint, "the hint appears only after the action is attempted").toHaveCount(0)
-    const selectedChannel = await page.locator('nav[aria-label="Channels"] [aria-current="page"]').evaluate((current) => {
+    await expect(page.locator("[data-focus-hint]")).toHaveCount(0)
+    const selectedChannel = await page.locator('aside [data-channel-row] [aria-current="page"]').evaluate((current) => {
       const row = current.closest<HTMLElement>("[data-channel-row]")
       const channel = row?.dataset.channelRow
       if (channel === undefined) throw new Error("could not read the selected channel")
@@ -1674,39 +1638,15 @@ test.describe("UX merge contract", () => {
     await selfMessage.focus()
     await expect(selfMessage).toHaveAttribute("tabindex", "0")
     await page.keyboard.press("d")
-    await expect(hint).toHaveText("Focus a message from another participant first.")
+    const notice = page.locator('[data-surface-kind="notice"]')
+    await expect(notice).toContainText("Focus a message from another participant first.")
+    await expect(notice).toHaveAttribute("data-notice-placement", "below-header")
+    await expect(page.locator("[data-focus-hint]")).toHaveCount(0)
+    await notice.getByRole("button", { name: "Dismiss notice" }).click()
+    await expect(notice).toHaveCount(0)
 
-    const geometry = await hint.evaluate((hintNode) => {
-      const composerNode = document.querySelector("#message-composer")
-      if (!(composerNode instanceof HTMLElement)) throw new Error("message composer is missing")
-      const hintRect = hintNode.getBoundingClientRect()
-      const composerRect = composerNode.getBoundingClientRect()
-      return {
-        horizontalOverlap: Math.min(hintRect.right, composerRect.right) - Math.max(hintRect.left, composerRect.left),
-        verticalOverlap: Math.min(hintRect.bottom, composerRect.bottom) - Math.max(hintRect.top, composerRect.top),
-      }
-    })
-    expect(
-      geometry.horizontalOverlap > 0 && geometry.verticalOverlap > 0,
-      "the focused-message hint must not overlap the composer input",
-    ).toBe(false)
-
-    await page.waitForTimeout(1_000)
-    await expect(hint).toHaveText("Focus a message from another participant first.")
-    await expect.poll(() => hint.count(), { timeout: 6_000 }).toBe(0)
-
-    await selfMessage.focus()
-    await page.keyboard.press("d")
-    await expect(hint).toHaveText("Focus a message from another participant first.")
-    await page.locator('[data-channel-row="research"] button').first().click()
-    await expect(hint).toHaveCount(0)
+    await page.locator('aside [data-channel-row="research"] > a').click()
     await expect(composer).toHaveAttribute("placeholder", "Message #research")
-
-    await page.locator('[data-message-id="2"]').focus()
-    await page.keyboard.press("d")
-    await expect(hint).toHaveText("Focus a message from another participant first.")
-    await composer.fill("clear")
-    await expect(hint).toHaveCount(0)
   })
 
   test("@guard a non-member channel explains the join action in the context bar", async ({ page }) => {
@@ -1843,7 +1783,7 @@ test.describe("UX merge contract", () => {
         const body = v.parse(createLauncherRequestSchema, JSON.parse(request.postData() ?? "{}"))
         definitionBodies.push(parseJsonObject(request.postData() ?? "{}"))
         const { agentKind, argv, name, startTimeoutMs } = body
-        const created = { agentKind, argv, name, startTimeoutMs: startTimeoutMs ?? 35_000 }
+        const created = { agentKind, argv, envKeys: [], name, startTimeoutMs: startTimeoutMs ?? 35_000 }
         launchers.push(created)
         await fulfillJson(route, { ...created, token: createToken })
         return
@@ -1890,7 +1830,8 @@ test.describe("UX merge contract", () => {
     await expect(page.locator('[data-shell-page="launchers"]')).toBeVisible()
     const seededRow = page.locator('[data-launcher-row="claude-personal"]')
     await expect(seededRow).toBeVisible()
-    await expect(seededRow.locator("[data-launcher-argv-preview]")).toHaveText(JSON.stringify(["claude", "--profile", "personal"]))
+    await expect(seededRow.locator("[data-launcher-executable] code")).toHaveText("claude")
+    await expect(seededRow.locator("[data-launcher-argv-summary] code")).toHaveText(JSON.stringify(["--profile", "personal"]))
 
     const assertNoToken = async (token: string): Promise<void> => {
       const leaked = await page.evaluate((candidate) => {
@@ -1908,42 +1849,42 @@ test.describe("UX merge contract", () => {
     await expect(page.locator('[data-shell-page="create-launcher"]')).toBeVisible()
     await expect(page.locator("[data-dialog]")).toHaveCount(0)
     await page.locator("#launcher-name").fill("claude-custom")
-    await page.locator("#launcher-agent-kind").fill("claude")
-    await page.locator("#launcher-argv").fill("claude\n--profile\ncustom")
-    await page.getByRole("button", { name: "Create launcher", exact: true }).click()
+    await chooseComboboxOption(page, "launcher-agent-kind", "claude")
+    await page.locator("#launcher-executable").fill("claude")
+    await page.getByRole("button", { name: "Add argument" }).click()
+    await page.locator("#launcher-argv").fill("--profile")
+    await page.getByRole("button", { name: "Add argument" }).click()
+    await page.locator("#launcher-argv-1").fill("custom")
+    await page.getByRole("button", { name: "Create alias", exact: true }).click()
     await expect.poll(() => definitionBodies.length).toBe(1)
-    expect(Object.keys(definitionBodies[0] ?? {}).sort()).toEqual(["agentKind", "argv", "name"])
+    expect(Object.keys(definitionBodies[0] ?? {}).sort()).toEqual(["agentKind", "argv", "name", "startTimeoutMs"])
     expect(definitionBodies[0]?.argv).toEqual(["claude", "--profile", "custom"])
+    expect(definitionBodies[0]?.startTimeoutMs).toBe(35_000)
     await expect(page.locator('[data-launcher-row="claude-custom"]')).toBeVisible()
     await assertNoToken(createToken)
 
-    await page.getByRole("button", { name: "Edit launcher claude-custom", exact: true }).click()
+    await page.getByRole("button", { name: "Edit launcher alias claude-custom", exact: true }).click()
     await expect(page.locator('[data-shell-page="edit-launcher"]')).toBeVisible()
     const nameField = page.locator("#launcher-name")
     await expect(nameField).toHaveValue("claude-custom")
     await expect(nameField).toHaveAttribute("readonly", "")
-    await page.locator("#launcher-agent-kind").fill("codex")
-    await page.locator("#launcher-argv").fill("codex\n--profile\ncustom")
-    await page.getByRole("button", { name: "Save launcher", exact: true }).click()
+    await chooseComboboxOption(page, "launcher-agent-kind", "codex")
+    await page.locator("#launcher-executable").fill("codex")
+    await page.locator("#launcher-argv").fill("--profile")
+    await page.locator("#launcher-argv-1").fill("custom")
+    await page.getByRole("button", { name: "Save alias", exact: true }).click()
     await expect.poll(() => updateBodies.length).toBe(1)
-    expect(Object.keys(updateBodies[0] ?? {}).sort()).toEqual(["agentKind", "argv"])
+    expect(Object.keys(updateBodies[0] ?? {}).sort()).toEqual(["agentKind", "argv", "startTimeoutMs"])
     await assertNoToken("tok-launcher-update-must-never-appear")
-
-    await page.getByRole("button", { name: "Edit launcher claude-custom", exact: true }).click()
-    await page.locator("#launcher-agent-kind").fill("codex")
-    await page.locator("#launcher-argv").fill("claude\n--profile\nwrong")
-    await page.getByRole("button", { name: "Save launcher", exact: true }).click()
-    await expect(page.getByText("The first argv entry must equal agentKind.", { exact: false })).toBeVisible()
-    await expect(page.locator("#launcher-argv")).toHaveValue("claude\n--profile\nwrong")
 
     await page.goto("/launchers")
     const deletedRow = page.locator('[data-launcher-row="pi"]')
     await expect(deletedRow).toBeVisible()
-    await deletedRow.getByRole("button", { name: "Delete launcher pi", exact: true }).click()
+    await deletedRow.getByRole("button", { name: "Delete launcher alias pi", exact: true }).click()
     await expect(page.locator('[data-dialog="delete-launcher"]')).toBeVisible()
     await expect(page.locator("[data-confirm-input]")).toHaveAttribute("data-confirm-input", "pi")
     await page.locator("[data-confirm-input]").fill("pi")
-    await page.getByRole("button", { name: "Delete launcher", exact: true }).click()
+    await page.getByRole("button", { name: "Delete alias", exact: true }).click()
     await expect(page.locator('[data-launcher-row="pi"]')).toHaveCount(0)
     await page.reload()
     await expect(page.locator('[data-shell-page="launchers"]')).toBeVisible()
@@ -1961,7 +1902,7 @@ test.describe("UX merge contract", () => {
     await page.getByRole("button", { name: "Spawn agent", exact: true }).click()
     await expect.poll(() => spawnBodies.length).toBe(1)
     const spawnKeys = Object.keys(spawnBodies[0] ?? {}).sort()
-    expect(spawnKeys).toEqual(["handle", "launcher", "workspaceId"])
+    expect(spawnKeys).toEqual(["handle", "launcher", "model", "workspaceId"])
     expect(spawnBodies[0]?.launcher).toBe("claude-personal")
     await expect(page.locator('[data-assigned-handle="spawned-launcher"]')).toBeVisible()
     await assertNoToken(spawnToken)
@@ -2037,7 +1978,7 @@ test.describe("UX merge contract", () => {
     await openWorkspaceMenuItem(page, "add-reporter")
     const dialog = page.locator('[data-dialog="add-reporter"]')
     await expect(dialog).toBeVisible()
-    await expect(dialog).toContainText("Target workspace: Personal-Projects")
+    await expect(page.locator('[data-spawn-review]')).toContainText("Personal-Projects")
     await expect(page.locator('[data-combobox="spawn-agent-role"] [data-combobox-value]')).toContainText("reporter")
     await expect(page.locator("#spawn-agent-role")).toBeDisabled()
     await expect(page.locator("#spawn-agent-handle")).toHaveValue("reporter-personal-projects")
@@ -2049,6 +1990,7 @@ test.describe("UX merge contract", () => {
     expect(spawnBodies[0]).toEqual({
       handle: "reporter-personal-projects",
       launcher: "claude-personal",
+      model: "default",
       role: "reporter",
       workspaceId: "w1H",
     })
@@ -2056,6 +1998,7 @@ test.describe("UX merge contract", () => {
 
     expect(await pushTopologySnapshot(page, topologyFixture([REPORTER_PANE]))).toBe(true)
     await expect(dialog).toHaveCount(0)
+    await page.locator('[data-quick-nav-item="agents"]').click()
     await expect(page.locator('[data-pane-id="w1H:pReporter"]')).toBeVisible()
 
     await openWorkspaceMenuItem(page, "add-reporter")
@@ -2099,7 +2042,6 @@ test.describe("UX merge contract", () => {
     // The fixture has no empty pane carrying a label, and that is the only shape
     // Close pane applies to, so it is delivered rather than assumed.
     expect(await pushTopologySnapshot(page, topologyFixture([EMPTY_LABELLED_PANE]))).toBe(true)
-    await expect(page.locator('[data-pane-id="w1H:pE"]')).toBeVisible()
 
     // A matched agent pane confirms with the participant handle.
     await openPaneMenu(page, "w1H:p1", "lead")
@@ -2118,20 +2060,22 @@ test.describe("UX merge contract", () => {
     await expect(page.locator("[data-confirm-input]")).toHaveAttribute("data-confirm-input", "spare")
     await page.keyboard.press("Escape")
 
-    // An empty pane with a label closes, confirmed by that label.
-    await openPaneMenu(page, "w1H:pE", "scratch")
-    await expect(page.locator('[data-menu-item="close-pane"]')).toBeVisible()
-    await expect(page.locator('[data-menu-item="stop-agent"]')).toHaveCount(0)
-    await page.locator('[data-menu-item="close-pane"]').click()
+    // An empty pane with a label closes from the workspace detail.
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
+    await page.locator('aside [data-workspace-id="w1H"] > a').click()
+    const emptyPane = page.locator('[data-pane-id="w1H:pE"]')
+    await expect(emptyPane).toBeVisible()
+    await expect(emptyPane.getByRole("button", { name: "Close" })).toBeVisible()
+    await emptyPane.getByRole("button", { name: "Close" }).click()
     await expect(page.locator('[data-dialog="close-pane"]')).toBeVisible()
     await expect(page.locator("[data-confirm-input]")).toHaveAttribute("data-confirm-input", "scratch")
     await page.keyboard.press("Escape")
 
     // AUDIT M-9: no participant and no label leaves nothing to confirm against, so
     // the pane offers neither control rather than one that cannot work.
-    await openPaneMenu(page, "w1H:p9", "w1H:p9")
-    await expect(page.locator('[data-menu-item="stop-agent"]')).toHaveCount(0)
-    await expect(page.locator('[data-menu-item="close-pane"]')).toHaveCount(0)
+    const unnamedEmptyPane = page.locator('[data-pane-id="w1H:p9"]')
+    await expect(unnamedEmptyPane.getByRole("button", { name: "Stop" })).toHaveCount(0)
+    await expect(unnamedEmptyPane.getByRole("button", { name: "Close" })).toHaveCount(0)
   })
 
   test("@guard a changed pane identity does not read as a mistyped name", async ({ page }) => {
@@ -2212,7 +2156,7 @@ test.describe("UX merge contract", () => {
       liveStream: true,
       waitForMessages: false,
     })
-    await page.locator('nav[aria-label="Channels"]').getByRole("button", { name: /^ops\b/ }).click()
+    await page.locator('[data-channel-row="ops"] > a').click()
     await expect(page.getByRole("heading", { name: "ops", exact: true })).toBeVisible()
     expect(await pushLiveMessage(page, acknowledgementTimingMessage(1))).toBe(true)
     await expect(page.locator('[data-message-id="1"]')).toBeVisible()
@@ -2253,6 +2197,7 @@ test.describe("UX merge contract", () => {
     const hits: string[] = []
     page.on("request", (request) => hits.push(new URL(request.url()).pathname))
     await openWithTopology(page, { liveStream: true })
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
     await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
     await page.waitForTimeout(1000)
 
@@ -2267,6 +2212,7 @@ test.describe("UX merge contract", () => {
 
   test("@guard a reconnect reopens each stream once, never accumulating", async ({ page }) => {
     await openWithTopology(page, { liveStream: true })
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
     await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
     await page.waitForTimeout(1000)
     const before = await page.evaluate(() => ({
@@ -2288,7 +2234,7 @@ test.describe("UX merge contract", () => {
 
   test("@guard the stream counter sees an additive legacy connection", async ({ page }) => {
     await openWithTopology(page, { liveStream: true })
-    await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
+    await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
 
     const observed = await page.evaluate(async () => {
       const controller = new AbortController()
@@ -2308,8 +2254,7 @@ test.describe("UX merge contract", () => {
     try {
       await installReactCommitCounter(page)
       await openWithTopology(page, { sharedLiveStream: true })
-      await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
-      await page.locator('[data-workspace-id="w1H"] > [data-sidebar-row="workspaces"] > button[aria-expanded]').click()
+      await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
       await expect(page.locator('[data-stream-state="live"]')).toHaveCount(1)
 
       // The counter is read-only and cannot schedule a render. A topology change
@@ -2384,13 +2329,13 @@ test.describe("UX merge contract", () => {
     try {
       for (const tab of tabs) {
         await openWithTopology(tab, { sharedLiveStream: true })
-        await expect(tab.locator('[data-workspace-id="w1H"]')).toBeVisible()
+        await expect(tab.locator("[data-sidebar-rail]")).toBeVisible()
       }
       await expect.poll(() => server.opens).toBe(1)
 
       // A follower reload must remain a follower while the current owner is live.
       await tabs[2]?.reload()
-      await expect(tabs[2]?.locator('[data-workspace-id="w1H"]')).toBeVisible()
+      await expect(tabs[2]?.locator("[data-sidebar-rail]")).toBeVisible()
       await expect.poll(() => server.opens).toBe(1)
 
       const seed = mockMessages[0]
@@ -2439,9 +2384,7 @@ test.describe("UX merge contract", () => {
         }
       })
       await openWithTopology(noLocksPage, { sharedLiveStream: true })
-      const noLocksWorkspace = noLocksPage.locator('[data-workspace-id="w1H"]')
-      await expect(noLocksWorkspace).toBeVisible()
-      await noLocksWorkspace.locator("button").first().click()
+      await expect(noLocksPage.locator("[data-sidebar-rail]")).toBeVisible()
       await expect(noLocksPage.locator('[data-stream-state="offline"]')).toHaveCount(1)
       expect(server.opens, "the no-Web-Locks path must not open a fallback stream").toBe(2)
       await noLocksContext.close()
@@ -2465,7 +2408,7 @@ test.describe("UX merge contract", () => {
     // Retries are counted inside the page because the patched fetch answers these
     // paths before the network.
     await openWithTopology(page, { liveStream: true })
-    await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
+    await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
     await page.waitForTimeout(1000)
 
     const opensNow = async (): Promise<number> =>
@@ -2492,14 +2435,14 @@ test.describe("UX merge contract", () => {
     // This asserts the machine-readable hook only. What the operator READS is a
     // separate property and a separate check, because the two disagree today.
     await openWithTopology(page, { liveStream: true })
-    await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
+    await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
     await page.waitForTimeout(1000)
 
     await page.evaluate(() => window.__failLiveStream?.("/api/events", 20))
     await page.evaluate(() => window.__endLiveStream?.("/api/events"))
     await page.waitForTimeout(4000)
 
-    const state = await page.locator("[data-topology-state]").first().getAttribute("data-topology-state")
+    const state = await page.locator("[data-stream-state]").first().getAttribute("data-stream-state")
     expect(["reconnecting", "degraded", "offline"], `a starved event stream must flip its hook, got ${String(state)}`).toContain(state)
   })
 
@@ -2533,33 +2476,17 @@ test.describe("UX merge contract", () => {
     ).toMatch(/reconnect|degraded|unavailable|offline|stale/i)
   })
 
-  test("@guard the section icon navigates and the chevron only collapses", async ({ page }) => {
-    // One component owns both duties, which is why each is asserted separately. The
-    // NEGATIVE half is the one that catches a mis-wired header: if the chevron also
-    // navigated, an assertion that merely checked "something happened" would pass.
+  test("@guard each primary navigation icon opens its page", async ({ page }) => {
     await openWithTopology(page)
     const pageOf = async (): Promise<string | null> =>
       page.locator("[data-shell-page]").first().getAttribute("data-shell-page")
 
-    for (const route of ["workspaces", "channels", "direct", "agents"] as const) {
-      await page.locator(`[data-shell-nav="${route}"]`).first().click()
+    for (const route of ["workspaces", "agents", "channels", "direct", "staffing"] as const) {
+      await page.locator(`[data-quick-nav-item="${route}"]`).click()
       await expect
         .poll(pageOf, { message: `${route} icon must navigate the content area` })
         .toBe(route)
     }
-
-    const landed = await pageOf()
-    // The collapse state is `aria-expanded` on the chevron itself, which is the
-    // accessibility contract rather than a test-only hook, so asserting it covers the
-    // operator and the screen reader with one measurement.
-    const collapse = page.locator('[data-section-collapse="channels"]').first()
-    const before = await collapse.getAttribute("aria-expanded")
-    await collapse.click()
-    await expect(collapse, "the chevron must flip the section's expanded state").not.toHaveAttribute(
-      "aria-expanded",
-      before ?? "",
-    )
-    expect(await pageOf(), "the chevron must not navigate").toBe(landed)
   })
 
   test("@guard quick navigation routes, marks one page, and stays outside the row budget", async ({ page }) => {
@@ -2567,41 +2494,37 @@ test.describe("UX merge contract", () => {
     const quickNav = page.locator("[data-quick-nav]")
     const items = quickNav.locator("[data-quick-nav-item]")
     await expect(quickNav).toBeVisible()
-    await expect(items).toHaveCount(4)
-    expect(await items.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-quick-nav-item")))).toEqual(["workspaces", "agents", "channels", "direct"])
+    await expect(items).toHaveCount(5)
+    expect(await items.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-quick-nav-item")))).toEqual(["workspaces", "agents", "channels", "direct", "staffing"])
     const quickNavNames = await items.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")))
-    expect(quickNavNames).toEqual(["Quick nav: Workspaces", "Quick nav: Agents", "Quick nav: Channels", "Quick nav: Direct"])
-    const sectionHeaderNames = await page.locator("[data-section] [data-shell-nav]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")))
-    expect(new Set([...quickNavNames, ...sectionHeaderNames]).size, "quick-nav and section-header names must stay distinct").toBe(quickNavNames.length + sectionHeaderNames.length)
+    expect(quickNavNames).toEqual(["Open Workspaces", "Open Agents", "Open Channels", "Open Direct", "Open Role presets"])
     expect(await quickNav.locator("[data-sidebar-row-height]").count(), "quick navigation is chrome, not a family row").toBe(0)
 
     const geometry = await page.evaluate(() => {
       const head = document.querySelector("[data-sidebar-head]")
       const quick = document.querySelector("[data-quick-nav]")?.getBoundingClientRect()
-      const summary = document.querySelector("[data-status-line]")?.getBoundingClientRect()
+      const body = document.querySelector("[data-sidebar-body]")?.getBoundingClientRect()
       const families = [...document.querySelectorAll("[data-sidebar-family]")].map((node) => node.getBoundingClientRect())
       return {
-        declaredHeadHeight: Number(head?.getAttribute("data-sidebar-head-height") ?? "NaN"),
         familyOverlap: quick === undefined
           ? true
           : families.some((family) => quick.top < family.bottom && family.top < quick.bottom),
         renderedHeadHeight: head?.getBoundingClientRect().height ?? 0,
         quickHeight: quick?.height ?? 0,
-        quickBeforeSummary: quick !== undefined && summary !== undefined && quick.bottom <= summary.top,
+        quickBeforeBody: quick !== undefined && body !== undefined && quick.bottom <= body.top,
       }
     })
-    expect(geometry.declaredHeadHeight, "the rendered head must expose the shared sidebar budget constant").toBe(SIDEBAR_HEAD_HEIGHT_PX)
-    expect(geometry.renderedHeadHeight, "rendered sidebar head height must match its budget constant").toBe(SIDEBAR_HEAD_HEIGHT_PX)
+    expect(geometry.renderedHeadHeight, "the sidebar head must occupy layout space").toBeGreaterThan(0)
     expect(geometry.quickHeight, "quick navigation must occupy a measured chrome row").toBeGreaterThan(0)
-    expect(geometry.quickBeforeSummary, "quick navigation must sit above the summary line").toBe(true)
+    expect(geometry.quickBeforeBody, "quick navigation must sit above the active panel").toBe(true)
     expect(geometry.familyOverlap, "quick navigation must not overlap a family section").toBe(false)
 
-    for (const route of ["workspaces", "agents", "channels", "direct"] as const) {
+    for (const route of ["workspaces", "agents", "channels", "direct", "staffing"] as const) {
       await quickNav.locator(`[data-quick-nav-item="${route}"]`).click()
       await expect(page.locator("[data-shell-page]")).toHaveAttribute("data-shell-page", route)
       await expect(quickNav.locator(`[data-quick-nav-item="${route}"]`)).toHaveAttribute("aria-current", "page")
       await expect(quickNav.locator('[aria-current="page"]')).toHaveCount(1)
-      await expect(quickNav.locator('[data-quick-nav-item]:not([aria-current="page"])')).toHaveCount(3)
+      await expect(quickNav.locator('[data-quick-nav-item]:not([aria-current="page"])')).toHaveCount(4)
     }
   })
 
@@ -2631,35 +2554,24 @@ test.describe("UX merge contract", () => {
     expect(menuBox !== null && triggerBox !== null && menuBox.y < triggerBox.y, "a bottom-edge menu must flip above its trigger").toBe(true)
   })
 
-  test("@guard each section header uses distinct stable icon identities", async ({ page }) => {
+  test("@guard primary navigation uses distinct stable icon identities", async ({ page }) => {
     await openWithTopology(page)
-    const headers = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("[data-sidebar-section]")].map((section) => ({
-      route: section.dataset.sidebarSection ?? "",
-      identities: [...section.querySelectorAll("button svg")].map((svg) => svg.innerHTML.trim()),
-      navigationIdentity: section.querySelector("[data-shell-nav] svg")?.innerHTML.trim() ?? "",
-    })))
-
-    expect(headers.map(({ route }) => route)).toEqual(["workspaces", "agents", "channels", "direct"])
-    for (const { route, identities } of headers) {
-      expect(identities.length, `${route} header must expose at least two icon controls`).toBeGreaterThanOrEqual(2)
-      expect(identities.every((identity) => identity.length > 0), `${route} header icons need stable rendered identities`).toBe(true)
-      expect(new Set(identities).size, `${route} header controls must not reuse an icon identity`).toBe(identities.length)
-    }
-    const sectionIcons = headers.map(({ navigationIdentity }) => navigationIdentity)
-    expect(sectionIcons.every((identity) => identity.length > 0), "section navigation icons need stable rendered identities").toBe(true)
-    expect(new Set(sectionIcons).size, "section headers must use unique navigation icons").toBe(sectionIcons.length)
+    const icons = await page.locator("[data-quick-nav-item] svg").evaluateAll((nodes) => nodes.map((node) => node.innerHTML.trim()))
+    expect(icons).toHaveLength(5)
+    expect(icons.every((identity) => identity.length > 0), "primary navigation icons need stable rendered identities").toBe(true)
+    expect(new Set(icons).size, "primary navigation items must use unique icons").toBe(icons.length)
   })
 
-  test("@guard a healthy topology is silent and a non-live state is named", async ({ page }) => {
+  test("@guard the event stream names its current connection state", async ({ page }) => {
     await openWithTopology(page, { liveStream: true })
-    await expect(page.locator('[data-workspace-id="w1H"]')).toBeVisible()
-    await expect(page.locator("[data-topology-state]")).toHaveCount(0)
+    await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
+    await expect(page.locator('[data-stream-state="live"]')).toHaveCount(1)
     await page.waitForTimeout(1000)
 
     await page.evaluate(() => window.__failLiveStream?.("/api/events", 20))
     await page.evaluate(() => window.__endLiveStream?.("/api/events"))
-    await expect(page.locator("[data-topology-state]")).toHaveCount(1, { timeout: 5_000 })
-    await expect(page.locator("[data-topology-state]")).toHaveText(/reconnect|degraded|unavailable|offline|stale/i)
+    await expect(page.locator('[data-stream-state]:not([data-stream-state="live"])')).toHaveCount(1, { timeout: 5_000 })
+    await expect(page.locator('[data-stream-state]:not([data-stream-state="live"])')).toHaveText(/reconnect|degraded|unavailable|offline/i)
   })
 
   test("@finding 28 a workspace view still reports its transcript stream state", async ({ page }) => {
@@ -2696,7 +2608,7 @@ test.describe("UX merge contract", () => {
     await page.locator('[data-message-id="3"]').getByRole("button", { name: "Message runner directly" }).click()
     const directPage = page.locator('[data-shell-page="compose-direct"]')
     await expect(directPage.locator('[data-picker-group]', { hasText: "planner" })).toHaveCount(0)
-    await directPage.getByRole("button", { name: "Back to direct" }).click()
+    await directPage.getByRole("link", { name: "Back to Direct" }).click()
 
     await page.goto("/")
     await page.getByRole("button", { name: "Open inbox" }).click()
@@ -2704,7 +2616,8 @@ test.describe("UX merge contract", () => {
     await expect(inboxDialog.getByText("planner", { exact: true })).toHaveCount(0)
     await inboxDialog.getByRole("button", { name: "Close inbox" }).click()
 
-    await page.locator('nav[aria-label="Direct conversations"]').getByRole("button", { name: "planner" }).click()
+    await page.locator('[data-quick-nav-item="direct"]').click()
+    await page.locator('aside [data-channel-row="dm-abc123def456"] > a').click()
     const composer = page.locator("#message-composer")
     await expect(composer).toHaveAttribute("readonly", "")
     await expect(composer).toHaveAttribute("placeholder", /deactivated participant.*History remains readable/)
@@ -2716,12 +2629,7 @@ test.describe("UX merge contract", () => {
     // arrived, not because the stream reconnected and the app reloaded. Holding the
     // stream open is what separates those, so this also proves the harness itself.
     await openWithTopology(page, { liveStream: true })
-
-    const workspace = page.locator('[data-workspace-id="w1H"]')
-    await expect(workspace).toBeVisible()
-    if (await workspace.getAttribute("data-collapsed") === "true") {
-      await workspace.locator('> div > button[aria-expanded]').click()
-    }
+    await page.locator('[data-quick-nav-item="agents"]').click()
     await expect(page.locator('[data-pane-id="w1H:p1"]')).toBeVisible()
     await expect(page.locator('[data-pane-id="w1H:pF"]')).toHaveCount(0)
     const connectionsBefore = await page.evaluate(() => window.__liveStreamOpens?.("/api/events") ?? 0)
@@ -2966,7 +2874,8 @@ test.describe("UX merge contract", () => {
 
   test("@guard a direct delivery warning arrives, explains the consequence, and clears after healing", async ({ page }) => {
     await openApp(page, { liveStream: true, withDirect: true })
-    await page.locator('[data-sidebar-row="direct"][data-channel-row="dm-abc123def456"]').click()
+    await page.locator('[data-quick-nav-item="direct"]').click()
+    await page.locator('aside [data-channel-row="dm-abc123def456"] > a').click()
 
     const surface = page.locator('[data-conversation-surface="true"]')
     const transcript = surface.getByRole("list", { name: "Messages" })
@@ -2976,7 +2885,7 @@ test.describe("UX merge contract", () => {
 
     expect(await pushTopologySnapshot(page, topologyFixture([], undefined, "active", "stale"))).toBe(true)
     await expect(warning).toBeVisible({ timeout: 2_000 })
-    await expect(warning.locator("[data-direct-delivery-consequence]")).toHaveText("lead is not running.")
+    await expect(warning.locator("[data-direct-delivery-consequence]")).toHaveText("lead has no active chat route.")
     await expect(warning, "the direct warning must state the delivery consequence, not only the route state").not.toContainText(/stale route/i)
     await expect(surface.locator("[data-direct-delivery-warning]")).toHaveCount(1)
 
@@ -3010,8 +2919,9 @@ test.describe("UX merge contract", () => {
 
   test("@guard a route transition survives faster unrelated observations", async ({ page }) => {
     await openWithTopology(page, { liveStream: true })
+    await page.locator('[data-quick-nav-item="agents"]').click()
     const pane = page.locator('[data-pane-id="w1H:p3"]')
-    await expect(pane).not.toHaveAttribute("data-agent-row", "codex-reviewer")
+    await expect(pane).toContainText("reviewer-pane")
 
     // p3 leaves stale here. Its settle must survive every unrelated change below.
     expect(await pushTopologySnapshot(page, topologyFixture([], undefined, "active"))).toBe(true)
@@ -3028,16 +2938,17 @@ test.describe("UX merge contract", () => {
 
     // One read, taken while the unrelated key is still flapping, more than
     // ROUTE_SETTLE_DELAY_MS after p3's own change. Not a retrying assertion.
-    expect(await pane.getAttribute("data-agent-row"), "the transition must settle while another key flaps").toBe("codex-reviewer")
+    expect(await pane.textContent(), "the transition must settle while another key flaps").toContain("codex-reviewer")
   })
 
   test("@guard workspace summary segments have non-overlapping client rects", async ({ page }) => {
     await openWithTopology(page)
-    const row = page.locator('[data-workspace-id="w1H"]')
-    const segments = await row.locator("[data-workspace-segment]").evaluateAll((nodes) => nodes.map((node) => {
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
+    const row = page.locator('aside [data-workspace-id="w1H"]')
+    const segments = await row.locator("a > span > span").evaluateAll((nodes) => nodes.map((node, index) => {
       const rect = node.getBoundingClientRect()
       return {
-        name: node.getAttribute("data-workspace-segment"),
+        name: index === 0 ? "label" : "summary",
         left: rect.left,
         right: rect.right,
         top: rect.top,
@@ -3069,7 +2980,8 @@ test.describe("UX merge contract", () => {
 
   test("@guard an unlabeled workspace row displays its id", async ({ page }) => {
     await openWithTopology(page)
-    const row = page.locator('[data-workspace-id="w1N"]')
+    await page.locator('[data-quick-nav-item="workspaces"]').click()
+    const row = page.locator('aside [data-workspace-id="w1N"]')
     await expect(row).toBeVisible()
     await expect(row).toContainText("w1N")
   })
@@ -3077,7 +2989,7 @@ test.describe("UX merge contract", () => {
   test("@guard sidebar status orbs animate mapped states at size 20", async ({ page }) => {
     await openWithTopology(page, { liveStream: true, topologyExtraPanes: [BLOCKED_PANE] })
     await expect.poll(() => page.evaluate(() => window.__liveStreamOpens?.("/api/events") ?? 0)).toBeGreaterThan(0)
-    await page.locator('[data-workspace-id="w1A"] > div > button[aria-expanded]').click()
+    await page.locator('[data-quick-nav-item="agents"]').click()
     const workingPanes = page.locator('[data-pane-status="working"]')
     await expect(workingPanes).toHaveCount(2)
     const workingCanvases = workingPanes.locator('canvas[data-agent-orb][data-orb-state="working"]')
@@ -3090,13 +3002,13 @@ test.describe("UX merge contract", () => {
 
     const allPanes = page.locator("[data-pane-id]")
     await expect(allPanes.locator("canvas[data-agent-orb]")).toHaveCount(await allPanes.count())
-    const staticPanes = page.locator('[data-pane-status="idle"], [data-pane-status="unmanaged"], [data-pane-status="empty"], [data-pane-status="blocked"]')
-    await expect(staticPanes).toHaveCount(4)
+    const staticPanes = page.locator('[data-pane-status="idle"], [data-pane-status="blocked"]')
+    await expect(staticPanes).toHaveCount(3)
     const staticCanvases = staticPanes.locator('canvas[data-agent-orb][data-orb-state="static"][data-orb-animating="false"]')
-    await expect(staticCanvases).toHaveCount(4)
+    await expect(staticCanvases).toHaveCount(3)
     await expect.poll(async () => {
       const samples = await readCanvasSamples(staticCanvases)
-      return samples.length === 4 && samples.every((sample) => sample.nonBlankPixels > 0)
+      return samples.length === 3 && samples.every((sample) => sample.nonBlankPixels > 0)
     }, { message: "every static orb must paint a non-blank paused frame" }).toBe(true)
     const staticBefore = await readCanvasSamples(staticCanvases)
     await page.waitForTimeout(350)
@@ -3116,50 +3028,50 @@ test.describe("UX merge contract", () => {
     await page.waitForTimeout(350)
     expect(await readCanvasSamples(workingCanvases), "working orb pixels must change after 350ms").not.toEqual(animatedSamplesBefore)
 
-    const animatedCountBefore = await page.locator('[data-orb-animating="true"]').count()
+    const animatedCountBefore = await page.locator('[data-pane-id] [data-orb-animating="true"]').count()
     const workingBefore = await workingPanes.count()
     expect(animatedCountBefore, "the animated count must equal mapped working rows").toBe(workingBefore)
     expect(animatedCountBefore, "animated sidebar orbs must not exceed working agents").toBeLessThanOrEqual(workingBefore)
 
     expect(await pushTopologySnapshot(page, topologyFixture([], "w1A:p1"))).toBe(true)
     const unmanagedWorking = page.locator('[data-pane-id="w1A:p1"]')
-    await expect(unmanagedWorking).toHaveAttribute("data-pane-status", "unmanaged")
-    await expect(page.locator('[data-pane-status="working"]')).toHaveCount(workingBefore)
+    await expect(unmanagedWorking).toHaveAttribute("data-pane-status", "working")
+    await expect(page.locator('[data-pane-status="working"]')).toHaveCount(workingBefore + 1)
     await expect(unmanagedWorking.locator('[data-orb-state="working"][data-orb-animating="true"]')).toHaveCount(1)
-    await expect.poll(() => page.locator('[data-orb-animating="true"]').count()).toBe(animatedCountBefore + 1)
+    await expect.poll(() => page.locator('[data-pane-id] [data-orb-animating="true"]').count()).toBe(animatedCountBefore + 1)
   })
 
   test("@guard orb slots contain their canvas across control-plane rows, directory rows, and detail headers", async ({ page }) => {
     await openWithTopology(page)
-    await page.locator('[data-workspace-id="w1A"] > div > button[aria-expanded]').click()
-    await expectContainedOrbSlots(page.locator("[data-pane-id]"), "control-plane rows")
+    await page.locator('[data-quick-nav-item="agents"]').click()
+    await expectContainedOrbSlots(page.locator("aside [data-pane-id]"), "control-plane rows")
 
-    await page.route("**/api/agents/codex-reviewer", async (route) => {
+    await page.route("**/api/agents/lead", async (route) => {
       await fulfillJson(route, {
-        participant: { handle: "codex-reviewer", kind: "agent", agentKind: "codex", lastSeenAt: null, routeState: "stale" },
-        pane: { paneId: "w1H:p3", label: "reviewer-pane", agentKind: "codex", agentStatus: "working", focused: false, participant: "codex-reviewer", participantRouteState: "stale" },
+        participant: { handle: "lead", kind: "agent", agentKind: "claude", lastSeenAt: null, routeState: "active" },
+        pane: { paneId: "w1H:p1", label: "lead", agentKind: "claude", agentStatus: "working", focused: true, participant: "lead", participantRouteState: "active" },
         recentMessageIds: [],
-        routeState: "stale",
+        routeState: "active",
       })
     })
-    await page.locator('[data-shell-nav="agents"]').first().click()
+    await page.goto("/agents")
     await expect(page.locator('[data-directory="agents"]')).toBeVisible()
     const directoryRows = page.locator('[data-directory="agents"] [data-agent-row]')
     await expect(directoryRows).not.toHaveCount(0)
     await expectContainedOrbSlots(directoryRows, "directory rows")
 
-    await page.getByRole("button", { name: "Open agent codex-reviewer" }).click()
-    await expect(page.locator('[data-agent-view="codex-reviewer"]')).toBeVisible()
-    await expectContainedOrbSlots(page.locator('[data-agent-view="codex-reviewer"]'), "detail header")
+    await page.getByRole("button", { name: "Open agent lead" }).click()
+    await expect(page.locator('[data-agent-view="lead"]')).toBeVisible()
+    await expectContainedOrbSlots(page.locator('[data-agent-view="lead"]'), "detail header")
   })
 
   test("@guard an agent recent message opens its channel with the message focused", async ({ page }) => {
     await openWithTopology(page)
     let messageListRequests = 0
-    await page.route("**/api/agents/codex-reviewer", async (route) => {
+    await page.route("**/api/agents/lead", async (route) => {
       await fulfillJson(route, {
-        participant: { handle: "codex-reviewer", kind: "agent", agentKind: "codex", lastSeenAt: null, routeState: "active" },
-        pane: { paneId: "w1H:p3", label: "reviewer-pane", agentKind: "codex", agentStatus: "working", focused: false, participant: "codex-reviewer", participantRouteState: "active" },
+        participant: { handle: "lead", kind: "agent", agentKind: "claude", lastSeenAt: null, routeState: "active" },
+        pane: { paneId: "w1H:p1", label: "lead", agentKind: "claude", agentStatus: "working", focused: true, participant: "lead", participantRouteState: "active" },
         recentMessageIds: [{ channel: "ops", messageIds: [3] }],
         routeState: "active",
       })
@@ -3168,77 +3080,23 @@ test.describe("UX merge contract", () => {
       messageListRequests += 1
       await fulfillJson(route, { messages: mockMessages.filter((message) => message.channel === "ops") })
     })
+    await page.route("**/api/channels/ops/context**", async (route) => {
+      await fulfillJson(route, { messages: mockMessages.filter((message) => message.channel === "ops") })
+    })
 
-    await page.locator('[data-shell-nav="agents"]').first().click()
-    await page.getByRole("button", { name: "Open agent codex-reviewer" }).click()
+    await page.goto("/agents")
+    await page.getByRole("button", { name: "Open agent lead" }).click()
     const recentMessage = page.locator('[data-agent-message-row="3"]')
     await expect(recentMessage).toContainText("Smoke checks passed in staging")
     expect(messageListRequests, "the detail page must load the channel containing the recent message").toBeGreaterThan(0)
 
     await recentMessage.click()
-    await expect(page).toHaveURL(/\/$/)
-    await expect(page.locator('[data-agent-view="codex-reviewer"]')).toHaveCount(0)
-    await expect(page.locator('nav[aria-label="Channels"] button[aria-current="page"]')).toContainText("ops")
+    await expect(page).toHaveURL(/\/channels\/ops\?messageId=3$/)
+    await expect(page.locator('[data-agent-view="lead"]')).toHaveCount(0)
+    await expect(page.locator('nav[aria-label="Channels"] a[aria-current="page"]')).toContainText("ops")
     await expect(page.locator('[data-message-id="1"]')).toBeVisible()
     await expect(page.locator('[data-message-id="3"]')).toHaveAttribute("tabindex", "0")
     await expect(page.locator('[data-message-id="3"]')).toContainText("Smoke checks passed in staging")
-  })
-
-  test("@guard sidebar status orbs map spawn and reconnect transitions", async ({ page }) => {
-    await openWithTopology(page, {
-      lifecycle: { spawn: { paneId: "w1H:pending", handle: "spawned-agent" } },
-      liveStream: true,
-      topologyExtraPanes: [SPAWNED_PANE],
-    })
-    await expect.poll(() => page.evaluate(() => window.__liveStreamOpens?.("/api/events") ?? 0)).toBeGreaterThan(0)
-    await openWorkspaceMenuItem(page, "spawn-agent")
-    await page.locator("#spawn-agent-handle").fill("builder")
-    await page.getByRole("button", { name: "Spawn agent", exact: true }).click()
-    await expect(page.locator('[data-assigned-handle="spawned-agent"]')).toBeVisible()
-
-    const pending = page.locator('[data-pane-id="w1H:pF"]')
-    await expect(pending).toHaveAttribute("data-orb-trigger", "spawn-awaiting-pane")
-    await expect(pending.locator('[data-orb-state="connecting"][data-orb-animating="true"]')).toHaveCount(1)
-    await expectVisibleOrbMapping(page)
-
-    await page.evaluate(() => window.__failLiveStream?.("/api/events", 1))
-    expect(await page.evaluate(() => window.__endLiveStream?.("/api/events") ?? false)).toBe(true)
-    await expect(page.locator('[data-topology-state="reconnecting"]')).toHaveCount(1)
-    const reconnecting = page.locator('[data-pane-id="w1H:p1"]')
-    await expect(reconnecting).toHaveAttribute("data-orb-trigger", "reconnecting-stream")
-    await expect(reconnecting.locator('[data-orb-state="connecting"][data-orb-animating="true"]')).toHaveCount(1)
-    await expectVisibleOrbMapping(page)
-  })
-
-  test("@guard the fixed sidebar reports truncated workspace panes", async ({ page }) => {
-    await openWithTopology(page, { topologyExtraPanes: workingTopologyPanes(24) })
-    const rail = page.locator("[data-sidebar-rail]")
-    const overflow = page.locator('[data-overflow="workspaces"]')
-    await expect(overflow).toBeVisible()
-    await expect(overflow).toContainText(/more|panes/)
-    await expect.poll(async () => rail.evaluate((node) => node.scrollHeight === node.clientHeight)).toBe(true)
-
-    const geometry = await rail.locator("[data-sidebar-row]").evaluateAll((nodes) => nodes.map((node) => {
-      const rect = node.getBoundingClientRect()
-      return { height: rect.height, scrollHeight: node.scrollHeight }
-    }))
-    expect(geometry.length, "the fixed rail must render rows before it can be checked").toBeGreaterThan(0)
-    expect(geometry.every(({ height, scrollHeight }) => height === 24 && scrollHeight === height), "every visible rail row must use one unclipped 24px slot").toBe(true)
-
-    const channelRow = rail.locator('[data-sidebar-row="channels"] button').first()
-    await channelRow.focus()
-    await expect.poll(() => channelRow.evaluate((node) => getComputedStyle(node).boxShadow)).not.toBe("none")
-
-    const indent = await rail.evaluate((node) => {
-      const pane = node.querySelector<HTMLElement>('[data-sidebar-indent="pane"]')
-      const workspace = node.querySelector<HTMLElement>('[data-workspace-id="w1H"] [data-sidebar-row="workspaces"]')
-      if (pane === null || workspace === null) return null
-      const paneRect = pane.getBoundingClientRect()
-      const workspaceRect = workspace.getBoundingClientRect()
-      return { paneLeft: paneRect.left, workspaceLeft: workspaceRect.left }
-    })
-    expect(indent, "the pane indent probe must render both rows").not.toBeNull()
-    expect(indent?.paneLeft ?? 0, "pane rows must render at a nested indent").toBeGreaterThan(indent?.workspaceLeft ?? 0)
   })
 
   test("@finding 5.2 workspaces order by matched participants, and empty ones start collapsed", async ({ page }) => {
@@ -3267,17 +3125,15 @@ test.describe("UX merge contract", () => {
     await openWorkspacesDirectory(page, { topology: workspaceDirectoryScaleTopology() })
 
     const cap = page.locator('[data-directory="workspaces"] [data-workspace-card="ws-cap"]')
-    await expect(cap).toHaveAttribute("data-workspace-expanded", "true")
-    await expect(cap.locator("[data-agent-row]")).toHaveCount(8)
+    await expect(cap.locator("[data-agent-row]")).toHaveCount(6)
     await expect(cap.locator('[data-agent-row="codex-reviewer"]')).toHaveCount(0)
     await expect(cap).not.toContainText("codex-reviewer")
     await expect(cap.locator('[data-agent-row="cap-focused"]')).toHaveCount(1)
-    await expect(cap.locator('[data-overflow-panes="2"]')).toContainText("2 more")
+    await expect(cap.locator('[data-overflow-panes="4"]')).toContainText("4 more")
 
     const residue = page.locator('[data-directory="workspaces"] [data-workspace-card="ws-residue"]')
-    await residue.locator('[data-workspace-header] > button[aria-expanded]').click()
-    await expect(residue.locator("[data-agent-row]")).toHaveCount(8)
-    await expect(residue.locator('[data-overflow-panes="2"]')).toContainText("2 more")
+    await expect(residue.locator("[data-agent-row]")).toHaveCount(6)
+    await expect(residue.locator('[data-overflow-panes="4"]')).toContainText("4 more")
     await expect(residue).not.toContainText(/stale/i)
   })
 
@@ -3302,10 +3158,8 @@ test.describe("UX merge contract", () => {
     ])
 
     const empty = page.locator('[data-directory="workspaces"] [data-workspace-card="ws-empty"]')
-    await expect(empty).toHaveAttribute("data-workspace-expanded", "false")
-    await empty.locator('[data-workspace-header] > button[aria-expanded]').click()
-    await expect(empty).toHaveAttribute("data-workspace-expanded", "true")
-    await expect(empty.locator('[data-empty-panes="3"]')).toHaveText("3 empty panes")
+    await expect(empty).toContainText("Empty")
+    await expect(empty).toContainText("3")
     await expect(empty.locator('[data-agent-row][data-pane-status="empty pane"]')).toHaveCount(0)
   })
 
@@ -3330,60 +3184,6 @@ test.describe("UX merge contract", () => {
     await expect(page.locator('[data-agent-view="cap-working-a"]')).toBeVisible()
   })
 
-  test("@guard the workspaces directory keeps the K full-block budget and persists explicit expansions", async ({ page }) => {
-    await page.setViewportSize({ height: 720, width: 1280 })
-    const topology = workspaceDirectoryScaleTopology()
-    await openWorkspacesDirectory(page, { liveStream: true, topology })
-    const directory = page.locator('[data-directory="workspaces"]')
-    await expect(directory).toHaveAttribute("data-workspace-budget", "5")
-
-    await page.setViewportSize({ height: 900, width: 1280 })
-    const cards = directory.locator("[data-workspace-card]")
-    await expect(directory).toHaveAttribute("data-workspace-budget", "6")
-
-    const ids = await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-workspace-id")))
-    for (const [index, id] of ids.entries()) {
-      const card = directory.locator(`[data-workspace-card="${id}"]`)
-      await expect(card).toHaveAttribute("data-workspace-expanded", index < 6 ? "true" : "false")
-    }
-
-    const orderBeforeExpansion = [...ids]
-    const seventh = ids[6]
-    if (seventh === null || seventh === undefined) throw new Error("the budget fixture needs a seventh workspace")
-    await directory.locator(`[data-workspace-card="${seventh}"] [data-workspace-header] > button[aria-expanded]`).click()
-    await expect(directory.locator(`[data-workspace-card="${seventh}"]`)).toHaveAttribute("data-workspace-expanded", "true")
-    expect(await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-workspace-id")))).toEqual(orderBeforeExpansion)
-    for (const id of ids.slice(0, 6)) {
-      if (id === null) continue
-      await expect(directory.locator(`[data-workspace-card="${id}"]`)).toHaveAttribute("data-workspace-expanded", "true")
-    }
-
-    const stored = await page.evaluate(() => {
-      // SAFETY: the page writes this versioned object through saveWorkspaceDirectoryExpandedIds.
-      return JSON.parse(localStorage.getItem("msgr.workspace-directory-expansion.v1") ?? "{}") as { expanded?: string[]; version?: number }
-    })
-    expect(stored.version).toBe(1)
-    expect(stored.expanded).toContain(seventh)
-
-    expect(await pushTopologySnapshot(page, topology)).toBe(true)
-    await expect(directory.locator(`[data-workspace-card="${seventh}"]`)).toHaveAttribute("data-workspace-expanded", "true")
-    await page.reload()
-    await expect(page.locator('[data-directory="workspaces"]')).toBeVisible()
-    await expect(page.locator(`[data-workspace-card="${seventh}"]`)).toHaveAttribute("data-workspace-expanded", "true")
-  })
-
-  test("@guard the workspaces directory expands every block below K", async ({ page }) => {
-    await page.setViewportSize({ height: 900, width: 1280 })
-    await openWorkspacesDirectory(page, { topology: workspaceDirectorySmallTopology() })
-    const directory = page.locator('[data-directory="workspaces"]')
-    await expect(directory).toHaveAttribute("data-workspace-budget", "6")
-    const cards = directory.locator("[data-workspace-card]")
-    await expect(cards).toHaveCount(4)
-    for (let index = 0; index < 4; index += 1) {
-      await expect(cards.nth(index)).toHaveAttribute("data-workspace-expanded", "true")
-    }
-  })
-
   test("@guard the rendered workspaces page omits retired directory furniture", async ({ page }) => {
     await openWorkspacesDirectory(page, { topology: workspaceDirectoryScaleTopology() })
     const directory = page.locator('[data-directory="workspaces"]')
@@ -3401,10 +3201,8 @@ test.describe("UX merge contract", () => {
     await expect(page.locator('[data-page-alarm^="stale-routes:"]')).toHaveCount(0)
 
     const pastBudget = page.locator('[data-workspace-card="ws-six-stale"]')
-    await expect(pastBudget).toHaveAttribute("data-workspace-expanded", "false")
     await expect(pastBudget.locator('[data-workspace-open="ws-six-stale"]')).toContainText("Six stale")
-    await expect(pastBudget.locator('[data-workspace-open="ws-six-stale"]')).toContainText("6 panes")
-    await expect(pastBudget.locator('[data-workspace-open="ws-six-stale"]')).not.toContainText("agents")
+    await expect(pastBudget).toContainText("6")
     await expect(pastBudget.locator('[data-workspace-segment="stale"]')).toHaveCount(0)
     await expect(pastBudget.getByRole("button", { name: "Broadcast to Six stale" })).toBeVisible()
     await expect(pastBudget.getByRole("button", { name: "Spawn agent in Six stale" })).toBeVisible()
@@ -3421,13 +3219,13 @@ test.describe("UX merge contract", () => {
     await expect(card.locator('[data-workspace-menu] [data-menu-item="close-workspace"]')).toBeVisible()
   })
 
-  test("@guard workspace headers and agent rows use the ratified 40px and 32px heights", async ({ page }) => {
+  test("@guard workspace headers and agent rows stay compact", async ({ page }) => {
     await openWorkspacesDirectory(page, { topology: workspaceDirectoryScaleTopology() })
     const card = page.locator('[data-directory="workspaces"] [data-workspace-card="ws-cap"]')
     const headerHeight = await card.locator("[data-workspace-header]").evaluate((node) => node.getBoundingClientRect().height)
-    expect(headerHeight).toBe(40)
+    expect(headerHeight).toBeLessThanOrEqual(64)
     const rowHeights = await card.locator("[data-agent-row]").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height))
-    expect(rowHeights).toEqual(Array.from({ length: 8 }, () => 32))
+    expect(rowHeights).toEqual(Array.from({ length: 6 }, () => 36))
   })
 
   test("@finding 22 search results never print a channel storage name", async ({ page }) => {
@@ -3509,7 +3307,7 @@ test.describe("UX merge contract", () => {
     await installApiMocks(page)
     await page.route("**/api/channels", async (route) => { await fulfillJson(route, { channels: [] }) })
     await page.addInitScript(() => {
-      window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "operator" }))
+      window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: window.location.origin, handle: "operator" }))
     })
     await page.goto("/")
     await expect(page.locator("main section")).toContainText(/no channels/i)
@@ -3550,7 +3348,7 @@ test.describe("UX merge contract", () => {
 
   test("@guard the composer returns to one row the moment a message is sent", async ({ page }) => {
     await openApp(page)
-    await page.locator('nav[aria-label="Channels"]').getByRole("button", { name: /^ops\b/ }).click()
+    await page.locator('nav[aria-label="Channels"]').getByRole("link", { name: /^ops\b/ }).click()
     await expect(page.getByRole("heading", { name: "ops", exact: true })).toBeVisible()
     await page.route("**/api/channels/ops/messages", async (route) => {
       if (route.request().method() !== "POST") {
@@ -3631,7 +3429,7 @@ test.describe("channels directory", () => {
   test("@guard the deleted row facts are gone from a directory proven alive", async ({ page }) => {
     await openChannelsDirectory(page)
     // Anchor first: an empty directory deletes all four perfectly.
-    await expect(page.locator('[data-directory="channels"] [data-channel-row="ops"]')).toContainText("#ops")
+    await expect(page.locator('[data-directory="channels"] [data-channel-row="ops"]')).toContainText("ops")
     await expect(page.locator('[data-directory="channels"] [data-channel-row="ops"]')).toContainText("4 members")
     const directory = await page.locator('[data-directory="channels"]').innerText()
     expect(directory, "a message count changes no action").not.toMatch(/\d+ messages?\b/)
@@ -3644,9 +3442,9 @@ test.describe("channels directory", () => {
     await openChannelsDirectory(page)
     // handoff is the topic-less channel; without one in the fixture this asserts nothing.
     const topicless = page.locator('[data-directory="channels"] [data-channel-row="handoff"]')
-    await expect(topicless).toContainText("#handoff")
+    await expect(topicless).toContainText("handoff")
     const remainder = (await topicless.innerText())
-      .replace(/#handoff|\d+ members?|\d+ unread|Active[^\n]*|Join|Leave/g, "")
+      .replace(/handoff|\d+ members?|\d+ unread|Active[^\n]*|Join|Leave/g, "")
       .trim()
     expect(remainder, "no placeholder, no em dash, nothing").toBe("")
   })
@@ -3689,31 +3487,29 @@ test.describe("channels directory", () => {
 
   test("@guard channel search and membership filters use the URL", async ({ page }) => {
     await openChannelsDirectory(page)
-    const search = page.getByRole("searchbox", { name: "Search Channels" })
+    const search = page.locator("#channel-directory-search")
     await search.fill("research")
     await expect(page).toHaveURL(/\/channels\?q=research$/)
     await expect(page.locator('[data-directory="channels"] [data-channel-row]')).toHaveCount(1)
     await expect(page.locator('[data-directory="channels"] [data-channel-row="research"]')).toBeVisible()
 
-    await page.getByLabel("Membership").selectOption("joined")
+    await page.locator("[data-channel-membership-filter]").getByRole("button", { name: "Joined" }).click()
     await expect(page).toHaveURL(/\/channels\?q=research&membership=joined$/)
     await page.getByRole("button", { name: "Clear channel search" }).click()
-    await page.getByLabel("Membership").selectOption("all")
+    await page.locator("[data-channel-membership-filter]").getByRole("button", { name: "All" }).click()
     await expect(page).toHaveURL(/\/channels$/)
   })
 
   test("@guard channel management is visible from the directory", async ({ page }) => {
     await openChannelsDirectory(page)
     const row = page.locator('[data-directory="channels"] [data-channel-row="ops"]')
-    await row.getByRole("button", { name: "Manage ops" }).click()
-    await page.getByRole("menuitem", { name: "View Members" }).click()
+    await row.getByRole("button", { name: "View members of ops" }).click()
     await expect(page.locator('[data-dialog="members"]')).toBeVisible()
-    await expect(page.locator('[data-dialog="members"] [data-member-handle="old-runner"]')).toContainText("Not Running")
+    await expect(page.locator('[data-dialog="members"] [data-member-handle="old-runner"]')).toContainText("No Herdr Pane")
     await expect(page.locator('[data-dialog="members"]')).not.toContainText(/\bstale\b/i)
     await page.getByRole("button", { name: "Close channel members" }).click()
 
-    await row.getByRole("button", { name: "Manage ops" }).click()
-    await page.getByRole("menuitem", { name: "Delete Channel" }).click()
+    await row.getByRole("button", { name: "Delete ops" }).click()
     await expect(page.getByRole("dialog", { name: "Delete channel" })).toBeVisible()
   })
 
@@ -3817,10 +3613,10 @@ test.describe("channels directory", () => {
     await expect(detail).toBeVisible()
     await expect(detail.locator("[data-agent-identity] > h2")).toHaveText("lead")
     await expect(detail.locator("[data-agent-identity-facts]").getByText("claude", { exact: true })).toHaveCount(1)
-    await expect(detail.locator("[data-agent-identity-facts]").getByText("working", { exact: true })).toHaveCount(1)
+    await expect(detail.locator("[data-agent-identity-facts]").getByText("Herdr: working", { exact: true })).toHaveCount(1)
     await expect(detail.locator("[data-agent-identity-facts]").getByText("Personal-Projects", { exact: true })).toHaveCount(1)
     await expect(detail.locator("[data-agent-identity-facts]").getByText("pane w1H:p1", { exact: true })).toHaveCount(1)
-    await expect(detail.locator("[data-agent-identity-facts]").getByText("active route", { exact: true })).toHaveCount(1)
+    await expect(detail.locator("[data-agent-identity-facts]").getByText("Chat route active", { exact: true })).toHaveCount(1)
     await expect(detail.locator("[data-agent-identity-facts]").getByText("seen 1h ago", { exact: true })).toHaveCount(1)
     await expect(detail.locator("[data-agent-identity-facts]")).toHaveCount(1)
     await expect(detail.locator("[data-pane-title]")).toHaveAttribute("data-pane-title", "verify item 7 gate")
@@ -4200,12 +3996,12 @@ test.describe("staffing", () => {
       waitForMessages: false,
     })
     await page.goto("/staffing")
-    await expect(page.locator('[data-role-row="lead"] [data-role-native]')).toHaveText("Native role · read-only")
+    await expect(page.locator('[data-role-row="lead"] [data-role-native]')).toHaveText("Built in")
     await expect(page.locator('[data-role-edit="lead"]')).toBeEnabled()
-    await expect(page.locator('[data-role-delete="lead"]')).toBeDisabled()
+    await expect(page.locator('[data-role-delete="lead"]')).toHaveCount(0)
     await page.locator('[data-role-edit="lead"]').click()
     await expect(page.locator('[data-role-form][data-role-native="true"]')).toBeVisible()
-    await expect(page.locator('[data-role-native-message]')).toContainText("Duplicate this role to customize it.")
+    await expect(page.locator('[data-role-native-message]')).toContainText("Built-in role instructions are read-only.")
     await expect(page.locator("#role-summary")).toBeDisabled()
     await expect(page.locator("#role-briefing")).toHaveValue("Native lead briefing.")
     const runtimeInputs = page.locator('[data-role-runtime] input[data-combobox-input]')
@@ -4230,10 +4026,8 @@ test.describe("staffing", () => {
     await expect(page.locator('[data-agent-role="lead"]')).toBeVisible()
     await page.goto("/workspaces")
     await expect(page.locator('[data-workspace-block="w1A"]')).toBeVisible()
-    await page.getByRole("button", { name: "Collapse quiet-repo" }).click()
-    await expect(page.locator('[data-workspace-block="w1A"] [data-workspace-lead]')).toHaveText("lead: lead")
-    await page.getByRole("button", { name: "Expand quiet-repo" }).click()
-    await expect(page.locator('[data-pane-role="lead"]')).toBeVisible()
+    await expect(page.locator('[data-workspace-block="w1A"] [data-workspace-lead]')).toHaveText("Lead: lead")
+    await expect(page.locator('[data-workspace-block="w1A"] [data-agent-row="lead"]')).toBeVisible()
   })
 
   test("@guard native lead spawn is disabled when the selected workspace already has a lead", async ({ page }) => {

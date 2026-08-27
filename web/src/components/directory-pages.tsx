@@ -60,7 +60,10 @@ export function ChannelsDirectoryPage({ controller, navigate, route }: { control
   // empty case is a stable constant and the ready case is the state's own array.
   const readyChannels = channelState.status === "ready" ? channelState.channels : NO_CHANNELS
   const channelSetKey = readyChannels.map((channel) => channel.name).toSorted().join(" ")
-  const dataSettled = channelState.status === "ready" && inboxState.status !== "loading"
+  const identityKey = identity?.handle ?? "anonymous"
+  const captureKey = `${channelSetKey}\u0000${identityKey}`
+  const dataSettled = channelState.status === "ready"
+    && (identity === null ? inboxState.status === "disabled" : inboxState.status === "ready")
   const [openOrder, setOpenOrder] = useState<readonly string[]>([])
   const capturedKeyRef = useRef<string | undefined>(undefined)
   const query = route.query ?? ""
@@ -74,16 +77,12 @@ export function ChannelsDirectoryPage({ controller, navigate, route }: { control
     // under the operator's cursor. A later refresh — after a join or a leave — dips the
     // inbox back through "loading", and the captured key is what stops that dip from
     // reordering the page the operator is pointing at.
-    // The exhaustive-deps warning on this effect is ACCEPTED, not overlooked:
-    // adding readyChannels or inboxByChannel re-runs the capture on every unread
-    // change, which is the re-sort this whole mechanism exists to prevent.
-    // react-doctor-disable-next-line react-doctor/exhaustive-deps
-    if (!dataSettled || capturedKeyRef.current === channelSetKey) return
-    capturedKeyRef.current = channelSetKey
+    if (!dataSettled || capturedKeyRef.current === captureKey) return
+    capturedKeyRef.current = captureKey
     setOpenOrder(readyChannels
       .toSorted(compareChannels(new Map(readyChannels.map((channel) => [channel.name, inboxByChannel.get(channel.name)?.unread ?? 0]))))
       .map((channel) => channel.name))
-  }, [channelSetKey, dataSettled])
+  }, [captureKey, dataSettled, inboxByChannel, readyChannels])
 
   const channels = useMemo(() => {
     const byName = new Map(readyChannels.map((channel) => [channel.name, channel]))

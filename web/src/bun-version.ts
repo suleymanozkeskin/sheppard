@@ -1,4 +1,4 @@
-export const CANONICAL_BUN_VERSION = "1.2.23"
+export const CANONICAL_BUN_VERSION = "1.4.0"
 
 export function bunVersionMismatch(actualVersion: string): string | null {
   if (actualVersion === CANONICAL_BUN_VERSION) return null

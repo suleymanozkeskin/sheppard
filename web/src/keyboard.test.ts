@@ -162,6 +162,7 @@ describe("the action registry is a fixed set", () => {
       "search.focus",
       "search.scopeToggle",
       "settings.open",
+      "sidebar.toggle",
       "theme.cycle",
       "workspace.broadcast",
       "workspace.close",

@@ -1,7 +1,7 @@
 {
   "name": "sheppard",
   "version": "0.1.0",
-  "description": "Pull-based messenger for agents running inside herdr. Notifications stay small. Content is read on demand.",
+  "description": "Local communication and control layer for coding agents running in Herdr.",
   "homepage": "https://github.com/suleymanozkeskin/sheppard#readme",
   "repository": {
     "type": "git",
@@ -10,6 +10,7 @@
   "bugs": {
     "url": "https://github.com/suleymanozkeskin/sheppard/issues"
   },
+  "license": "MIT",
   "type": "module",
   "bin": {
     "msgr": "bin/msgr",
@@ -20,14 +21,16 @@
     "build:web": "bun run --cwd web build",
     "prepack": "bun run build:web",
     "release:preflight": "bun scripts/release-preflight.ts",
+    "release:smoke": "bun scripts/release-smoke.ts",
     "serve": "bun src/cli.ts serve",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings",
     "test": "bun test tests"
   },
   "files": [
     "bin",
     "docs",
     "install.sh",
+    "LICENSE",
     "product-definition.md",
     "SKILL.md",
     "src",
@@ -35,9 +38,9 @@
     "README.md"
   ],
   "engines": {
-    "bun": ">=1.2.23"
+    "bun": ">=1.4.0"
   },
-  "packageManager": "bun@1.2.23",
+  "packageManager": "bun@1.4.0",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.241",
     "better-result": "3.0.1"

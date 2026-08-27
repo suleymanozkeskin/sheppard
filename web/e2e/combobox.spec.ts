@@ -68,6 +68,10 @@ async function openSpawnPage(page: Page, options: { stale?: boolean; refreshFail
       await route.fulfill({ body: ": ready\n\n", contentType: "text/event-stream", status: 200 })
       return
     }
+    if (url.pathname === "/api/humans" && method === "POST") {
+      await json(route, { handle: "operator" })
+      return
+    }
     if (url.pathname === "/api/herdr/events") {
       await route.fulfill({ body: "data: {\"workspaces\":[{\"id\":\"w1\",\"label\":\"Test workspace\",\"panes\":[],\"tabs\":[]}] }\n\n", contentType: "text/event-stream", status: 200 })
       return
@@ -125,7 +129,7 @@ async function openSpawnPage(page: Page, options: { stale?: boolean; refreshFail
     await json(route, {})
   })
   await page.addInitScript(() => {
-    window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "operator" }))
+    window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: window.location.origin, handle: "operator" }))
   })
   await page.goto(path)
   await expect(page.locator("[data-spawn-page]")).toBeVisible()
@@ -197,8 +201,8 @@ test.describe("SpawnAgentPage", () => {
     await choose(page, "spawn-agent-role", "worker")
     await expect(page.locator('[data-combobox="spawn-agent-harness"] [data-combobox-value]')).toContainText("codex")
     await expect(page.locator('[data-combobox="spawn-agent-launcher"] [data-combobox-value]')).toContainText("codex-main")
-    await expect(page.locator('[data-spawn-review]')).toContainText("Model")
-    await expect(page.locator('[data-spawn-review]')).toContainText("—")
+    await expect(page.locator('[data-spawn-review]')).toContainText("Runtime")
+    await expect(page.locator('[data-spawn-review]')).toContainText("codex-main")
     await choose(page, "spawn-agent-role", "__no_role__")
     await expect(page.locator("#spawn-agent-role")).toHaveValue("No role")
     await choose(page, "spawn-agent-harness", "claude")

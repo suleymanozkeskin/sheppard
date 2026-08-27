@@ -250,10 +250,10 @@ function SidebarFrame({ activeSection, children, controller, directManager = fal
       <div className="flex h-10 shrink-0 items-center justify-between border-b px-3" data-sidebar-head>
         <p className="font-heading text-sm font-semibold tracking-tight">Sheppard</p>
         <div className="flex items-center gap-1">
-          <Button aria-label={unread === 0 ? "Open inbox" : `Open inbox, ${unread} unread`} className="relative focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1" onClick={() => controller.dispatchAction("inbox.open")} size="icon-xs" title={unread === 0 ? "Inbox" : `${unread} unread`} type="button" variant="ghost">
+          {controller.identity !== null && <Button aria-label={unread === 0 ? "Open inbox" : `Open inbox, ${unread} unread`} className="relative focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1" onClick={() => controller.dispatchAction("inbox.open")} size="icon-xs" title={unread === 0 ? "Inbox" : `${unread} unread`} type="button" variant="ghost">
             <Inbox aria-hidden="true" />
             {unread > 0 && <span aria-hidden="true" className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-sidebar-primary" />}
-          </Button>
+          </Button>}
           <Button aria-label="Hide sidebar" className="focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1" onClick={controller.toggleSidebar} size="icon-xs" title="Hide sidebar (⌘B)" type="button" variant="ghost">
             <PanelLeftClose aria-hidden="true" />
           </Button>
@@ -482,7 +482,7 @@ function WorkspaceSidebarPanel({ controller, router }: { controller: AppControll
                   }}
                 >
                   <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-sidebar-foreground/50" />
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0 flex-1" data-agent-identity>
                     <span className="block truncate font-medium">{label}</span>
                     <span className="block truncate text-[10px] tabular-nums text-sidebar-foreground/45">{agentCount} agent{agentCount === 1 ? "" : "s"} · {workspace.panes.length} pane{workspace.panes.length === 1 ? "" : "s"}</span>
                   </span>
@@ -576,11 +576,11 @@ function AgentSidebarPanel({ controller, router }: { controller: AppController; 
               ? { kind: "workspace", workspaceId: entry.workspace.id }
               : { handle: entry.pane.participant, kind: "agent" }
             return (
-              <div className="group flex h-10 min-w-0 items-center gap-1 [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-pane-id={entry.pane.paneId} key={`${entry.workspace.id}:${entry.pane.paneId}`} onContextMenu={(event) => { event.preventDefault(); setMenu({ pane: entry.pane, x: event.clientX, y: event.clientY }) }}>
+              <div className="group flex h-10 min-w-0 items-center gap-1 [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-pane-id={entry.pane.paneId} data-pane-status={paneStatusLabel(entry.pane)} key={`${entry.workspace.id}:${entry.pane.paneId}`} onContextMenu={(event) => { event.preventDefault(); setMenu({ pane: entry.pane, x: event.clientX, y: event.clientY }) }}>
                 <a aria-current={entry.pane.participant === selectedHandle ? "page" : undefined} className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium" href={shellRoutePath(destination)} onClick={(event) => { if (!shouldHandleClientNavigation(event)) return; event.preventDefault(); router.navigate(destination) }} title={paneTitle(entry.pane)}>
                   <AgentStatusOrb ariaLabel={`Status: ${paneStatusLabel(entry.pane)}`} size={20} status={entry.pane.agentStatus} />
                   <AgentAvatar agentKind={entry.pane.agentKind} className="size-4 shrink-0" />
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0 flex-1" data-agent-identity>
                     <span className="block truncate font-medium">{entry.identity}</span>
                     <span className="block truncate text-[10px] text-sidebar-foreground/45">{formatWorkspaceLabel(entry.workspace)} · {paneStatusLabel(entry.pane)}</span>
                   </span>
@@ -950,7 +950,6 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
     directConversations,
     directListState,
     fallbackApi,
-    focusHint,
     focusedMessageId,
     handleComposerChange,
     handleAttachmentInputChange,
@@ -983,6 +982,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
     selectedInbox,
     selectedMembers,
     selectedMessages,
+    startDirect,
     receiptUpdates,
     receiptUpdatesChannel,
     receiptReloadKey,
@@ -1126,7 +1126,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             <h1 className="truncate text-sm font-semibold">Direct</h1>
             <p className="truncate text-xs text-muted-foreground">Private conversations</p>
           </div>
-          <Button disabled={identity === null} onClick={() => dispatchAction("message.dmAuthor")} size="sm" title={identity === null ? NOT_CONNECTED_REASON : "Start direct message"} type="button" variant="outline">
+          <Button disabled={identity === null} onClick={() => startDirect()} size="sm" title={identity === null ? NOT_CONNECTED_REASON : "Start direct message"} type="button" variant="outline">
             <MessageCirclePlus aria-hidden="true" />
             <span className="hidden sm:inline">New Message</span>
             <span className="sm:hidden">New</span>
@@ -1157,7 +1157,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
               <MessageCircle aria-hidden="true" className="mx-auto size-6 text-muted-foreground" />
               <h2 className="mt-3 text-sm font-semibold">No Direct Messages</h2>
               <p className="mt-1 text-sm text-muted-foreground">Start a conversation with a person or agent.</p>
-              <Button className="mt-4" disabled={identity === null} onClick={() => dispatchAction("message.dmAuthor")} size="sm" type="button">
+              <Button className="mt-4" disabled={identity === null} onClick={() => startDirect()} size="sm" type="button">
                 <MessageCirclePlus aria-hidden="true" /> Start Direct Message
               </Button>
             </div>
@@ -1201,10 +1201,10 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             </div>
           </div>
           <form
-            className="hidden w-72 items-center gap-2 rounded-lg border bg-muted/40 px-3 text-muted-foreground focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 sm:flex"
+            className="hidden w-80 items-center gap-2 rounded-lg border bg-muted/40 px-3 text-muted-foreground focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 sm:flex lg:w-96"
             onSubmit={(event) => {
               event.preventDefault()
-              runSearch(searchQuery, selectedChannel === undefined ? "all" : "channel")
+              runSearch(searchQuery, searchScope)
             }}
           >
             <Search className="size-4 shrink-0" aria-hidden="true" />
@@ -1226,16 +1226,26 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
                     return
                   case "Enter":
                     event.preventDefault()
-                    runSearch(searchQuery, selectedChannel === undefined ? "all" : "channel")
+                    runSearch(searchQuery, searchScope)
                     return
                   default:
                     return
                 }
               }}
-              placeholder="Search this chat…"
-              type="search"
-              value={searchQuery}
-            />
+            placeholder={searchScope === "all" ? "Search all messages…" : "Search this chat…"}
+            type="search"
+            value={searchQuery}
+          />
+            <button
+              aria-label={searchScope === "all" ? "Search scope: all channels" : "Search scope: current channel"}
+              className="h-6 shrink-0 rounded border bg-background px-1.5 text-[10px] font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              data-search-header-scope={searchScope}
+              onClick={() => setSearchScope(searchScope === "all" ? "channel" : "all")}
+              title="Change search scope (S)"
+              type="button"
+            >
+              {searchScope === "all" ? "All" : "Chat"}
+            </button>
             <kbd className="hidden rounded border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground lg:inline-flex">
               /
             </kbd>
@@ -1244,18 +1254,12 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             <Search aria-hidden="true" />
           </Button>
           {router.route.kind === "direct" && (
-            <Button disabled={identity === null} onClick={() => dispatchAction("message.dmAuthor")} size="sm" title={identity === null ? NOT_CONNECTED_REASON : "Start direct message"} type="button" variant="outline">
+            <Button disabled={identity === null} onClick={() => startDirect()} size="sm" title={identity === null ? NOT_CONNECTED_REASON : "Start direct message"} type="button" variant="outline">
               <MessageCirclePlus aria-hidden="true" />
               <span className="hidden lg:inline">New Message</span>
             </Button>
           )}
-          {identity === null ? (
-            <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">Read only</span>
-          ) : (
-            <Button aria-label="Open inbox" onClick={() => dispatchAction("inbox.open")} size="icon-sm" title="Open inbox" variant="ghost">
-              <Inbox aria-hidden="true" />
-            </Button>
-          )}
+          {identity === null && <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">Read only</span>}
         </header>
 
         {activeWorkspace === undefined && activeDirect !== undefined && <div className="flex h-9 shrink-0 items-center justify-between border-b bg-background px-4 text-xs text-muted-foreground">
@@ -1265,7 +1269,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             {selectedMembers.length > 0 && <span className="ml-1">· {selectedMembers.length} member{selectedMembers.length === 1 ? "" : "s"}</span>}
             {selectedMembers.length > 0 && <span className={staleMemberCount > 0 ? "ml-1 text-amber-700 dark:text-amber-400" : "ml-1 text-emerald-700 dark:text-emerald-400"}>· {staleMemberCount > 0 ? `${staleMemberCount} inactive chat route${staleMemberCount === 1 ? "" : "s"}` : "all chat routes active"}</span>}
           </span>
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1.5" data-stream-state={streamState}>
             {streamState === "live" && <Radio className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />}
             {streamState === "reconnecting" && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
             {streamState === "degraded" && <WifiOff className="size-3.5 text-amber-600" aria-hidden="true" />}
@@ -1333,7 +1337,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
               </div>
             )}
           </div>
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1.5" data-stream-state={streamState}>
             {streamState === "live" && <Radio className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />}
             {streamState === "reconnecting" && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
             {streamState === "degraded" && <WifiOff className="size-3.5 text-amber-600" aria-hidden="true" />}
@@ -1433,7 +1437,6 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             attachments={attachments}
             draft={draft}
             errorMessage={composerState.status === "error" ? composerState.message : undefined}
-            focusHint={focusHint}
             placeholder={composerPlaceholder}
             onAttachmentInputChange={handleAttachmentInputChange}
             onAttachmentInputSubmit={handleAttachmentInputSubmit}
@@ -2021,7 +2024,6 @@ interface ComposerProps {
   composerRef: RefObject<HTMLTextAreaElement | null>
   draft: string
   errorMessage: string | undefined
-  focusHint: string | undefined
   placeholder: string
   onAttachmentInputChange: (value: string) => void
   onAttachmentInputSubmit: () => void
@@ -2102,7 +2104,6 @@ function Composer({
   composerRef,
   draft,
   errorMessage,
-  focusHint,
   placeholder,
   onAttachmentInputChange,
   onAttachmentInputSubmit,
@@ -2132,11 +2133,6 @@ function Composer({
       }}
     >
       <div className="mx-auto max-w-4xl">
-        {focusHint !== undefined && (
-          <p aria-live="polite" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" data-focus-hint role="status">
-            {focusHint}
-          </p>
-        )}
         {attachments.length > 0 && (
           <ul aria-label="Message attachments" className="mb-2 flex flex-wrap gap-2">
             {attachments.map((attachment) => (

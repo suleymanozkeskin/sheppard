@@ -16,7 +16,7 @@ type SidebarPayload =
 
 async function installSidebarMocks(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "operator" }))
+    window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: window.location.origin, handle: "operator" }))
   })
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url())
@@ -32,6 +32,10 @@ async function installSidebarMocks(page: Page): Promise<void> {
     }
     if (url.pathname === "/api/participants") {
       await json({ participants: mockMembers.map(({ agentKind, handle, kind, routeState }) => ({ agentKind, handle, kind, routeState })) })
+      return
+    }
+    if (url.pathname === "/api/humans" && method === "POST") {
+      await json({ handle: "operator" })
       return
     }
     if (url.pathname.endsWith("/members") && method === "GET") {
@@ -80,7 +84,7 @@ async function installSidebarMocks(page: Page): Promise<void> {
   })
 }
 
-test("@guard sidebar conversation selection returns to the current view from page routes", async ({ page }) => {
+test("@guard sidebar conversation selection opens the direct conversation from page routes", async ({ page }) => {
   await installSidebarMocks(page)
 
   for (const route of [
@@ -98,8 +102,10 @@ test("@guard sidebar conversation selection returns to the current view from pag
     "/agents/new",
   ]) {
     await page.goto(route)
-    await page.locator("aside [data-channel-row=\"dm-planner-runner\"]").click()
-    await expect(page).toHaveURL(/\/$/u)
+    await page.locator('[data-quick-nav-item="direct"]').click()
+    await expect(page).toHaveURL(/\/direct$/u)
+    await page.locator('aside [data-channel-row="dm-planner-runner"] > a').click()
+    await expect(page).toHaveURL(/\/direct\/dm-planner-runner$/u)
     await expect(page.locator('[data-shell-page="current"]')).toBeVisible()
   }
 })

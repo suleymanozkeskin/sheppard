@@ -187,6 +187,7 @@ export function LaunchersPage({ controller, launcherName, mode, navigate }: Laun
       })
       void refreshExactLauncher(launcher.name).finally(() => {
         clearDraft()
+        setActionState({ status: "idle" })
         navigate({ kind: "launchers" })
       })
     })

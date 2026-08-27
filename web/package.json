@@ -8,7 +8,7 @@
     "dev": "vite",
     "doctor": "react-doctor . --verbose --diff",
     "e2e": "bun run verify:bun && bun run build && playwright test --grep-invert @finding",
-    "lint": "oxlint --config ../oxlint.config.ts",
+    "lint": "oxlint --deny-warnings --config ../oxlint.config.ts",
     "preview": "vite preview",
     "test": "bun test src",
     "verify:findings": "bun run verify:bun && bun run build && playwright test --grep @finding",

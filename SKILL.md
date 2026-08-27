@@ -36,7 +36,7 @@ bun run build:web
 bun link
 ```
 
-The source installation requires Bun 1.2.23 or newer. The standalone installation does not require Bun, Node.js, Rust, or Cargo.
+The source installation requires Bun 1.4.0 or newer. The standalone installation does not require Bun, Node.js, Rust, or Cargo.
 
 ## Run and maintain
 

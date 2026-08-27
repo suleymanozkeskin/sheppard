@@ -7,7 +7,7 @@ GitHub Releases are the source for standalone archives. The direct installer and
 Complete these items before the first public release:
 
 - Make the repository public.
-- Add the selected open-source license as `LICENSE`.
+- Keep the MIT license in `LICENSE` and `package.json`.
 - Configure macOS Developer ID signing and notarization.
 - Confirm that the `sheppard` npm name and Homebrew tap are owned by the maintainer.
 
@@ -46,7 +46,7 @@ Valid targets are:
 - `linux-arm64`
 - `linux-x64`
 
-The command builds the Vite application, embeds every file from `web/dist`, compiles one standalone executable, and creates `release/sheppard-<target>.tar.gz`. Each archive contains the commands, the agent skill, the product documents, the screenshots, and `LICENSE` when it exists.
+The command builds the Vite application, embeds every file from `web/dist`, compiles one standalone executable, and creates `release/sheppard-<target>.tar.gz`. Each archive contains the commands, the agent skill, the product documents, the screenshots, and `LICENSE`.
 
 ## Create a draft release
 
@@ -61,9 +61,9 @@ The Release workflow performs these operations:
 
 1. Check that the tag matches the package version.
 2. Check that `LICENSE` exists.
-3. Run the server and web test suites.
+3. Run lint, server tests, web tests, and browser tests.
 4. Build on native macOS and Linux runners for both CPU architectures.
-5. Run the compiled `--version` command.
+5. Check the compiled `--version` command, the `msgr` wrapper, and standalone uninstall behavior.
 6. Create SHA-256 checksums.
 7. Create a draft GitHub Release.
 

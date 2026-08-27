@@ -181,13 +181,13 @@ async function openApp(page: Page, options: OpenAppOptions = {}): Promise<void> 
     await page.addInitScript(() => {
       window.localStorage.setItem(
         "msgr.identity.v1",
-        JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "suleyman" }),
+        JSON.stringify({ version: 1, hub: window.location.origin, handle: "suleyman" }),
       )
     })
   }
   await page.goto("/")
-  await expect(page.locator('nav[aria-label="Channels"] button').first()).toBeVisible()
-  await page.locator('[data-slot="message-scroller-item"]').first().waitFor()
+  await expect(page.locator("[data-sidebar-rail]")).toBeVisible()
+  await expect(page.locator('[data-channel-row="ops"]')).toBeVisible()
 }
 
 const OPERABLE_CONTROL_SELECTOR = [
@@ -284,22 +284,30 @@ async function expectTabSequence(page: Page, controls: Locator, description: str
 
 async function focusChannelRow(page: Page, channel = "research") {
   const row = page.locator(`[data-channel-row="${channel}"]`)
-  await row.focus()
-  await expect(row).toBeFocused()
-  return row
+  const opener = row.locator("a")
+  await opener.focus()
+  await expect(opener).toBeFocused()
+  return opener
 }
 
 async function focusWorkspaceRow(page: Page) {
+  await page.locator('[data-quick-nav-item="workspaces"]').click()
   const row = page.locator('[data-workspace-id="ws-alpha"]')
   await expect(row).toBeVisible()
-  await expect(row).toHaveAttribute("data-collapsed", "false")
-  const pane = page.locator('[data-pane-id="pane-alpha"]')
-  await expect(pane).toHaveAttribute("data-identity-source", "participant")
-  await expect(pane).toHaveAttribute("data-pane-status", "working")
-  await expect(pane).not.toHaveAttribute("data-stale-route")
-  await row.focus()
-  await expect(row).toBeFocused()
-  return row
+  const opener = row.locator("a")
+  await opener.focus()
+  await expect(opener).toBeFocused()
+  return opener
+}
+
+async function focusAgentRow(page: Page, paneId = "pane-alpha") {
+  await page.locator('[data-quick-nav-item="agents"]').click()
+  const row = page.locator(`[data-pane-id="${paneId}"]`)
+  await expect(row).toBeVisible()
+  const opener = row.locator("a")
+  await opener.focus()
+  await expect(opener).toBeFocused()
+  return opener
 }
 
 test("@guard period opens the focused channel menu and Escape restores focus", async ({ page }) => {
@@ -309,7 +317,7 @@ test("@guard period opens the focused channel menu and Escape restores focus", a
   await page.keyboard.press(".")
   const menu = page.getByRole("menu")
   await expect(menu).toBeVisible()
-  await expect(opener.locator('[data-menu-trigger="channel"]')).toBeVisible()
+  await expect(page.locator('[data-channel-row="research"] [data-menu-trigger="channel"]')).toBeVisible()
   await expect(menu).toHaveAttribute("data-menu", "channel")
   await expect(menu.locator('[data-menu-item="members"]')).toBeVisible()
   const menuItems = menu.locator("[data-menu-item]")
@@ -374,10 +382,9 @@ test("@guard Shift+B broadcasts from the focused workspace row", async ({ page }
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText(/broadcast/i)
   await expect(dialog).toContainText("runner")
-  await expect(page.locator('[data-pane-id="pane-unmanaged"]')).toHaveAttribute("data-pane-status", "unmanaged")
-  await expect(dialog.locator('[data-broadcast-routing]')).toHaveText("Routed agents: 1 · Unmanaged agents: 1")
-  await expect(dialog.locator('[data-unmanaged-agents]')).toContainText("1 unmanaged agent is not connected to msgr.")
-  await expect(dialog.locator('[data-unmanaged-agents]')).toContainText("They are not recipients and will not receive this message:")
+  await expect(dialog.locator('[data-broadcast-routing]')).toHaveText("Chat-linked agents: 1 · Panes not linked to chat: 1")
+  await expect(dialog.locator('[data-unmanaged-agents]')).toContainText("1 Herdr agent pane has no chat identity.")
+  await expect(dialog.locator('[data-unmanaged-agents]')).toContainText("The broadcast cannot address these panes: unmanaged.")
   await expect(dialog.locator("textarea").first()).toBeFocused()
 
   await page.keyboard.press("Escape")
@@ -425,23 +432,18 @@ test("@guard workspace close is menu-only and Esc pops the dialog then menu", as
 
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
-  await expect(menu).toBeVisible()
-  await page.keyboard.press("Escape")
   await expect(menu).toHaveCount(0)
   await expect(opener).toBeFocused()
 })
 
 test("@guard agent stop is menu-only and restores pane focus after confirmation cancel", async ({ page }) => {
   await openApp(page)
-  const opener = page.locator('[data-pane-id="pane-alpha"]')
-  await expect(opener).toBeVisible()
-  await opener.focus()
-  await expect(opener).toBeFocused()
+  const opener = await focusAgentRow(page)
 
   await page.keyboard.press(".")
   const menu = page.getByRole("menu")
   await expect(menu).toBeVisible()
-  await expect(opener.locator('[data-menu-trigger]')).toBeVisible()
+  await expect(page.locator('[data-pane-id="pane-alpha"] [data-menu-trigger="pane"]')).toBeVisible()
   await expect(menu).toHaveAttribute("data-menu", "pane")
   const stopItem = menu.locator('[data-menu-item="stop-agent"]')
   await expect(stopItem).toBeVisible()
@@ -456,8 +458,6 @@ test("@guard agent stop is menu-only and restores pane focus after confirmation 
 
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
-  await expect(menu).toBeVisible()
-  await page.keyboard.press("Escape")
   await expect(menu).toHaveCount(0)
   await expect(opener).toBeFocused()
 })
@@ -556,32 +556,48 @@ test("@guard directory controls are reachable without asserting row order", asyn
 
   for (const route of ["workspaces", "channels", "direct", "agents"] as const) {
     await page.goto(`/${route}`)
-    const directory = page.locator(`[data-directory="${route}"]`)
-    await expect(directory).toBeVisible()
-    // Rebuilt directories use the page header. Direct and agents still use an h2.
-    const headerOnly = new Set(["workspaces", "channels"])
-    if (headerOnly.has(route)) await expect(page.locator(`[data-shell-page="${route}"] h1`)).toBeVisible()
-    else await expect(directory.locator("h2").first()).toBeVisible()
-    await expectKeyboardReachSet(page, directory, `${route} directory`)
+    switch (route) {
+      case "direct": {
+        const directPage = page.locator('[data-shell-page="direct"]')
+        await expect(directPage).toBeVisible()
+        await expect(page.locator('[data-sidebar-family="direct"]')).toBeVisible()
+        await expectKeyboardReachSet(page, directPage, "direct page")
+        break
+      }
+      case "workspaces":
+      case "channels": {
+        const directory = page.locator(`[data-directory="${route}"]`)
+        await expect(directory).toBeVisible()
+        await expect(page.locator(`[data-shell-page="${route}"] h1`)).toBeVisible()
+        await expectKeyboardReachSet(page, directory, `${route} directory`)
+        break
+      }
+      case "agents": {
+        const directory = page.locator('[data-directory="agents"]')
+        await expect(directory).toBeVisible()
+        await expect(page.locator('[data-shell-page="agents"] h1')).toBeVisible()
+        await expectKeyboardReachSet(page, directory, "agents directory")
+        break
+      }
+    }
   }
 })
 
-test("@guard section collapse controls are keyboard reachable and operable", async ({ page }) => {
+test("@guard sidebar visibility is keyboard operable", async ({ page }) => {
   await openApp(page)
   const sidebar = page.locator("[data-sidebar-rail]")
-  const sectionControlSelector = '[data-section] [data-shell-nav], [data-section-collapse]'
-  await expectKeyboardReachSet(page, sidebar, "sidebar section controls", sectionControlSelector)
+  await expect(sidebar).toBeVisible()
+  await page.keyboard.press("Meta+b")
+  await expect(sidebar).toBeHidden()
+  await page.keyboard.press("Meta+b")
+  await expect(sidebar).toBeVisible()
 
-  for (const route of ["workspaces", "agents", "channels", "direct"] as const) {
-    const collapse = page.locator(`[data-section-collapse="${route}"]`)
-    const before = await collapse.getAttribute("aria-expanded")
-    await collapse.focus()
-    await expect(collapse).toBeFocused()
-    await page.keyboard.press("Enter")
-    await expect(collapse, `${route} collapse control must change state on Enter`).not.toHaveAttribute("aria-expanded", before ?? "")
-    await page.keyboard.press("Enter")
-    await expect(collapse, `${route} collapse control must restore state on Enter`).toHaveAttribute("aria-expanded", before ?? "")
-  }
+  const hide = page.getByRole("button", { name: "Hide sidebar", exact: true })
+  await hide.focus()
+  await page.keyboard.press("Enter")
+  await expect(sidebar).toBeHidden()
+  await page.keyboard.press("Meta+b")
+  await expect(sidebar).toBeVisible()
 })
 
 test("@guard creation pages expose their form controls to keyboard focus", async ({ page }) => {
@@ -609,7 +625,7 @@ test("@guard creation pages expose their form controls to keyboard focus", async
   await expect(directNav).toBeFocused()
   await page.keyboard.press("Enter")
   await expect(page.locator('[data-shell-page="direct"]')).toBeVisible()
-  const startDirect = page.locator('[data-shell-page="direct"]').getByRole("button", { name: "Start direct message", exact: true }).first()
+  const startDirect = page.locator('[data-shell-page="direct"]').getByRole("button", { name: /start direct message|new message/i }).first()
   await startDirect.focus()
   await page.keyboard.press("Enter")
 
@@ -629,7 +645,7 @@ test("@guard creation pages expose their form controls to keyboard focus", async
   await page.locator("#direct-attachment-path").focus()
   await page.keyboard.press("Tab")
   await expect(directPage.getByRole("button", { name: "Add", exact: true })).toBeFocused()
-  await directPage.getByRole("button", { name: "Back to direct", exact: true }).focus()
+  await directPage.getByRole("link", { name: "Back to Direct", exact: true }).focus()
   await page.keyboard.press("Enter")
   await expect(page.locator('[data-shell-page="direct"]')).toBeVisible()
 })
@@ -643,7 +659,7 @@ test("@guard launcher list and forms expose keyboard actions", async ({ page }) 
   await expect(page.locator('[data-launcher-row="codex"]')).toBeVisible()
   await expectKeyboardReachSet(page, list, "launcher list")
 
-  const create = page.getByRole("button", { name: "Create launcher alias", exact: true })
+  const create = page.locator('[data-page-create="launchers"]')
   await create.focus()
   await page.keyboard.press("Enter")
   const createForm = page.locator('[data-launcher-form="create"]')

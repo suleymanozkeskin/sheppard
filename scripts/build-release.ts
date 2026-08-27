@@ -5,7 +5,6 @@ import {
   mkdir,
   readdir,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -88,14 +87,6 @@ exec "$(dirname "$0")/sheppard" msgr "$@"
 `;
 }
 
-async function optionalCopy(source: string, destination: string): Promise<void> {
-  try {
-    if ((await stat(source)).isFile()) await copyFile(source, destination);
-  } catch {
-    // The public release preflight requires LICENSE. Local package builds can run before it exists.
-  }
-}
-
 async function main(): Promise<void> {
   const target = requestedTarget(Bun.argv.slice(2));
   const repositoryRoot = join(import.meta.dir, "..");
@@ -134,7 +125,7 @@ async function main(): Promise<void> {
   );
   await copyFile(join(repositoryRoot, "SKILL.md"), join(targetRoot, "SKILL.md"));
   await cp(join(repositoryRoot, "docs"), join(targetRoot, "docs"), { recursive: true });
-  await optionalCopy(join(repositoryRoot, "LICENSE"), join(targetRoot, "LICENSE"));
+  await copyFile(join(repositoryRoot, "LICENSE"), join(targetRoot, "LICENSE"));
   await chmod(binaryPath, 0o755);
   await chmod(join(targetRoot, "msgr"), 0o755);
 

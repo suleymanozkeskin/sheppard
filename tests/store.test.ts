@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_AGENT_START_TIMEOUT_MS, type RoleConfig } from "../src/config";
 import {
   ChannelExists,
-  ChannelNotDeletable,
   ChannelNotFound,
   DirectMembershipLocked,
   HandleTaken,
@@ -347,7 +346,7 @@ describe("launchers", () => {
 });
 
 describe("roles", () => {
-  test("migrates a historical reporter seed and preserves product fields", () => {
+  test("promotes a historical reporter seed without changing saved fields", () => {
     const { db, store } = freshStore();
     store.seedRoles([reporterSeed(false)]);
     db
@@ -419,12 +418,12 @@ describe("roles", () => {
         )
         .get({ name: "reporter" }),
     ).toEqual({
-      agent_kind: null,
+      agent_kind: "legacy-agent",
       summary: "Legacy summary.",
       briefing: "Legacy briefing.",
-      launcher: null,
-      model: null,
-      effort: null,
+      launcher: "legacy-launcher",
+      model: "legacy-model",
+      effort: "legacy-effort",
       native: 1,
       revision: 9,
       created_at: "2026-01-01T00:00:00.000Z",
@@ -534,15 +533,14 @@ describe("channels and membership", () => {
     expect(store.search("history", null, null, 50)).toEqual([]);
   });
 
-  test("does not delete direct conversation channels", () => {
+  test("deletes a direct conversation for all participants", () => {
     const { store } = freshStore();
     const alice = expectOk(store.createAgent("alice")).participant.id;
-    const bob = expectOk(store.createAgent("bob")).participant.id;
+    expectOk(store.createAgent("bob"));
     const direct = expectOk(store.sendDirect(alice, ["bob"], "keep this conversation"));
 
-    const error = expectErr(store.deleteChannel(direct.channel, direct.channel));
-    expect(ChannelNotDeletable.is(error)).toBe(true);
-    expect(store.findChannel(direct.channel)?.kind).toBe("direct");
+    expect(expectOk(store.deleteChannel(direct.channel, direct.channel))).toEqual({ name: direct.channel });
+    expect(store.findChannel(direct.channel)).toBeNull();
   });
 
   test("a new member starts at the current high-water mark", () => {

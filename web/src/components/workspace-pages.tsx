@@ -373,14 +373,14 @@ const WORKSPACE_DIRECTORY_AGENT_LIMIT = 6
 
 const workspaceStatusOrder = ["working", "blocked", "idle", "done", "unknown"] as const satisfies readonly AgentStatus[]
 
-function workspaceStatusCounts(workspace: HerdrWorkspaceView): Record<AgentStatus, number> {
-  const counts: Record<AgentStatus, number> = {
+function workspaceStatusCounts(workspace: HerdrWorkspaceView) {
+  const counts = {
     blocked: 0,
     done: 0,
     idle: 0,
     unknown: 0,
     working: 0,
-  }
+  } satisfies Record<AgentStatus, number>
   for (const pane of workspace.panes) {
     if (pane.agentKind !== null) counts[pane.agentStatus] += 1
   }

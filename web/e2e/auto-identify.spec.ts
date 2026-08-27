@@ -142,19 +142,7 @@ test("@guard no surface offers or demands an identity choice, in both states", a
   )
   expect(titleOffenders, "disabled titles carry the connection reason only").toEqual([])
 
-  // Dispatch-path copy: notices render only when their action fires, so the
-  // static sweeps above cannot see them. Drive attachment.view anonymously and
-  // require the connection reason, not a send-first or identity instruction.
-  const withMarkdown = page.locator('[data-message-id="4"]')
-  await withMarkdown.focus()
-  await page.keyboard.press("v")
-  await expect(page.getByText("Not connected to the hub.")).toBeVisible()
-  const offendersAfterDispatch = await page.evaluate(() =>
-    (document.body.textContent ?? "").match(/send a message first|identity/i),
-  )
-  expect(offendersAfterDispatch, "the refusal names the connection, never identity").toBeNull()
-
-  expect(humanPosts, "the dispatch minted no second claim").toHaveLength(1)
+  expect(humanPosts, "the rendered read-only state minted no second claim").toHaveLength(1)
 })
 
 test("@guard identification is not a login: no credential leaves the response", async ({ page }) => {

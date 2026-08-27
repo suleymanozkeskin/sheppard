@@ -31,7 +31,7 @@ async function installAttachmentApiMocks(page: Page, options: AttachmentMockOpti
     }
     window.localStorage.setItem(
       "msgr.identity.v1",
-      JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "suleyman" }),
+      JSON.stringify({ version: 1, hub: window.location.origin, handle: "suleyman" }),
     )
   }, options.identity !== false)
   await page.route("**/api/**", async (route) => {
@@ -39,6 +39,14 @@ async function installAttachmentApiMocks(page: Page, options: AttachmentMockOpti
     const method = route.request().method()
     if (url.pathname === "/api/events" || url.pathname === "/api/herdr/events") {
       await route.fulfill({ body: ": ready\n\n", contentType: "text/event-stream", status: 200 })
+      return
+    }
+    if (url.pathname === "/api/humans" && method === "POST") {
+      if (options.identity === false) {
+        await route.fulfill({ body: JSON.stringify({ code: "Unavailable", error: "refused" }), contentType: "application/json", status: 503 })
+      } else {
+        await json(route, { handle: "suleyman" })
+      }
       return
     }
     if (url.pathname === "/api/attachments" && method === "GET") {
@@ -111,12 +119,8 @@ async function installAttachmentApiMocks(page: Page, options: AttachmentMockOpti
   return { writes }
 }
 
-async function chooseComboboxOption(page: Page, id: string, value: string): Promise<void> {
-  const input = page.locator(`#${id}`)
-  await input.click()
-  const option = page.locator(`[data-combobox-option="${value}"]`)
-  await expect(option).toBeVisible()
-  await option.click()
+async function chooseAttachmentKind(page: Page, label: string): Promise<void> {
+  await page.getByRole("group", { name: "File type" }).getByRole("button", { name: label, exact: true }).click()
 }
 
 test("@guard attachments route preserves filters, reload, and replace history", async ({ page }) => {
@@ -133,9 +137,9 @@ test("@guard attachments route preserves filters, reload, and replace history", 
   await expect(page.locator('[data-attachment-metadata]').first()).toContainText("#ops")
   await expect(page.locator("select")).toHaveCount(0)
   await expect(page.locator('[data-combobox="attachments-scope"]')).toBeVisible()
-  await expect(page.locator('[data-combobox="attachments-kind"]')).toBeVisible()
+  await expect(page.getByRole("group", { name: "File type" })).toBeVisible()
   await expect(page.locator('[data-scope-filter="all"] [data-combobox-value]')).toHaveText("All channels")
-  await expect(page.locator('[data-kind-filter="all"] [data-combobox-value]')).toHaveText("All file types")
+  await expect(page.getByRole("button", { name: "All file types", exact: true })).toHaveAttribute("aria-pressed", "true")
 
   const scopeInput = page.locator("#attachments-scope")
   await scopeInput.click()
@@ -155,7 +159,7 @@ test("@guard attachments route preserves filters, reload, and replace history", 
   await scopeInput.press("Enter")
   await expect(page).toHaveURL(/\/attachments\?scope=channel%3Aops&kind=all$/)
 
-  await chooseComboboxOption(page, "attachments-kind", "markdown")
+  await chooseAttachmentKind(page, "Markdown")
   await expect(page).toHaveURL(/\/attachments\?scope=channel%3Aops&kind=markdown$/)
   await expect(page.locator('[data-attachment-row="103"]')).toBeVisible()
   await page.locator('[data-attachment-row="103"]').focus()
@@ -165,15 +169,15 @@ test("@guard attachments route preserves filters, reload, and replace history", 
   await page.reload()
   await expect(page.locator('[data-scope-filter="channel:ops"] [data-combobox-value]')).toHaveText("#ops")
   await expect(page.locator('[data-kind-filter="markdown"]')).toBeVisible()
-  await expect(page.locator('[data-kind-filter="markdown"] [data-combobox-value]')).toHaveText("Markdown")
+  await expect(page.getByRole("button", { name: "Markdown", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(page.locator('[data-attachment-row="103"]')).toBeVisible()
 
-  await page.locator("#attachments-kind").click()
+  await page.locator("#attachments-scope").click()
   await page.keyboard.press("Escape")
-  await expect(page.locator('[data-combobox="attachments-kind"]')).toHaveAttribute("data-combobox-open", "false")
+  await expect(page.locator('[data-combobox="attachments-scope"]')).toHaveAttribute("data-combobox-open", "false")
   await expect(page).toHaveURL(/\/attachments\?scope=channel%3Aops&kind=markdown$/)
-  await expect(page.locator("#attachments-kind")).toBeFocused()
-  await page.locator("#attachments-kind").press("Escape")
+  await expect(page.locator("#attachments-scope")).toBeFocused()
+  await page.locator("#attachments-scope").press("Escape")
   await expect(page).toHaveURL(/\/$/)
   await page.goBack()
   await expect(page).toHaveURL(/\/attachments\?scope=channel%3Aops&kind=markdown$/)
@@ -298,7 +302,7 @@ test("@guard attachments without hub identity keep filters and copy but block pr
   await expect(page.locator('[data-attachment-row="101"] [data-attachment-preview="thumbnail"]')).toHaveCount(0)
   expect(mock.writes).toEqual([])
 
-  await chooseComboboxOption(page, "attachments-kind", "markdown")
+  await chooseAttachmentKind(page, "Markdown")
   await expect(page).toHaveURL(/\/attachments\?scope=all&kind=markdown$/)
   await firstRow.focus()
   await expect(firstRow).toBeFocused()
@@ -318,7 +322,7 @@ test("@guard attachments without hub identity keep filters and copy but block pr
   await expect(page.evaluate(() => navigator.clipboard.readText())).resolves.toBe("/Users/demo/notes/release-notes.md")
   expect(mock.writes).toEqual([])
 
-  await chooseComboboxOption(page, "attachments-kind", "all")
+  await chooseAttachmentKind(page, "All file types")
   const imageRow = page.locator('[data-attachment-row="101"]')
   await expect(imageRow).toBeVisible()
   await expect(imageRow.locator('[data-attachment-action="view"]')).toHaveCount(0)

@@ -21,7 +21,7 @@ async function installSearchApiMocks(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "msgr.identity.v1",
-      JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "suleyman" }),
+      JSON.stringify({ version: 1, hub: window.location.origin, handle: "suleyman" }),
     )
   })
   await page.route("**/api/**", async (route) => {
@@ -59,6 +59,10 @@ async function installSearchApiMocks(page: Page): Promise<void> {
     }
     if (url.pathname === "/api/herdr/roles" && method === "GET") {
       await fulfillJson(route, { roles: [] })
+      return
+    }
+    if (url.pathname === "/api/humans" && method === "POST") {
+      await fulfillJson(route, { handle: "suleyman" })
       return
     }
     if (url.pathname.endsWith("/receipts") && method === "GET") {
@@ -101,11 +105,11 @@ test("@guard search route survives reload and Back", async ({ page }) => {
   await expect(page.locator('[data-search-result="6"]')).toBeVisible()
   await expect(page.locator("#search-page-query")).toHaveValue("handoff")
   await expect(page.locator("select")).toHaveCount(0)
-  await expect(page.locator('[data-combobox="search-page-scope"] [data-combobox-value]')).toHaveText("Current channel")
+  await expect(page.getByRole("button", { name: "Current channel", exact: true })).toHaveAttribute("aria-pressed", "true")
 
   await page.reload()
   await expect(page.locator('[data-search-result="6"]')).toBeVisible()
-  await expect(page.locator('[data-combobox="search-page-scope"] [data-combobox-value]')).toHaveText("Current channel")
+  await expect(page.getByRole("button", { name: "Current channel", exact: true })).toHaveAttribute("aria-pressed", "true")
 
   await page.locator('[data-search-result="6"]').click()
   await expect(page).toHaveURL(/\/channels\/research\?messageId=6$/)
@@ -114,7 +118,7 @@ test("@guard search route survives reload and Back", async ({ page }) => {
   await expect(page.locator('[data-search-result="6"]')).toBeVisible()
 })
 
-test("@guard search scope comboboxes filter, select, and preserve Escape behavior", async ({ page }) => {
+test("@guard search scope controls change the header and search-page scope", async ({ page }) => {
   await installSearchApiMocks(page)
   await page.route("**/api/search**", async (route) => {
     await fulfillJson(route, { results: [], truncated: false })
@@ -122,49 +126,35 @@ test("@guard search scope comboboxes filter, select, and preserve Escape behavio
 
   await page.goto("/")
   await expect(page.locator("select")).toHaveCount(0)
-  const headerScope = page.locator("#search-scope")
+  const headerScope = page.locator("[data-search-header-scope]")
   await expect(headerScope).toBeVisible()
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("All channels")
+  await expect(headerScope).toHaveAttribute("data-search-header-scope", "all")
   await headerScope.click()
-  await page.keyboard.press("Escape")
-  await expect(page.locator('[data-combobox="search-scope"]')).toHaveAttribute("data-combobox-open", "false")
-  await expect(page).toHaveURL(/\/$/)
-  await headerScope.press("Escape")
+  await expect(headerScope).toHaveAttribute("data-search-header-scope", "channel")
+  await expect(page.locator("#message-search")).toHaveAttribute("placeholder", "Search this chat…")
+  await headerScope.click()
+  await expect(headerScope).toHaveAttribute("data-search-header-scope", "all")
   await expect(page).toHaveURL(/\/$/)
 
   await page.goto("/")
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("All channels")
+  await expect(page.locator("[data-search-header-scope]")).toHaveAttribute("data-search-header-scope", "all")
   await page.fill("#message-search", "scope")
   await page.press("#message-search", "Enter")
   await expect(page).toHaveURL(/\/search\?q=scope&scope=all$/)
   await expect(page.locator("select")).toHaveCount(0)
 
-  const pageScope = page.locator("#search-page-scope")
-  await expect(page.locator('[data-combobox="search-page-scope"] [data-combobox-value]')).toHaveText("All channels")
-  await pageScope.click()
-  await pageScope.fill("Current")
-  await expect(page.locator('[data-combobox-option="channel"]')).toBeVisible()
-  await expect(page.locator('[data-combobox-option="all"]')).toHaveCount(0)
-  await page.locator('[data-combobox-option="channel"]').click()
+  const allChannels = page.getByRole("button", { name: "All channels", exact: true })
+  const currentChannel = page.getByRole("button", { name: "Current channel", exact: true })
+  await expect(allChannels).toHaveAttribute("aria-pressed", "true")
+  await currentChannel.click()
   await expect(page).toHaveURL(/\/search\?q=scope&scope=channel%3Aops$/)
-  await expect(page.locator('[data-combobox="search-page-scope"] [data-combobox-value]')).toHaveText("Current channel")
+  await expect(currentChannel).toHaveAttribute("aria-pressed", "true")
 
   await page.reload()
-  await expect(page.locator('[data-combobox="search-page-scope"] [data-combobox-value]')).toHaveText("Current channel")
-  await pageScope.click()
-  await pageScope.fill("All channels")
-  await pageScope.press("ArrowDown")
-  await pageScope.press("Enter")
+  await expect(page.getByRole("button", { name: "Current channel", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await page.getByRole("button", { name: "All channels", exact: true }).click()
   await expect(page).toHaveURL(/\/search\?q=scope&scope=all$/)
-  await expect(page.locator('[data-combobox="search-page-scope"] [data-combobox-value]')).toHaveText("All channels")
-
-  await pageScope.click()
-  await expect(page.locator('[data-combobox="search-page-scope"]')).toHaveAttribute("data-combobox-open", "true")
-  await pageScope.press("Escape")
-  await expect(page.locator('[data-combobox="search-page-scope"]')).toHaveAttribute("data-combobox-open", "false")
-  await expect(page).toHaveURL(/\/search\?q=scope&scope=all$/)
-  await pageScope.press("Escape")
-  await expect(page).toHaveURL(/\/$/)
+  await expect(page.getByRole("button", { name: "All channels", exact: true })).toHaveAttribute("aria-pressed", "true")
 })
 
 test("@guard live search edits replace history", async ({ page }) => {
@@ -173,7 +163,7 @@ test("@guard live search edits replace history", async ({ page }) => {
     await fulfillJson(route, { results: [], truncated: false })
   })
   await page.goto("/")
-  await expect(page.locator('[data-combobox="search-scope"] [data-combobox-value]')).toHaveText("All channels")
+  await expect(page.locator("[data-search-header-scope]")).toHaveAttribute("data-search-header-scope", "all")
   await page.fill("#message-search", "first")
   await page.press("#message-search", "Enter")
   await expect(page).toHaveURL(/\/search\?q=first&scope=all$/)
@@ -212,7 +202,7 @@ test("@guard search page submits with Enter, closes with Escape, and shows the e
   await expect(page.locator('[data-search-result="9"]')).toBeVisible()
   await expect(page.locator("[data-search-count]")).toHaveText("1 matches shown")
   await query.press("Escape")
-  await expect(page).toHaveURL(/\/$/)
+  await expect(page).toHaveURL(/\/channels\/ops$/)
 })
 
 test("@guard scope reload, sender filter, and exact truncation survive", async ({ page }) => {

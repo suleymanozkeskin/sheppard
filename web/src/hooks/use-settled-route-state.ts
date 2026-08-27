@@ -33,15 +33,11 @@ export function useSettledRouteStates(
   const settledRef = useRef<Map<string, RouteState>>(initial)
   const pendingRef = useRef<Map<string, PendingTransition>>(new Map())
 
-  const signature = observations
-    .map(({ key, state }) => `${key}\u0000${state}`)
-    .join("\u0001")
-  const observed = routeMap(observations)
-
   // Route timers are reconciled per key in this effect and cleared by the unmount
   // effect below. A cleanup here would restart unchanged timers on every observation update.
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
+    const observed = routeMap(observations)
     const pending = pendingRef.current
 
     for (const [key, transition] of pending) {
@@ -88,10 +84,7 @@ export function useSettledRouteStates(
       settledRef.current = next
       setSettled(next)
     }
-  // `signature` fully represents the key/state pairs used to derive `observed`.
-  // Adding the derived map would restart this effect for semantically unchanged arrays.
-  // react-doctor-disable-next-line react-doctor/exhaustive-deps
-  }, [delayMs, signature])
+  }, [delayMs, observations])
 
   useEffect(() => {
     const pending = pendingRef.current

@@ -7,9 +7,10 @@ describe("Bun version preflight", () => {
   })
 
   test("reports both versions for a mismatch", () => {
-    const mismatch = bunVersionMismatch("1.4.0")
+    const detectedVersion = "1.3.11"
+    const mismatch = bunVersionMismatch(detectedVersion)
 
     expect(mismatch).toContain(CANONICAL_BUN_VERSION)
-    expect(mismatch).toContain("1.4.0")
+    expect(mismatch).toContain(detectedVersion)
   })
 })

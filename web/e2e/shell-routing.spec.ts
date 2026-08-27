@@ -47,6 +47,7 @@ type DirectoryPayload =
   | AgentSession
   | DirectoryAgentDetail
   | { state: "ready"; sessionId: string }
+  | { handle: string }
   | { code: string; error: string }
   | { messages: never[] }
   | Record<string, never>
@@ -74,7 +75,7 @@ async function installDirectoryApiMocks(
   const selectionRequests: AgentSessionSelectionRequest[] = []
   const sessionRequests: string[] = []
   await page.addInitScript(() => {
-    window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "operator" }))
+    window.localStorage.setItem("msgr.identity.v1", JSON.stringify({ version: 1, hub: window.location.origin, handle: "operator" }))
   })
   await page.addInitScript((snapshot: DirectoryTopology) => {
     const passThrough = globalThis.fetch.bind(globalThis)
@@ -161,6 +162,10 @@ async function installDirectoryApiMocks(
     }
     if (url.pathname === "/api/herdr/roles") {
       await json({ roles: [] })
+      return
+    }
+    if (url.pathname === "/api/humans" && method === "POST") {
+      await json({ handle: "operator" })
       return
     }
     if (url.pathname === "/api/herdr/workspaces") {
@@ -260,9 +265,10 @@ test("@guard directory pages show channel and direct conversation rows", async (
 
   await page.goto("/direct")
   await expect(page.locator('[data-shell-page="direct"]')).toBeVisible()
-  await expect(page.locator('[data-directory="direct"]')).toBeVisible()
-  await expect(page.locator('[data-directory="direct"] [data-channel-row="dm-planner-runner"]')).toContainText("planner, runner")
-  await expect(page.locator('[data-directory="direct"] [data-channel-row="dm-planner-runner"]')).toContainText("1 unread")
+  const directSidebar = page.locator('[data-sidebar-family="direct"]')
+  await expect(directSidebar).toBeVisible()
+  await expect(directSidebar.locator('[data-channel-row="dm-planner-runner"]')).toContainText("planner, runner")
+  await expect(directSidebar.locator('[data-channel-row="dm-planner-runner"]')).toContainText("1")
 })
 
 test("@guard Agents directory opens an agent detail page", async ({ page }) => {
@@ -297,21 +303,21 @@ test("@guard Agents directory opens an agent detail page", async ({ page }) => {
   await page.goto("/agents")
   await expect(page.locator('[data-shell-page="agents"]')).toBeVisible()
   await expect(page.locator('[data-directory="agents"] [data-agent-row="codex-reviewer"]')).toContainText("codex")
-  await expect(page.locator('[data-directory="agents"] [data-agent-row="codex-reviewer"] [data-agent-status-size="64"]')).toBeVisible()
+  await expect(page.locator('[data-directory="agents"] [data-agent-row="codex-reviewer"] [data-agent-status-size="20"]')).toBeVisible()
 
   await page.getByRole("button", { name: "Open agent codex-reviewer" }).click()
   await expect(page).toHaveURL(/\/agents\/codex-reviewer$/)
   await expect(page.locator('[data-agent-view="codex-reviewer"]')).toContainText("pane-web")
 })
 
-test("@guard empty Agents directory keeps one spawn action", async ({ page }) => {
+test("@guard empty Agents page keeps one spawn action", async ({ page }) => {
   await installDirectoryApiMocks(page)
   await page.goto("/agents")
 
   await expect(page.locator('[data-directory="agents"]')).toBeVisible()
   await expect(page.locator('[data-directory="agents"] [data-agent-row]')).toHaveCount(0)
-  await expect(page.locator('[data-directory="agents"]').getByRole("button", { name: "Spawn agent", exact: true })).toHaveCount(1)
-  await expect(page.locator('[data-directory="agents"]').getByText("No agents are connected.")).toBeVisible()
+  await expect(page.locator('[data-shell-page="agents"]').getByRole("button", { name: "Spawn agent", exact: true })).toHaveCount(1)
+  await expect(page.locator('[data-directory="agents"]').getByText("Herdr reports no agent panes.")).toBeVisible()
 })
 
 test("@guard agent detail selects an ambiguous session, keeps the glance, and persists it", async ({ page }) => {
@@ -516,8 +522,7 @@ test("@guard quick switcher finds each kind and routes Enter to its subject", as
   await page.goto("/workspaces")
   await expect(page.locator('[data-shell-page="workspaces"]')).toBeVisible()
   await expect(page.locator('[data-workspace-card="workspace-charlie"]')).toBeVisible()
-  await expect(page.locator('[data-sidebar-family="channels"] [data-channel-row="ops"]')).toBeVisible()
-  await expect(page.locator('[data-sidebar-family="direct"] [data-channel-row="dm-planner-runner"]')).toBeVisible()
+  await expect(page.locator('[data-sidebar-family="workspaces"]')).toBeVisible()
 
   await page.keyboard.press("Control+k")
   const picker = page.locator('[data-dialog="channel-picker"]')
@@ -625,7 +630,8 @@ test("@guard Workspaces directory exposes compact panes and opens workspace deta
   await expect(page.locator('[data-directory="workspaces"]')).toBeVisible()
   await expect(page.locator('[data-workspace-card="workspace-sheppard"]')).toContainText("codex-reviewer")
   await expect(page.locator('[data-workspace-card="workspace-sheppard"] [data-pane-status="working"]')).toBeVisible()
-  await expect(page.locator('[data-workspace-card="workspace-sheppard"] [data-empty-panes="1"]')).toBeVisible()
+  const emptyMetric = page.locator('[data-workspace-card="workspace-sheppard"] dt').filter({ hasText: /^Empty$/u }).locator("..")
+  await expect(emptyMetric.locator("dd")).toHaveText("1")
   await expect(page.locator('[data-workspace-card="workspace-sheppard"] [data-agent-row][data-pane-status="empty pane"]')).toHaveCount(0)
 
   await page.getByRole("button", { exact: true, name: "Open workspace sheppard" }).click()
@@ -684,23 +690,17 @@ test("@guard tabs appear only on workspace details", async ({ page }) => {
   const card = page.locator('[data-workspace-view="workspace-tabs"]')
   const groups = card.locator("[data-tab-id]")
   await expect(groups).toHaveCount(2)
-  const paneIdsByTab = await groups.evaluateAll((nodes) => nodes.map((node) => ({
-    paneIds: [...node.querySelectorAll<HTMLElement>("[data-pane-id]")].map((pane) => pane.dataset.paneId),
-    tabId: node.getAttribute("data-tab-id"),
-  })))
-  expect(paneIdsByTab).toEqual([
-    { paneIds: ["pane-main"], tabId: "tab-main" },
-    { paneIds: ["pane-tools"], tabId: "tab-tools" },
-  ])
-
-  const allPaneIds = paneIdsByTab.flatMap(({ paneIds }) => paneIds)
-  expect(allPaneIds.toSorted()).toEqual(["pane-main", "pane-tools"])
-  expect(new Set(allPaneIds).size).toBe(allPaneIds.length)
+  await expect(groups.locator('[role="tab"]')).toHaveText(["Main 1", "Tools 1"])
+  const activePanel = card.locator('[role="tabpanel"]')
+  await expect(activePanel.locator('[data-pane-id="pane-main"]')).toBeVisible()
+  await expect(activePanel.locator('[data-pane-id="pane-tools"]')).toHaveCount(0)
 
   const toolsGroup = card.locator('[data-tab-id="tab-tools"]')
   await expect(toolsGroup.getByRole("button", { name: "Focus Tools" })).toHaveCount(0)
   await toolsGroup.getByRole("tab", { name: /Tools/ }).click()
   await expect.poll(() => focusRequests).toBe(1)
+  await expect(activePanel.locator('[data-pane-id="pane-tools"]')).toBeVisible()
+  await expect(activePanel.locator('[data-pane-id="pane-main"]')).toHaveCount(0)
 })
 
 test("@guard detail-only tab closing is refused until the operator types its name", async ({ page }) => {

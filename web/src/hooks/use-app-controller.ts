@@ -152,29 +152,29 @@ export function useAppController(
     media.addEventListener("change", onChange)
     return () => media.removeEventListener("change", onChange)
   }, [])
-  const [focusHint, setFocusHint] = useState<string | undefined>()
-  useEffect(() => {
-    if (focusHint === undefined) return
-    const timeout = globalThis.setTimeout(() => setFocusHint(undefined), 5_000)
-    return () => globalThis.clearTimeout(timeout)
-  }, [focusHint])
   const [identity, setIdentity] = useState<StoredIdentity | null>(null)
   const [sessionExpired, setSessionExpired] = useState(false)
   const [authRevision, setAuthRevision] = useState(0)
   const authRevisionRef = useRef(0)
   const authRecoveryActiveRef = useRef(true)
+  const authRecoveryAttemptedRef = useRef(false)
   const requestSessionRecovery = useCallback((requestRevision: number) => {
     if (requestRevision !== authRevisionRef.current || authRecoveryActiveRef.current) return
-    const nextRevision = requestRevision + 1
-    authRevisionRef.current = nextRevision
     authRecoveryActiveRef.current = true
     setIdentity(null)
-    setSessionExpired(false)
-    setAuthRevision(nextRevision)
     removeIdentity().match({
       ok: () => undefined,
       err: (error) => setStorageNotice(error.message),
     })
+    if (authRecoveryAttemptedRef.current) {
+      setSessionExpired(true)
+      return
+    }
+    authRecoveryAttemptedRef.current = true
+    const nextRevision = requestRevision + 1
+    authRevisionRef.current = nextRevision
+    setSessionExpired(false)
+    setAuthRevision(nextRevision)
   }, [])
   const fallbackApi = useMemo<MsgrApi | undefined>(
     () => (import.meta.env?.DEV ? mockApi : undefined),
@@ -252,11 +252,29 @@ export function useAppController(
   const [spawnAgentState, setSpawnAgentState] = useState<SpawnAgentState>({ status: "idle" })
   const [spawnAgentPaneId, setSpawnAgentPaneId] = useState<string | undefined>()
   const [spawnAgentAssignedHandle, setSpawnAgentAssignedHandle] = useState<string | undefined>()
-  const spawnAgentReturnFocusRef = useRef<HTMLElement | null>(null)
+  const spawnAgentReturnFocusRef = useRef<{ element: HTMLElement; paneId?: string; workspaceId?: string } | null>(null)
   const restoreSpawnAgentFocus = useCallback(() => {
     const target = spawnAgentReturnFocusRef.current
     spawnAgentReturnFocusRef.current = null
-    if (target?.isConnected === true) target.focus()
+    if (target === null) return
+    const restore = (): void => {
+      if (target.element.isConnected) {
+        target.element.focus()
+        return
+      }
+      const rows = target.workspaceId === undefined
+        ? globalThis.document.querySelectorAll<HTMLElement>("[data-pane-id]")
+        : globalThis.document.querySelectorAll<HTMLElement>("[data-workspace-id]")
+      const row = [...rows].find((candidate) => target.workspaceId === undefined
+        ? candidate.dataset.paneId === target.paneId
+        : candidate.dataset.workspaceId === target.workspaceId)
+      row?.querySelector<HTMLElement>("a, button")?.focus()
+    }
+    if (globalThis.requestAnimationFrame === undefined) {
+      restore()
+      return
+    }
+    globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(restore))
   }, [])
   const [stopAgentOpen, setStopAgentOpen] = useState(false)
   const [stopAgentPane, setStopAgentPane] = useState<HerdrPaneView | undefined>()
@@ -292,7 +310,6 @@ export function useAppController(
     completeUpload,
   } = composer
   const handleComposerChange = useCallback((value: string) => {
-    setFocusHint(undefined)
     setDraft(value)
   }, [setDraft])
   const {
@@ -341,12 +358,13 @@ export function useAppController(
     unreadTotal,
   } = channelData
   const workspaceData = useHerdrWorkspaces(api, fallbackApi)
+  const applyTopologySnapshot = workspaceData.onTopologySnapshot
   const onTopologySnapshot = useCallback((snapshot: WorkspaceList) => {
-    workspaceData.onTopologySnapshot(snapshot)
+    applyTopologySnapshot(snapshot)
     if (selectedChannel !== undefined) {
       updateMemberRouteStates(selectedChannel, routeStatesFromTopology(snapshot))
     }
-  }, [selectedChannel, updateMemberRouteStates, workspaceData.onTopologySnapshot])
+  }, [applyTopologySnapshot, selectedChannel, updateMemberRouteStates])
   useEffect(() => {
     let mounted = true
     void apiCall(api, fallbackApi, (client) => client.listRoles()).then((roleResult) => {
@@ -363,7 +381,6 @@ export function useAppController(
 
   const selectChannel = useCallback((channel: string | undefined, kind?: "chat" | "workspace" | "direct") => {
     setActiveWorkspaceId(undefined)
-    setFocusHint(undefined)
     selectChannelState(channel, kind)
   }, [selectChannelState])
   const openFocusedContextMenu = useCallback(() => {
@@ -887,7 +904,15 @@ export function useAppController(
       return
     }
     const opener = globalThis.document.activeElement
-    spawnAgentReturnFocusRef.current = opener instanceof HTMLElement ? opener : null
+    const paneRow = opener instanceof HTMLElement ? opener.closest<HTMLElement>("[data-pane-id]") : null
+    const workspaceRow = opener instanceof HTMLElement ? opener.closest<HTMLElement>("[data-workspace-id]") : null
+    spawnAgentReturnFocusRef.current = opener instanceof HTMLElement
+      ? {
+          element: opener,
+          paneId: paneRow?.dataset.paneId,
+          workspaceId: workspaceRow?.dataset.workspaceId,
+        }
+      : null
     setSpawnAgentPaneId(undefined)
     setSpawnAgentAssignedHandle(undefined)
     setSpawnAgentState({ status: "idle" })
@@ -1108,7 +1133,7 @@ export function useAppController(
       return
     }
     if (message.sender === identity?.handle) {
-      setFocusHint("Focus a message from another participant first.")
+      setStorageNotice("Focus a message from another participant first.")
       return
     }
     if (!participants.some((participant) => participant.handle === message.sender)) {
@@ -1644,7 +1669,6 @@ export function useAppController(
     openWorkspaceDirectoryPicker,
     openWorkspace,
     openWorkspaceBroadcast,
-    focusHint,
     handleComposerChange,
     storageNotice,
     clearStorageNotice,

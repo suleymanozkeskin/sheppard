@@ -16,6 +16,7 @@ import type { AttachmentRouteKind, AttachmentRouteScope, ShellNavigate } from "@
 
 const ATTACHMENT_LIST_LIMIT = 50
 const ATTACHMENT_KEYBOARD_LAYER = { mode: "inline", scope: "attachments" } as const
+const NO_ATTACHMENT_ROWS: readonly AttachmentListRow[] = []
 
 type AttachmentLoadState =
   | { status: "loading" }
@@ -67,7 +68,7 @@ export function AttachmentsPage({
   const pendingMenuFocusRef = useRef<number | undefined>(undefined)
   const rowRefs = useRef(new Map<number, HTMLDivElement>())
   const channel = scope.startsWith("channel:") ? scope.slice("channel:".length) : undefined
-  const rows = state.status === "ready" ? state.rows : []
+  const rows = state.status === "ready" ? state.rows : NO_ATTACHMENT_ROWS
   const truncated = state.status === "ready" && state.truncated
 
   const load = useCallback(() => {

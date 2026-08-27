@@ -42,7 +42,7 @@ async function installSeenApiMocks(page: Page, options: SeenMockOptions = {}): P
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "msgr.identity.v1",
-      JSON.stringify({ version: 1, hub: "http://127.0.0.1:4173", handle: "suleyman" }),
+      JSON.stringify({ version: 1, hub: window.location.origin, handle: "suleyman" }),
     )
   })
   await page.addInitScript(() => {
@@ -119,6 +119,10 @@ async function installSeenApiMocks(page: Page, options: SeenMockOptions = {}): P
     }
     if (url.pathname === "/api/herdr/roles" && method === "GET") {
       await fulfillJson(route, { roles: [] })
+      return
+    }
+    if (url.pathname === "/api/humans" && method === "POST") {
+      await fulfillJson(route, { handle: "suleyman" })
       return
     }
     if (url.pathname.endsWith("/receipts") && method === "GET") {
@@ -241,7 +245,7 @@ test("@guard receipt rows are keyed by the selected channel", async ({ page }) =
   })
   await page.goto("/channels/ops")
   await page.locator('[data-message-id="4"]').waitFor()
-  await page.locator('[data-channel-row="research"] > button').first().click()
+  await page.locator('[data-channel-row="research"] > a').click()
   await page.locator('[data-message-id="7"]').waitFor()
   await expect(page.locator('[data-message-id="7"] [data-receipt-state]')).toHaveCount(0)
   await expect(page.locator('[data-message-id="7"] [data-receipt-kind="not-yet"]')).toHaveText("Not yet seen by 2: planner, runner")
