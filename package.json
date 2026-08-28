@@ -22,7 +22,7 @@
     "prepack": "bun run build:web",
     "release:preflight": "bun scripts/release-preflight.ts",
     "release:smoke": "bun scripts/release-smoke.ts",
-    "serve": "bun src/cli.ts serve",
+    "serve": "bun bin/sheppard serve",
     "lint": "oxlint --deny-warnings",
     "test": "bun test tests"
   },
