@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/suleymanozkeskin/sheppard/main/inst
 Use an exact release when required:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/suleymanozkeskin/sheppard/main/install.sh | SHEPPARD_VERSION=0.1.0 sh
+curl -fsSL https://raw.githubusercontent.com/suleymanozkeskin/sheppard/main/install.sh | SHEPPARD_VERSION=0.1.1 sh
 ```
 
 Set `SHEPPARD_INSTALL_DIR` on `sh` to use a different installation directory.

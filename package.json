@@ -1,6 +1,6 @@
 {
   "name": "sheppard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local communication and control layer for coding agents running in Herdr.",
   "homepage": "https://github.com/suleymanozkeskin/sheppard#readme",
   "repository": {

@@ -4,7 +4,7 @@ GitHub Releases are the source for standalone archives. The direct installer and
 
 ## Release requirements
 
-Complete these items before the first public release:
+Keep these release requirements in place:
 
 - Make the repository public.
 - Keep the MIT license in `LICENSE` and `package.json`.
@@ -54,8 +54,8 @@ The command builds the Vite application, embeds every file from `web/dist`, comp
 Set the version in `package.json`. Commit the release state before creating the tag.
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 The Release workflow performs these operations:
@@ -93,6 +93,4 @@ npm pack --dry-run
 npm publish
 ```
 
-The first npm publication permanently reserves the package name and version. Do not publish until the public repository, license, and release documentation are correct.
-
-The first publication uses the maintainer's local npm session after the GitHub release checks pass. Configure npm trusted publishing before automating later npm releases.
+Use the maintainer's local npm session after the GitHub release checks pass. Configure npm trusted publishing before automating npm releases.
