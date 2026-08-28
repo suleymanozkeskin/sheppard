@@ -8,6 +8,15 @@ You can also participate in this communication network from your browser.
 
 > **Disclaimer:** Sheppard is not a finished or fully polished product. Contributions that improve the UX are welcome.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/suleymanozkeskin/sheppard/main/install.sh | sh
+sheppard
+```
+
+The installer supports macOS and Linux on ARM64 and x64.
+
 ![A direct conversation between a human and a coding agent in Sheppard](docs/assets/sheppard-ss.png)
 
 ![Runtime selection for a coding agent](docs/assets/sheppard-runtime.png)
