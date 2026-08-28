@@ -212,7 +212,8 @@ async function expectKeyboardReachSet(
       const rect = node.getBoundingClientRect()
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0
     }
-    const enabled = (node: HTMLElement): boolean => node.getAttribute("aria-disabled") !== "true"
+    const enabled = (node: HTMLElement): boolean => node.getAttribute("aria-hidden") !== "true"
+      && node.getAttribute("aria-disabled") !== "true"
       && !(node instanceof HTMLButtonElement && node.disabled)
       && !(node instanceof HTMLInputElement && node.disabled)
       && !(node instanceof HTMLSelectElement && node.disabled)
@@ -236,7 +237,8 @@ async function expectKeyboardReachSet(
       const rect = node.getBoundingClientRect()
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0
     }
-    const enabled = (node: HTMLElement): boolean => node.getAttribute("aria-disabled") !== "true"
+    const enabled = (node: HTMLElement): boolean => node.getAttribute("aria-hidden") !== "true"
+      && node.getAttribute("aria-disabled") !== "true"
       && !(node instanceof HTMLButtonElement && node.disabled)
       && !(node instanceof HTMLInputElement && node.disabled)
       && !(node instanceof HTMLSelectElement && node.disabled)
@@ -677,7 +679,7 @@ test("@guard launcher list and forms expose keyboard actions", async ({ page }) 
   await expect(page.locator("#launcher-argv")).toBeVisible()
   await page.locator("#launcher-argv").fill("--example")
   await expect(createForm.getByRole("button", { name: "Remove launch argument 1", exact: true })).toBeVisible()
-  const launcherPrimaryControls = "button:not([disabled]):not([aria-label='Open Harness options']), input:not([disabled]):not(#launcher-agent-kind-hidden-input):not(#launcher-start-timeout)"
+  const launcherPrimaryControls = "button:not([disabled]):not([aria-label='Open Harness options']), input:not([disabled]):not(#launcher-start-timeout)"
   await expectKeyboardReachSet(page, createForm, "launcher creation form", launcherPrimaryControls)
   const advanced = createForm.locator("[data-launcher-advanced]")
   await advanced.locator("summary").click()
