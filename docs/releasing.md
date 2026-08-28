@@ -8,12 +8,13 @@ Complete these items before the first public release:
 
 - Make the repository public.
 - Keep the MIT license in `LICENSE` and `package.json`.
-- Configure macOS Developer ID signing and notarization.
 - Confirm that the `sheppard` npm name and Homebrew tap are owned by the maintainer.
 
 The release preflight stops when `LICENSE` is absent. It also requires the tag to match the version in `package.json`.
 
-Add these GitHub Actions secrets before a release:
+The current macOS archives are unsigned and not notarized. Users can need to approve the executable in macOS Privacy & Security before the first run.
+
+The repository keeps `scripts/sign-macos.sh` for a future signed release. That flow requires these GitHub Actions secrets:
 
 - `MACOS_CERTIFICATE_BASE64`
 - `MACOS_CERTIFICATE_PASSWORD`
@@ -22,7 +23,7 @@ Add these GitHub Actions secrets before a release:
 - `APPLE_APP_PASSWORD`
 - `APPLE_TEAM_ID`
 
-The certificate secret contains the base64 form of the Developer ID Application `.p12` file. The workflow stops instead of creating unsigned macOS archives when any signing value is absent.
+The certificate secret contains the base64 form of the Developer ID Application `.p12` file. The release workflow does not call the signing script until this support is enabled again.
 
 ## Build an archive locally
 
@@ -62,7 +63,7 @@ The Release workflow performs these operations:
 1. Check that the tag matches the package version.
 2. Check that `LICENSE` exists.
 3. Run lint, server tests, web tests, and browser tests.
-4. Build on native macOS and Linux runners for both CPU architectures.
+4. Build unsigned archives on native macOS and Linux runners for both CPU architectures.
 5. Check the compiled `--version` command, the `msgr` wrapper, and standalone uninstall behavior.
 6. Create SHA-256 checksums.
 7. Create a draft GitHub Release.
@@ -93,3 +94,5 @@ npm publish
 ```
 
 The first npm publication permanently reserves the package name and version. Do not publish until the public repository, license, and release documentation are correct.
+
+The first publication uses the maintainer's local npm session after the GitHub release checks pass. Configure npm trusted publishing before automating later npm releases.

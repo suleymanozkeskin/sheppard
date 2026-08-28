@@ -11,6 +11,9 @@
     "url": "https://github.com/suleymanozkeskin/sheppard/issues"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
     "msgr": "bin/msgr",

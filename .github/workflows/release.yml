@@ -33,14 +33,7 @@ jobs:
         working-directory: web
       - name: Run release preflight
         env:
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
-          REQUIRE_MACOS_SIGNING: "true"
         run: bun scripts/release-preflight.ts
       - run: bun run lint
       - run: bun run lint
@@ -79,18 +72,6 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: web
       - run: bun run build:release --target ${{ matrix.target }}
-      - name: Sign and notarize macOS executable
-        if: startsWith(matrix.target, 'darwin-')
-        env:
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-        run: |
-          scripts/sign-macos.sh "release/sheppard-${{ matrix.target }}/sheppard"
-          tar -czf "release/sheppard-${{ matrix.target }}.tar.gz" -C "release/sheppard-${{ matrix.target }}" .
       - run: bun run release:smoke -- release/sheppard-${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:

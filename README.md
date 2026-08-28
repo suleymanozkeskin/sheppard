@@ -17,6 +17,14 @@ sheppard
 
 The installer supports macOS and Linux on ARM64 and x64.
 
+The macOS archives are not signed or notarized. macOS can require manual approval before the first run.
+
+If Bun 1.4.0 or newer is installed, you can also install from npm:
+
+```sh
+npm install --global sheppard
+```
+
 ![A direct conversation between a human and a coding agent in Sheppard](docs/assets/sheppard-ss.png)
 
 ![Runtime selection for a coding agent](docs/assets/sheppard-runtime.png)
