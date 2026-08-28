@@ -9,6 +9,7 @@ import {
 } from "./distribution";
 import { CliHerdr } from "./herdr";
 import { decodeObject, requiredString, type JsonValue } from "./json";
+import { activeHubPid } from "./lock";
 import { startHub } from "./server";
 import { SHEPPARD_VERSION } from "./version";
 
@@ -16,6 +17,7 @@ const SHEPPARD_HELP = `Sheppard — the agent messaging and control plane for He
 
   sheppard                       start Sheppard and open the web interface
   sheppard --no-open             start without opening a browser
+  sheppard stop                  stop the running Sheppard server
   sheppard update                install the latest verified release
   sheppard --version             print the installed version
   sheppard uninstall [--yes]     remove the standalone commands and keep user data
@@ -34,7 +36,51 @@ export interface SheppardMainOptions {
   distribution?: SheppardDistribution;
   env?: Bun.Env;
   output?: DistributionOutput;
+  processControl?: SheppardProcessControl;
   webAssets?: ReadonlyMap<string, string>;
+}
+
+export interface SheppardProcessControl {
+  activeHubPid: (databasePath: string) => number | null;
+  signal: (pid: number) => void;
+  wait: (milliseconds: number) => Promise<void>;
+}
+
+const PROCESS_CONTROL: SheppardProcessControl = {
+  activeHubPid,
+  signal: (pid) => process.kill(pid, "SIGTERM"),
+  wait: (milliseconds) => Bun.sleep(milliseconds),
+};
+
+async function stopSheppard(
+  config: ServerConfig,
+  output: DistributionOutput,
+  processControl: SheppardProcessControl,
+): Promise<number> {
+  const pid = processControl.activeHubPid(config.databasePath);
+  if (pid === null) {
+    output.write("Sheppard is not running.");
+    return 0;
+  }
+
+  try {
+    processControl.signal(pid);
+  } catch (cause) {
+    const detail = cause instanceof Error ? ` ${cause.message}` : "";
+    output.fail(`Sheppard could not stop process ${pid}.${detail}`);
+    return 1;
+  }
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await processControl.wait(50);
+    if (processControl.activeHubPid(config.databasePath) === null) {
+      output.write("Sheppard stopped.");
+      return 0;
+    }
+  }
+
+  output.fail(`Sheppard process ${pid} did not stop.`);
+  return 1;
 }
 
 function commandArguments(argv: readonly string[], command: string): readonly string[] {
@@ -163,6 +209,7 @@ export async function runSheppard(options: SheppardMainOptions = {}): Promise<nu
     write: (line: string) => console.log(line),
   };
   const distribution = options.distribution ?? { kind: "source" };
+  const processControl = options.processControl ?? PROCESS_CONTROL;
   const config: ServerConfig = {
     ...loadConfig(env),
     applicationVersion: SHEPPARD_VERSION,
@@ -191,6 +238,10 @@ export async function runSheppard(options: SheppardMainOptions = {}): Promise<nu
     case "version":
       output.write(`sheppard ${SHEPPARD_VERSION}`);
       return 0;
+    case "stop":
+      return argv.length === 1
+        ? stopSheppard(config, output, processControl)
+        : usageError(output);
     case "update":
       return argv.length === 1
         ? updateSheppard(distribution, SHEPPARD_VERSION, config, output)

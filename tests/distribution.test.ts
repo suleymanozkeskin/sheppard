@@ -78,6 +78,45 @@ describe("standalone distribution", () => {
     expect(result.lines).toEqual([`sheppard ${SHEPPARD_VERSION}`]);
   });
 
+  test("stops the hub process recorded for the configured database", async () => {
+    const result = output();
+    const databasePath = join(scratchDirectory(), "msgr.db");
+    let activePid: number | null = 4512;
+    const signals: number[] = [];
+
+    expect(await runSheppard({
+      argv: ["stop"],
+      env: { ...Bun.env, MSGR_DB: databasePath },
+      output: result.value,
+      processControl: {
+        activeHubPid: () => activePid,
+        signal: (pid) => { signals.push(pid); },
+        wait: async () => { activePid = null; },
+      },
+    })).toBe(0);
+
+    expect(signals).toEqual([4512]);
+    expect(result.errors).toEqual([]);
+    expect(result.lines).toEqual(["Sheppard stopped."]);
+  });
+
+  test("reports success when Sheppard is not running", async () => {
+    const result = output();
+
+    expect(await runSheppard({
+      argv: ["stop"],
+      output: result.value,
+      processControl: {
+        activeHubPid: () => null,
+        signal: () => { throw new Error("signal must not run"); },
+        wait: async () => { throw new Error("wait must not run"); },
+      },
+    })).toBe(0);
+
+    expect(result.errors).toEqual([]);
+    expect(result.lines).toEqual(["Sheppard is not running."]);
+  });
+
   test("installs a newer release after checksum and version checks", async () => {
     const root = scratchDirectory();
     const payload = join(root, "payload");

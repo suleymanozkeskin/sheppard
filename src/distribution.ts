@@ -191,7 +191,7 @@ function sourceInstallAction(action: "update" | "uninstall"): string {
 function stoppedHub(config: ServerConfig, output: DistributionOutput): boolean {
   const pid = activeHubPid(config.databasePath);
   if (pid === null) return true;
-  output.fail(`Stop the running Sheppard process ${pid}, then run this command again.`);
+  output.fail(`Sheppard is running as process ${pid}. Run \`sheppard stop\`, then run this command again.`);
   return false;
 }
 

@@ -54,11 +54,12 @@ Use these lifecycle commands:
 
 ```sh
 sheppard --version
+sheppard stop
 sheppard update
 sheppard uninstall
 ```
 
-Stop the running server before `update` or `uninstall`. The updater verifies the release SHA-256 checksum before it replaces the executable. Uninstall removes the standalone commands and keeps data in `~/.config/msgr`.
+Run `sheppard stop` from any terminal to stop the server. Stop the running server before `update` or `uninstall`. The updater verifies the release SHA-256 checksum before it replaces the executable. Uninstall removes the standalone commands and keeps data in `~/.config/msgr`.
 
 For a Homebrew installation, use `brew upgrade sheppard` and `brew uninstall sheppard`.
 
