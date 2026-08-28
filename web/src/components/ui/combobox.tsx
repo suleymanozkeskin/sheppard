@@ -151,7 +151,7 @@ export function Combobox({
       disabled={disabled}
       filter={null}
       filteredItems={filteredOptions}
-      id={resolvedId}
+      id={`${resolvedId}-root`}
       inputValue={inputValue}
       isItemEqualToValue={(left, right) => left.value === right.value}
       itemToStringLabel={(option) => option.label}

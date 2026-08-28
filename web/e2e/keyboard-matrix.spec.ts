@@ -219,14 +219,18 @@ async function expectKeyboardReachSet(
       && !(node instanceof HTMLTextAreaElement && node.disabled)
     return [...root.querySelectorAll<HTMLElement>(candidateSelector)]
       .filter((node) => visible(node) && enabled(node))
-      .map((node, index) => ({
-        index,
-        label: node.getAttribute("aria-label") ?? node.id ?? node.textContent?.replace(/\s+/gu, " ").trim().slice(0, 80) ?? node.tagName.toLowerCase(),
-      }))
+      .map((node, index) => {
+        const id = String(index)
+        node.dataset.keyboardReachId = id
+        return {
+          id,
+          label: node.getAttribute("aria-label") ?? node.id ?? node.textContent?.replace(/\s+/gu, " ").trim().slice(0, 80) ?? node.tagName.toLowerCase(),
+        }
+      })
   }, selector)
   expect(controls.length, `${description} must expose operable controls`).toBeGreaterThan(0)
 
-  const activeControlIndex = async (): Promise<number> => scope.evaluate((root, candidateSelector) => {
+  const activeControlId = async (): Promise<string | null> => scope.evaluate((root, candidateSelector) => {
     const visible = (node: HTMLElement): boolean => {
       const style = getComputedStyle(node)
       const rect = node.getBoundingClientRect()
@@ -237,22 +241,22 @@ async function expectKeyboardReachSet(
       && !(node instanceof HTMLInputElement && node.disabled)
       && !(node instanceof HTMLSelectElement && node.disabled)
       && !(node instanceof HTMLTextAreaElement && node.disabled)
-    const candidates = [...root.querySelectorAll<HTMLElement>(candidateSelector)]
-      .filter((node) => visible(node) && enabled(node))
     const active = document.activeElement
-    return active instanceof HTMLElement ? candidates.indexOf(active) : -1
+    if (!(active instanceof HTMLElement) || !root.contains(active)) return null
+    if (!visible(active) || !enabled(active) || !active.matches(candidateSelector)) return null
+    return active.dataset.keyboardReachId ?? null
   }, selector)
 
   await page.evaluate(() => {
     const active = document.activeElement
     if (active instanceof HTMLElement) active.blur()
   })
-  const visited = new Set<number>()
+  const visited = new Set<string>()
   const maxSteps = Math.max(controls.length * 4 + 16, 24)
   for (let step = 0; step < maxSteps && visited.size < controls.length; step += 1) {
     await page.keyboard.press("Tab")
-    const afterTab = await activeControlIndex()
-    if (afterTab >= 0) visited.add(afterTab)
+    const afterTab = await activeControlId()
+    if (afterTab !== null) visited.add(afterTab)
 
     const inComposite = await page.evaluate(() => {
       const active = document.activeElement
@@ -262,12 +266,12 @@ async function expectKeyboardReachSet(
     if (!inComposite) continue
     for (const key of ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"] as const) {
       await page.keyboard.press(key)
-      const afterArrow = await activeControlIndex()
-      if (afterArrow >= 0) visited.add(afterArrow)
+      const afterArrow = await activeControlId()
+      if (afterArrow !== null) visited.add(afterArrow)
     }
   }
 
-  const missing = controls.filter(({ index }) => !visited.has(index))
+  const missing = controls.filter(({ id }) => !visited.has(id))
   expect(missing, `${description} controls must be reachable by Tab or composite arrows`).toEqual([])
 }
 
