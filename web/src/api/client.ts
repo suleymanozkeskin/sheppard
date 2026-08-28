@@ -22,6 +22,7 @@ import {
   deleteChannelResultSchema,
   closeWorkspaceResultSchema,
   closeTabResultSchema,
+  connectAgentResultSchema,
   createWorkspaceResultSchema,
   createTabResultSchema,
   directListSchema,
@@ -75,6 +76,8 @@ import type {
   ChannelReceipt,
   ChannelList,
   ContextQuery,
+  ConnectAgentRequest,
+  ConnectAgentResult,
   CreateAgentRequest,
   CreateChannelRequest,
   CreateDirectRequest,
@@ -437,6 +440,15 @@ export class HttpMsgrApi implements MsgrApi {
     )
   }
 
+  public connectAgent(paneId: string, request: ConnectAgentRequest): ApiResult<ConnectAgentResult> {
+    return this.request(
+      "POST",
+      `/api/herdr/agents/${encodeURIComponent(paneId)}/connect`,
+      connectAgentResultSchema,
+      request,
+    )
+  }
+
   public promptAgent(paneId: string, request: PromptAgentRequest): ApiResult<PromptAgentResult> {
     return this.request(
       "POST",
@@ -712,6 +724,7 @@ function operationForRequest(method: HttpMethod, path: string): Operation {
   if (path === "/api/herdr/model-catalogue" && method === "GET") return "listModelCatalogue"
   if (path === "/api/herdr/model-catalogue" && method === "POST") return "refreshModelCatalogue"
   if (path === "/api/herdr/agents" && method === "POST") return "spawnAgent"
+  if (path.startsWith("/api/herdr/agents/") && path.endsWith("/connect") && method === "POST") return "connectAgent"
   if (path.startsWith("/api/herdr/agents/") && path.endsWith("/prompt") && method === "POST") return "promptAgent"
   if (path.startsWith("/api/herdr/agents/") && method === "DELETE") return "stopAgent"
   if (path.includes("/broadcast")) return "broadcastWorkspace"

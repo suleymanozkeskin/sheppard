@@ -721,6 +721,22 @@ export class Store {
     return row === null ? null : toParticipant(row);
   }
 
+  /** Returns the active pane-scoped identity for one durable terminal. */
+  findActiveAgentByTerminal(terminalId: string): Participant | null {
+    const row = this.db
+      .query<ParticipantRow, { terminalId: string }>(
+        `SELECT * FROM participants
+          WHERE terminal_id = $terminalId
+            AND kind = 'agent'
+            AND route_state = 'active'
+            AND deactivated = 0
+          ORDER BY id DESC
+          LIMIT 1`,
+      )
+      .get({ terminalId });
+    return row === null ? null : toParticipant(row);
+  }
+
   /** Returns the public roster without tokens or internal participant ids. */
   listParticipants(): ParticipantRosterEntry[] {
     const rows = this.db

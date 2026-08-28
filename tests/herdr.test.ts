@@ -39,8 +39,8 @@ const PANE_LIST = JSON.stringify({
         focused: false,
         pane_id: "w1H:p4",
         terminal_id: "term_6593b7c0b71d34a",
-        cwd: "/Users/suleyman/Desktop/Personal-Projects",
-        foreground_cwd: "/Users/suleyman/Desktop/Personal-Projects/sheppard",
+        cwd: "/workspace/projects",
+        foreground_cwd: "/workspace/projects/sheppard",
         terminal_title: "✳ Raw title",
         terminal_title_stripped: "Review worker",
         tab_id: "w1H:t1",
@@ -51,7 +51,7 @@ const PANE_LIST = JSON.stringify({
         focused: true,
         pane_id: "w1H:pA",
         terminal_id: "term_659314e709c2040",
-        cwd: "/Users/suleyman/Desktop/Personal-Projects/raw-cwd",
+        cwd: "/workspace/projects/raw-cwd",
         terminal_title: "Raw title",
         tab_id: "w1H:t6",
         workspace_id: "w1H",
@@ -73,7 +73,7 @@ describe("pane list", () => {
           agentStatus: "idle",
           focused: false,
           terminalTitle: "Review worker",
-          cwd: "/Users/suleyman/Desktop/Personal-Projects/sheppard",
+          cwd: "/workspace/projects/sheppard",
         },
         {
           paneId: "w1H:pA",
@@ -82,7 +82,7 @@ describe("pane list", () => {
           agentStatus: "unknown",
           focused: true,
           terminalTitle: "Raw title",
-          cwd: "/Users/suleyman/Desktop/Personal-Projects/raw-cwd",
+          cwd: "/workspace/projects/raw-cwd",
         },
       ]);
       expect(panes[0]?.tabId).toBe("w1H:t1");

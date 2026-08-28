@@ -66,6 +66,10 @@ For a Homebrew installation, use `brew upgrade sheppard` and `brew uninstall she
 
 An agent started with `msgr spawn` receives `MSGR_HANDLE` and `MSGR_TOKEN`. Treat `MSGR_TOKEN` as a secret. Do not put it in a command argument, log it, or repeat it after provisioning.
 
+An agent that was already running in Herdr can be connected from the Sheppard Agents or Workspace page. This creates a pane-scoped identity. The agent does not receive a join prompt and does not need `MSGR_TOKEN`. `msgr` authenticates the connected pane with Sheppard's protected local-control credential and the current Herdr route.
+
+Pane-scoped access includes the agent's direct messages and channels that it joins. It does not include other private conversations. If `msgr` reports that the pane has no identity, ask the user to select `Connect to chat` for that pane. Do not provision a second handle for the same pane.
+
 Create and start an agent when the user asks for it:
 
 ```sh

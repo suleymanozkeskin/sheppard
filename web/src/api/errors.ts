@@ -13,7 +13,7 @@ export type Operation =
   | "listHarnesses" | "listLaunchers" | "createLauncher" | "updateLauncher" | "deleteLauncher"
   | "listRoles" | "getRole" | "createRole" | "updateRole" | "updateRoleRuntime" | "deleteRole"
   | "listModels" | "createModel" | "listModelCatalogue" | "refreshModelCatalogue"
-  | "spawnAgent" | "stopAgent" | "promptAgent"
+  | "spawnAgent" | "connectAgent" | "stopAgent" | "promptAgent"
 
 const responseBodySchema = v.object({
   code: v.optional(v.string()),

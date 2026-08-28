@@ -16,6 +16,7 @@ import {
   BASE,
   TEST_HERDR_SOCKET_PATH,
   auth,
+  controlAuth,
   operatorAuth,
   provision,
   testHub,
@@ -27,6 +28,16 @@ const decoder = new TextDecoder();
 function inPane(token: string, terminalId: string, paneId: string, occupant = "claude") {
   return {
     ...auth(token),
+    "x-msgr-terminal-id": terminalId,
+    "x-msgr-pane-id": paneId,
+    "x-msgr-occupant": occupant,
+    "x-msgr-herdr-socket-path": TEST_HERDR_SOCKET_PATH,
+  };
+}
+
+function inConnectedPane(terminalId: string, paneId: string, occupant = "codex") {
+  return {
+    ...controlAuth(),
     "x-msgr-terminal-id": terminalId,
     "x-msgr-pane-id": paneId,
     "x-msgr-occupant": occupant,
@@ -1589,6 +1600,148 @@ describe("herdr control plane", () => {
     expect(decoder.decode(changed.value)).toContain('"focused":true');
     await reader.cancel();
     aborter.abort();
+  });
+});
+
+describe("connecting an existing agent pane", () => {
+  function hostingHerdr(agent: string | null = "codex"): FakeHerdr {
+    const herdr = new FakeHerdr();
+    herdr.workspaces = [{ id: "w1", label: "Backend" }];
+    herdr.withPane({
+      paneId: "w1:p1",
+      terminalId: "term-1",
+      workspaceId: "w1",
+      agent,
+    });
+    return herdr;
+  }
+
+  test("the operator creates a pane-scoped identity without a prompt or returned token", async () => {
+    const hub = testHub();
+    const herdr = hostingHerdr();
+    hub.hub.herdr = herdr;
+    const operator = await operatorAuth(hub);
+
+    const response = await hub.post(
+      "/api/herdr/agents/w1%3Ap1/connect",
+      { handle: "lead-2" },
+      operator,
+    );
+    expect(response.status).toBe(201);
+    const raw = await response.text();
+    expect(JSON.parse(raw)).toEqual({ handle: "lead-2", paneId: "w1:p1" });
+    expect(raw).not.toContain("token");
+    expect(herdr.prompts).toHaveLength(0);
+    expect(hub.hub.store.findByHandle("lead-2")).toMatchObject({
+      kind: "agent",
+      terminalId: "term-1",
+      paneId: "w1:p1",
+      occupantAgent: "codex",
+      routeState: "active",
+    });
+
+    const identity = await hub.get("/api/herdr/agents/w1%3Ap1");
+    expect(await identity.json()).toEqual({ handle: "lead-2" });
+    expect((await hub.get("/api/inbox", inConnectedPane("term-1", "w1:p1"))).status).toBe(200);
+  });
+
+  test("only the operator can connect a pane that has an agent occupant", async () => {
+    const hub = testHub();
+    const herdr = hostingHerdr();
+    hub.hub.herdr = herdr;
+
+    expect(
+      (await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "lead-2" })).status,
+    ).toBe(401);
+    const agentToken = await provision(hub, "requester");
+    expect(
+      (
+        await hub.post(
+          "/api/herdr/agents/w1%3Ap1/connect",
+          { handle: "lead-2" },
+          auth(agentToken),
+        )
+      ).status,
+    ).toBe(403);
+    expect(hub.hub.store.findByHandle("lead-2")).toBeNull();
+    expect(herdr.prompts).toHaveLength(0);
+
+    const emptyHub = testHub();
+    const emptyHerdr = hostingHerdr(null);
+    emptyHub.hub.herdr = emptyHerdr;
+    const operator = await operatorAuth(emptyHub);
+    expect(
+      (
+        await emptyHub.post(
+          "/api/herdr/agents/w1%3Ap1/connect",
+          { handle: "empty-pane" },
+          operator,
+        )
+      ).status,
+    ).toBe(400);
+    expect(emptyHub.hub.store.findByHandle("empty-pane")).toBeNull();
+  });
+
+  test("pane-scoped access requires the local control credential and exact Herdr route", async () => {
+    const hub = testHub();
+    const herdr = hostingHerdr();
+    hub.hub.herdr = herdr;
+    const operator = await operatorAuth(hub);
+    expect(
+      (
+        await hub.post(
+          "/api/herdr/agents/w1%3Ap1/connect",
+          { handle: "lead-2" },
+          operator,
+        )
+      ).status,
+    ).toBe(201);
+
+    const valid = inConnectedPane("term-1", "w1:p1");
+    const missingControl = {
+      "x-msgr-terminal-id": "term-1",
+      "x-msgr-pane-id": "w1:p1",
+      "x-msgr-occupant": "codex",
+      "x-msgr-herdr-socket-path": TEST_HERDR_SOCKET_PATH,
+    };
+    const refused: Array<readonly [Record<string, string>, number]> = [
+      [missingControl, 401],
+      [{ ...valid, "x-msgr-control-token": "wrong" }, 401],
+      [{ ...valid, "x-msgr-terminal-id": "term-2" }, 401],
+      [{ ...valid, "x-msgr-pane-id": "w1:p2" }, 401],
+      [{ ...valid, "x-msgr-occupant": "claude" }, 401],
+      [{ ...valid, "x-msgr-herdr-socket-path": "/tmp/another-herdr.sock" }, 403],
+    ];
+    for (const [headers, status] of refused) {
+      expect((await hub.get("/api/inbox", headers)).status).toBe(status);
+    }
+  });
+
+  test("a pane change during connection deactivates the new identity", async () => {
+    const hub = testHub();
+    const herdr = hostingHerdr();
+    herdr.afterList = () => {
+      const pane = herdr.panes[0];
+      if (herdr.listCalls === 1 && pane !== undefined) {
+        herdr.panes[0] = { ...pane, agent: "claude" };
+      }
+    };
+    hub.hub.herdr = herdr;
+    const operator = await operatorAuth(hub);
+
+    const response = await hub.post(
+      "/api/herdr/agents/w1%3Ap1/connect",
+      { handle: "raced-agent" },
+      operator,
+    );
+    expect(response.status).toBe(400);
+    expect(hub.hub.store.findByHandle("raced-agent")).toMatchObject({
+      deactivated: true,
+      routeState: "stale",
+      terminalId: null,
+      paneId: null,
+    });
+    expect(herdr.prompts).toHaveLength(0);
   });
 });
 

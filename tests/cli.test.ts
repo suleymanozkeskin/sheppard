@@ -262,7 +262,7 @@ describe("identity", () => {
     expect(outcome.err).toContain("msgr spawn");
   });
 
-  test("a routed pane without a token names its bound identity", async () => {
+  test("a connected pane uses its route without a participant token", async () => {
     const herdrSocketPath = "/tmp/msgr-cli-herdr.sock";
     const harness = hub({ herdrSocketPath });
     const token = await provisionAgent(harness, "bound");
@@ -281,10 +281,9 @@ describe("identity", () => {
 
     const outcome = await harness.run(["inbox"], { herdr, herdrSocketPath });
 
-    expect(outcome.code).toBe(1);
-    expect(outcome.err).toContain('bound to the identity "bound"');
-    expect(outcome.err).toContain("msgr spawn bound -- <command...>");
-    expect(outcome.err).not.toContain("msgr provision bound");
+    expect(outcome.code).toBe(0);
+    expect(outcome.out).toBe("No channels joined. Run: msgr join <channel>");
+    expect(outcome.err).toBe("");
   });
 
   test("a token that was never issued is refused", async () => {

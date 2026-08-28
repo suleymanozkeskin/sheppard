@@ -173,9 +173,9 @@ async function installDirectoryApiMocks(
       return
     }
     if (url.pathname === "/api/herdr/directories") {
-      const currentPath = url.searchParams.get("path") ?? "/Users/suleyman/Desktop/Personal-Projects"
+      const currentPath = url.searchParams.get("path") ?? "/workspace/projects"
       const parentPath = currentPath === "/" ? null : currentPath.replace(/\/[^/]+$/u, "") || "/"
-      const directories = currentPath === "/Users/suleyman/Desktop/Personal-Projects"
+      const directories = currentPath === "/workspace/projects"
         ? ["sheppard", "herdr-contribute"].map((name) => ({ name, path: `${currentPath}/${name}` }))
         : currentPath.endsWith("/sheppard")
           ? ["src", "tests", "web"].map((name) => ({ name, path: `${currentPath}/${name}` }))
@@ -246,12 +246,12 @@ test("@guard workspace creation uses the folder picker and keeps path entry", as
   await page.getByRole("button", { name: "Choose folder" }).click()
   const picker = page.locator('[data-workspace-directory-picker="true"]')
   await expect(picker).toBeVisible()
-  await expect(picker).toContainText("/Users/suleyman/Desktop/Personal-Projects")
+  await expect(picker).toContainText("/workspace/projects")
   await picker.getByRole("button", { name: "sheppard" }).click()
-  await expect(picker).toContainText("/Users/suleyman/Desktop/Personal-Projects/sheppard")
+  await expect(picker).toContainText("/workspace/projects/sheppard")
   await picker.getByRole("button", { name: "Use this folder" }).click()
   await expect(picker).toHaveCount(0)
-  await expect(page.locator("#workspace-cwd")).toHaveValue("/Users/suleyman/Desktop/Personal-Projects/sheppard")
+  await expect(page.locator("#workspace-cwd")).toHaveValue("/workspace/projects/sheppard")
   await expect(page.locator("#workspace-cwd")).toBeEditable()
 })
 

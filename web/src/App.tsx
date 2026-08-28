@@ -528,7 +528,7 @@ function AgentSidebarPanel({ controller, router }: { controller: AppController; 
   const [query, setQuery] = useState("")
   const [menu, setMenu] = useState<{ pane: HerdrPaneView; x: number; y: number } | undefined>()
   const allAgents = useMemo<SidebarAgentEntry[]>(
-    () => controller.workspaceData.settledWorkspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.agentKind === null ? [] : [{ identity: paneIdentity(pane), pane, workspace }])).toSorted((left, right) =>
+    () => controller.workspaceData.settledWorkspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.agentKind === null ? [] : [{ identity: paneIdentity(pane, workspace), pane, workspace }])).toSorted((left, right) =>
       sidebarAgentStatusRank[left.pane.agentStatus] - sidebarAgentStatusRank[right.pane.agentStatus]
       || left.identity.localeCompare(right.identity)),
     [controller.workspaceData.settledWorkspaces],
@@ -559,6 +559,8 @@ function AgentSidebarPanel({ controller, router }: { controller: AppController; 
     return () => globalThis.removeEventListener("msgr:context-menu", handleMenuRequest)
   }, [allAgents])
 
+  const menuEntry = menu === undefined ? undefined : allAgents.find((entry) => entry.pane.paneId === menu.pane.paneId)
+
   return (
     <>
       <SidebarPanelHeader
@@ -572,26 +574,34 @@ function AgentSidebarPanel({ controller, router }: { controller: AppController; 
         {controller.workspaceData.workspaceState.status === "ready" && agents.length === 0 && <SidebarMessageRow>{query.length === 0 ? "No agents are running." : "No matching agents."}</SidebarMessageRow>}
         <nav aria-label="Agents">
           {controller.workspaceData.workspaceState.status === "ready" && agents.map((entry) => {
-            const destination: ShellRoute = entry.pane.participant === null
-              ? { kind: "workspace", workspaceId: entry.workspace.id }
-              : { handle: entry.pane.participant, kind: "agent" }
+            const participant = entry.pane.participant
+            const linked = participant !== null
+            const destination: Extract<ShellRoute, { kind: "agent" }> | undefined = participant !== null
+              ? { handle: participant, kind: "agent" }
+              : undefined
+            const rowClassName = "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium"
+            const rowContents = (
+              <>
+                <AgentStatusOrb ariaLabel={`Status: ${paneStatusLabel(entry.pane)}`} size={20} status={entry.pane.agentStatus} />
+                <AgentAvatar agentKind={entry.pane.agentKind} className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1" data-agent-identity>
+                  <span className="block truncate font-medium">{entry.identity}</span>
+                  <span className="block truncate text-[10px] text-sidebar-foreground/45">{formatWorkspaceLabel(entry.workspace)} · {linked ? paneStatusLabel(entry.pane) : "connect to chat"}</span>
+                </span>
+              </>
+            )
             return (
               <div className="group flex h-10 min-w-0 items-center gap-1 [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-pane-id={entry.pane.paneId} data-pane-status={paneStatusLabel(entry.pane)} key={`${entry.workspace.id}:${entry.pane.paneId}`} onContextMenu={(event) => { event.preventDefault(); setMenu({ pane: entry.pane, x: event.clientX, y: event.clientY }) }}>
-                <a aria-current={entry.pane.participant === selectedHandle ? "page" : undefined} className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium" href={shellRoutePath(destination)} onClick={(event) => { if (!shouldHandleClientNavigation(event)) return; event.preventDefault(); router.navigate(destination) }} title={paneTitle(entry.pane)}>
-                  <AgentStatusOrb ariaLabel={`Status: ${paneStatusLabel(entry.pane)}`} size={20} status={entry.pane.agentStatus} />
-                  <AgentAvatar agentKind={entry.pane.agentKind} className="size-4 shrink-0" />
-                  <span className="min-w-0 flex-1" data-agent-identity>
-                    <span className="block truncate font-medium">{entry.identity}</span>
-                    <span className="block truncate text-[10px] text-sidebar-foreground/45">{formatWorkspaceLabel(entry.workspace)} · {paneStatusLabel(entry.pane)}</span>
-                  </span>
-                </a>
+                {destination === undefined
+                  ? <button aria-label={`Connect ${entry.identity} to Sheppard chat`} className={rowClassName} onClick={() => controller.openConnectPane(entry.pane, entry.identity)} title={`Connect ${entry.identity} to Sheppard chat`} type="button">{rowContents}</button>
+                  : <a aria-current={entry.pane.participant === selectedHandle ? "page" : undefined} className={rowClassName} href={shellRoutePath(destination)} onClick={(event) => { if (!shouldHandleClientNavigation(event)) return; event.preventDefault(); router.navigate(destination) }} title={paneTitle(entry.pane)}>{rowContents}</a>}
                 <Button aria-haspopup="menu" aria-label={`More actions for ${entry.identity}`} className="shrink-0 text-sidebar-foreground/50 focus-visible:ring-2 focus-visible:ring-sidebar-ring" data-menu-trigger="pane" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setMenu({ pane: entry.pane, x: rect.right, y: rect.bottom }) }} size="icon-xs" title="Agent actions" type="button" variant="ghost"><MoreHorizontal aria-hidden="true" /></Button>
               </div>
             )
           })}
         </nav>
       </div>
-      {menu !== undefined && <PaneContextMenu canWrite={controller.identity !== null} onClose={() => setMenu(undefined)} onClosePane={() => { controller.openClosePane(menu.pane); setMenu(undefined) }} onMessage={(handle) => { controller.startDirect(handle); setMenu(undefined) }} onStopAgent={() => { controller.openStopAgent(menu.pane); setMenu(undefined) }} pane={menu.pane} position={{ x: menu.x, y: menu.y }} />}
+      {menu !== undefined && menuEntry !== undefined && <PaneContextMenu canWrite={controller.identity !== null} onClose={() => setMenu(undefined)} onClosePane={() => { controller.openClosePane(menu.pane); setMenu(undefined) }} onConnect={() => { controller.openConnectPane(menu.pane, menuEntry.identity); setMenu(undefined) }} onMessage={(handle) => { controller.startDirect(handle); setMenu(undefined) }} onOpenWorkspace={() => { router.navigate({ kind: "workspace", workspaceId: menuEntry.workspace.id }); setMenu(undefined) }} onStopAgent={() => { controller.openStopAgent(menu.pane); setMenu(undefined) }} pane={menu.pane} position={{ x: menu.x, y: menu.y }} />}
     </>
   )
 }
@@ -1677,32 +1687,40 @@ interface PaneContextMenuProps {
   canWrite: boolean
   onClose: () => void
   onClosePane: () => void
+  onConnect: () => void
   onMessage: (handle: string) => void
+  onOpenWorkspace: () => void
   onStopAgent: () => void
   pane: HerdrPaneView
   position: { x: number; y: number }
 }
 
-function PaneContextMenu({ canWrite, onClose, onClosePane, onMessage, onStopAgent, pane, position }: PaneContextMenuProps) {
+function PaneContextMenu({ canWrite, onClose, onClosePane, onConnect, onMessage, onOpenWorkspace, onStopAgent, pane, position }: PaneContextMenuProps) {
   const identity = paneIdentity(pane)
+  const participant = pane.participant
   const stopConfirm = paneStopConfirmation(pane)
   const stopAvailable = pane.agentKind !== null && stopConfirm !== null && stopConfirm.length > 0
   const closeAvailable = pane.agentKind === null && pane.label !== null && pane.label.length > 0
   const items = useMemo<ContextMenuItem[]>(() => [
-    {
+    ...(participant === null ? [{
+      action: onConnect,
+      disabled: !canWrite,
+      id: "connect-pane",
+      label: "Connect to Sheppard",
+      title: canWrite ? "Create a pane-scoped chat identity" : NOT_CONNECTED_REASON,
+    }] : [{
       action: () => {
-        if (pane.participant !== null) onMessage(pane.participant)
+        onMessage(participant)
       },
-      disabled: pane.participant === null,
       id: "message",
       label: "Message this agent",
-      title: pane.participant === null ? "This pane has no messenger participant" : undefined,
-    },
+    }]),
+    { action: onOpenWorkspace, id: "open-workspace", label: "Open workspace" },
     ...(stopAvailable ? [{ action: onStopAgent, disabled: !canWrite, id: "stop-agent", label: "Stop agent", title: canWrite ? undefined : NOT_CONNECTED_REASON }] : []),
     ...(closeAvailable ? [{ action: onClosePane, disabled: !canWrite, id: "close-pane", label: "Close pane", title: canWrite ? undefined : NOT_CONNECTED_REASON }] : []),
-    { action: () => copyMenuValue(pane.participant ?? pane.paneId, onClose), id: pane.participant === null ? "copy-pane-id" : "copy-handle", label: pane.participant === null ? "Copy pane id" : "Copy handle" },
-    ...(pane.participant === null ? [] : [{ action: () => copyMenuValue(pane.paneId, onClose), id: "copy-pane-id", label: "Copy pane id" }]),
-  ], [canWrite, closeAvailable, onClose, onClosePane, onMessage, onStopAgent, pane.participant, pane.paneId, stopAvailable])
+    { action: () => copyMenuValue(participant ?? pane.paneId, onClose), id: participant === null ? "copy-pane-id" : "copy-handle", label: participant === null ? "Copy pane id" : "Copy handle" },
+    ...(participant === null ? [] : [{ action: () => copyMenuValue(pane.paneId, onClose), id: "copy-pane-id", label: "Copy pane id" }]),
+  ], [canWrite, closeAvailable, onClose, onClosePane, onConnect, onMessage, onOpenWorkspace, onStopAgent, pane.paneId, participant, stopAvailable])
   return <ContextMenu items={items} kind="pane" label={`Actions for ${identity}`} onClose={onClose} position={position} />
 }
 
@@ -2224,14 +2242,20 @@ function Composer({
 
 function LifecycleOverlays({ controller }: { controller: AppController }) {
   const {
+    closeConnectPane,
     closePaneConfirm,
     closePaneOpen,
     closePaneState,
     closePaneTarget,
     handleClosePaneSubmit,
+    handleConnectPaneSubmit,
     handleStopAgentSubmit,
+    connectPaneHandle,
+    connectPaneState,
+    connectPaneTarget,
     setClosePaneConfirm,
     setClosePaneOpen,
+    setConnectPaneHandle,
     setStopAgentConfirm,
     setStopAgentOpen,
     stopAgentConfirm,
@@ -2263,7 +2287,62 @@ function LifecycleOverlays({ controller }: { controller: AppController }) {
           state={closePaneState}
         />
       )}
+      {connectPaneTarget !== undefined && (
+        <ConnectPaneDialog
+          handle={connectPaneHandle}
+          onClose={closeConnectPane}
+          onHandleChange={setConnectPaneHandle}
+          onSubmit={handleConnectPaneSubmit}
+          state={connectPaneState}
+          target={connectPaneTarget}
+        />
+      )}
     </>
+  )
+}
+
+interface ConnectPaneDialogProps {
+  handle: string
+  onClose: () => void
+  onHandleChange: (value: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  state: WorkspaceActionState
+  target: { label: string; pane: HerdrPaneView }
+}
+
+function ConnectPaneDialog({ handle, onClose, onHandleChange, onSubmit, state, target }: ConnectPaneDialogProps) {
+  return (
+    <KeyboardOverlay className="max-w-md" dataDialog="connect-pane" labelledBy="connect-pane-title" onClose={onClose} scope="dialog">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="truncate text-base font-semibold" id="connect-pane-title">Connect {target.label}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">This creates a Sheppard identity for the live Herdr pane. The agent can read its direct messages and channels that it joins. It cannot read other private conversations.</p>
+        </div>
+        <Button aria-label="Close connect pane" onClick={onClose} size="icon" type="button" variant="ghost"><X aria-hidden="true" /></Button>
+      </div>
+      <p className="mt-4 text-xs text-muted-foreground">Pane <code className="rounded bg-muted px-1 py-0.5 font-mono">{target.pane.paneId}</code></p>
+      <form className="mt-4 space-y-4" onSubmit={onSubmit}>
+        <label className="text-sm font-medium" htmlFor="connect-pane-handle">Chat handle</label>
+        <input
+          autoComplete="off"
+          className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+          data-autofocus
+          id="connect-pane-handle"
+          name="handle"
+          onChange={(event) => onHandleChange(event.target.value)}
+          spellCheck={false}
+          value={handle}
+        />
+        {state.status === "error" && <p className="text-sm text-destructive" role="alert">{state.message}</p>}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="ghost">Cancel</Button>
+          <Button disabled={state.status === "working" || handle.trim().length === 0} type="submit">
+            <MessageCirclePlus aria-hidden="true" />
+            {state.status === "working" ? "Connecting…" : "Connect to chat"}
+          </Button>
+        </div>
+      </form>
+    </KeyboardOverlay>
   )
 }
 

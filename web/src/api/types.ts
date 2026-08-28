@@ -458,6 +458,15 @@ export interface SpawnAgentResult {
   handle: string
 }
 
+export interface ConnectAgentRequest {
+  handle: string
+}
+
+export interface ConnectAgentResult {
+  paneId: string
+  handle: string
+}
+
 export interface StopAgentRequest {
   confirm: string
 }
@@ -609,6 +618,7 @@ export type RequestBody =
   | CreateModelRequest
   | ModelCatalogueRefreshRequest
   | SpawnAgentRequest
+  | ConnectAgentRequest
   | StopAgentRequest
   | PromptAgentRequest
   | AgentSessionSelectionRequest
@@ -684,6 +694,7 @@ export interface MsgrApi {
   refreshModelCatalogue(request: ModelCatalogueRefreshRequest): ApiResult<ModelCatalogueSnapshot>
   createModel(request: CreateModelRequest): ApiResult<ModelEntry>
   spawnAgent(request: SpawnAgentRequest): ApiResult<SpawnAgentResult>
+  connectAgent(paneId: string, request: ConnectAgentRequest): ApiResult<ConnectAgentResult>
   stopAgent(paneId: string, request: StopAgentRequest): ApiResult<StopAgentResult>
   promptAgent(paneId: string, request: PromptAgentRequest): ApiResult<PromptAgentResult>
   listChannels(kind?: "chat" | "workspace"): ApiResult<ChannelList>

@@ -855,6 +855,12 @@ async function openWithTopology(page: Page, options: MockOptions = {}): Promise<
       await fulfillJson(route, options.lifecycle?.modelCatalogueRefresh ?? options.lifecycle?.modelCatalogue ?? mockModelCatalogue)
       return
     }
+    if (url.pathname.startsWith("/api/herdr/agents/") && url.pathname.endsWith("/connect") && method === "POST") {
+      const body = parseJsonObject(route.request().postData() ?? "{}")
+      const paneId = decodeURIComponent(url.pathname.slice("/api/herdr/agents/".length, -"/connect".length))
+      await fulfillJson(route, { handle: body.handle ?? "", paneId })
+      return
+    }
     if (url.pathname === "/api/herdr/agents" && method === "POST") {
       const failure = options.lifecycle?.spawnFailure
       if (failure !== undefined) {
@@ -2844,7 +2850,7 @@ test.describe("UX merge contract", () => {
     ).toContain("0")
   })
 
-  test("@finding 5.2 a pane row names the handle, the label, or the pane id in that order", async ({ page }) => {
+  test("@finding 5.2 a pane row uses the best human-readable identity", async ({ page }) => {
     await openWithTopology(page)
     await page.locator('[data-workspace-id="w1A"] > div > button[aria-expanded]').click()
     const withParticipant = page.locator('[data-pane-id="w1H:p1"]')
@@ -2853,7 +2859,38 @@ test.describe("UX merge contract", () => {
     await expect(page.locator('[data-pane-id="w1H:p3"]')).toHaveAttribute("data-identity-source", "label")
     await expect(page.locator('[data-pane-id="w1H:p3"]')).toContainText("reviewer-pane")
     await expect(page.locator('[data-pane-id="w1H:pB"]')).toHaveAttribute("data-identity-source", "label")
-    await expect(page.locator('[data-pane-id="w1A:p1"]')).toHaveAttribute("data-identity-source", "pane-id")
+    await expect(page.locator('[data-pane-id="w1A:p1"]')).toHaveAttribute("data-identity-source", "tab-label")
+    await expect(page.locator('[data-pane-id="w1A:p1"]')).toContainText("Main")
+  })
+
+  test("@guard an existing Herdr agent connects to chat without a pane prompt", async ({ page }) => {
+    const connectRequests: Array<{ body: JsonObject; path: string }> = []
+    const promptPaths: string[] = []
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname
+      if (request.method() === "POST" && path.endsWith("/connect")) {
+        connectRequests.push({ body: parseJsonObject(request.postData() ?? "{}"), path })
+      }
+      if (request.method() === "POST" && path.endsWith("/prompt")) promptPaths.push(path)
+    })
+    await openWithTopology(page)
+    await page.locator('[data-quick-nav-item="agents"]').click()
+
+    const directory = page.locator('[data-directory="agents"]')
+    await directory.getByRole("button", { name: "Connect Main to Sheppard chat", exact: true }).click()
+    const dialog = page.locator('[data-dialog="connect-pane"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator("#connect-pane-handle")).toHaveValue("main")
+    await dialog.locator("#connect-pane-handle").fill("lead-2")
+    await dialog.getByRole("button", { name: "Connect to chat", exact: true }).click()
+
+    await expect.poll(() => connectRequests.length).toBe(1)
+    expect(connectRequests[0]).toEqual({
+      body: { handle: "lead-2" },
+      path: "/api/herdr/agents/w1A%3Ap1/connect",
+    })
+    expect(promptPaths).toHaveLength(0)
+    await expect(page).toHaveURL(/\/agents\/lead-2$/)
   })
 
   test("@finding 5.2 a pane with no agent reads as an empty pane", async ({ page }) => {
@@ -3624,12 +3661,15 @@ test.describe("channels directory", () => {
     await expect(detail.locator('[data-agent-channel="ops"] [data-agent-unread="37"]')).toHaveText("37 unread")
     await expect(detail.locator('[data-agent-activity="3"]')).toContainText("Smoke checks passed in staging")
     await expect(detail.getByText("Agent details", { exact: true })).toHaveCount(0)
-    await expect(detail.getByRole("button", { name: "Message", exact: true })).toHaveCount(0)
+    await expect(detail.getByRole("button", { name: "Message", exact: true })).toHaveCount(1)
 
     await detail.getByRole("button", { name: "Focus pane", exact: true }).click()
     await expect.poll(() => focusPath).not.toBe("")
     expect(focusMethod).toBe("POST")
     expect(decodeURIComponent(focusPath)).toBe("/api/herdr/tabs/w1H:tab-agent/focus")
+
+    await detail.getByRole("button", { name: "Message", exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`/direct/${directChannel}$`))
   })
 
   test("@guard agent detail falls back to the pane label when no terminal title is reported", async ({ page }) => {
@@ -3749,6 +3789,42 @@ test.describe("channels directory", () => {
     await expect.poll(() => promptPosts.length, { message: "the prompt must reach the pane endpoint" }).toBe(1)
     expect(JSON.parse(promptPosts[0] ?? "{}")).toEqual({ text: "git status" })
     expect(messagePosts.length - messagesBefore, "a prompt must never post a message").toBe(0)
+  })
+
+  test("@guard the agent Message action starts a direct message when no thread exists", async ({ page }) => {
+    const agentPane: JsonObject = {
+      agentKind: "codex",
+      agentStatus: "idle",
+      focused: false,
+      label: "lead-pane",
+      paneId: "w1H:p1",
+      participant: "lead-2",
+      participantRouteState: "active",
+    }
+    await openWithTopology(page, {
+      topology: {
+        workspaces: [{
+          id: "w1H",
+          label: "Personal-Projects",
+          panes: [agentPane],
+          tabs: [{ id: "w1H:tab-agent", label: "Lead", panes: [agentPane] }],
+        }],
+      },
+    })
+    await page.route("**/api/agents/lead-2", async (route) => {
+      await fulfillJson(route, {
+        channels: [],
+        pane: agentPane,
+        participant: { agentKind: "codex", handle: "lead-2", kind: "agent", lastSeenAt: null, routeState: "active" },
+        recentMessageIds: [],
+        routeState: "active",
+      })
+    })
+
+    await page.goto("/agents/lead-2")
+    await page.getByRole("button", { name: "Message", exact: true }).click()
+    await expect(page).toHaveURL(/\/direct\/new$/)
+    await expect(page.locator("#direct-recipients")).toHaveValue("lead-2")
   })
 
   /**

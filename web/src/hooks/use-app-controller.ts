@@ -17,7 +17,7 @@ import { useLiveMessages } from "@/hooks/use-live-messages"
 import { useSearch } from "@/hooks/use-search"
 import type { ShellNavigate, ShellRoute } from "@/shell-routing"
 import { applyTheme, DEFAULT_THEME_MODE, loadThemeMode, nextThemeMode, prefersDarkTheme, resolveTheme, saveThemeMode, type ThemeMode } from "@/theme"
-import { paneStopConfirmation, unmanagedAgentCount } from "@/workspace-presentation"
+import { paneIdentity, paneStopConfirmation, suggestedPaneHandle, unmanagedAgentCount } from "@/workspace-presentation"
 import {
   bindingConflicts,
   defaultBindings,
@@ -46,6 +46,11 @@ export type WorkspaceActionState =
   | { status: "idle" }
   | { status: "working" }
   | { status: "error"; message: string }
+
+interface ConnectPaneTarget {
+  label: string
+  pane: HerdrPaneView
+}
 
 export type WorkspaceDirectoryPickerState =
   | { status: "closed" }
@@ -284,6 +289,9 @@ export function useAppController(
   const [closePaneTarget, setClosePaneTarget] = useState<HerdrPaneView | undefined>()
   const [closePaneConfirm, setClosePaneConfirm] = useState("")
   const [closePaneState, setClosePaneState] = useState<WorkspaceActionState>({ status: "idle" })
+  const [connectPaneTarget, setConnectPaneTarget] = useState<ConnectPaneTarget | undefined>()
+  const [connectPaneHandle, setConnectPaneHandle] = useState("")
+  const [connectPaneState, setConnectPaneState] = useState<WorkspaceActionState>({ status: "idle" })
   const pendingInboxJumpRef = useRef<string | undefined>(undefined)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -948,6 +956,40 @@ export function useAppController(
     setStopAgentOpen(true)
   }, [identity])
 
+  const openConnectPane = useCallback((pane: HerdrPaneView, label = paneIdentity(pane)) => {
+    if (identity === null) {
+      setStorageNotice(NOT_CONNECTED_REASON)
+      return
+    }
+    if (pane.agentKind === null) return
+    setConnectPaneTarget({ label, pane })
+    setConnectPaneHandle(suggestedPaneHandle(label, pane.paneId))
+    setConnectPaneState({ status: "idle" })
+  }, [identity])
+
+  const closeConnectPane = useCallback(() => {
+    setConnectPaneTarget(undefined)
+    setConnectPaneHandle("")
+    setConnectPaneState({ status: "idle" })
+  }, [])
+
+  const handleConnectPaneSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const target = connectPaneTarget
+    const handle = connectPaneHandle.trim()
+    if (target === undefined || handle.length === 0 || identity === null) return
+    setConnectPaneState({ status: "working" })
+    void apiCall(api, fallbackApi, (client) => client.connectAgent(target.pane.paneId, { handle })).then((result) => result.match({
+      ok: (connected) => {
+        closeConnectPane()
+        workspaceData.reloadWorkspaces()
+        setStorageNotice(`${connected.handle} is connected to Sheppard chat.`)
+        navigateShell({ handle: connected.handle, kind: "agent" })
+      },
+      err: (error) => setConnectPaneState({ message: formatApiError(error), status: "error" }),
+    }))
+  }, [api, closeConnectPane, connectPaneHandle, connectPaneTarget, fallbackApi, identity, navigateShell, workspaceData])
+
   const openClosePane = useCallback((pane: HerdrPaneView) => {
     if (identity === null) {
       setStorageNotice(NOT_CONNECTED_REASON)
@@ -1340,6 +1382,10 @@ export function useAppController(
   }, [])
 
   const closeTopOverlay = useCallback(() => {
+    if (connectPaneTarget !== undefined) {
+      closeConnectPane()
+      return
+    }
     if (stopAgentOpen) {
       setStopAgentOpen(false)
       return
@@ -1374,7 +1420,7 @@ export function useAppController(
     }
     const active = globalThis.document.activeElement
     if (active instanceof HTMLElement) active.blur()
-  }, [attachmentInputOpen, channelPickerOpen, closePaneOpen, helpOpen, inboxOpen, membersOpen, settingsOpen, stopAgentOpen, toggleAttachmentInput])
+  }, [attachmentInputOpen, channelPickerOpen, closeConnectPane, closePaneOpen, connectPaneTarget, helpOpen, inboxOpen, membersOpen, settingsOpen, stopAgentOpen, toggleAttachmentInput])
 
   const openFocusedPaneAction = useCallback((action: "stop" | "close") => {
     const paneId = globalThis.document.activeElement instanceof HTMLElement
@@ -1638,16 +1684,23 @@ export function useAppController(
     closePaneTarget,
     closePaneConfirm,
     closePaneState,
+    connectPaneTarget,
+    connectPaneHandle,
+    connectPaneState,
     handleStopAgentSubmit,
     handleClosePaneSubmit,
+    handleConnectPaneSubmit,
     openSpawnAgent,
     openAddReporter,
     openStopAgent,
     openClosePane,
+    openConnectPane,
+    closeConnectPane,
     setStopAgentConfirm,
     setStopAgentOpen,
     setClosePaneConfirm,
     setClosePaneOpen,
+    setConnectPaneHandle,
     workspaceHistoryChannels,
     workspaceBroadcastBody,
     workspaceBroadcastId,

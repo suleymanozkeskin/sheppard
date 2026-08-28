@@ -248,10 +248,30 @@ export function authenticate(
   request: Request,
   store: Store,
   herdrSocketPath: string | null,
+  allowPaneIdentity = false,
 ): Result<Participant, Unauthorized | HerdrSessionMismatch | ValidationFailed> {
   const token = presentedToken(request);
   if (token.isErr()) return Result.err(token.error);
-  if (token.value === null) return Result.err(unauthorized());
+  if (token.value === null) {
+    if (!allowPaneIdentity) return Result.err(unauthorized());
+    const route = routeFromHeaders(request);
+    if (route.isErr()) return Result.err(route.error);
+    if (route.value === null) return Result.err(unauthorized());
+    if (herdrSocketPath === null || request.headers.get(HERDR_SOCKET_HEADER) !== herdrSocketPath) {
+      return Result.err(herdrSessionMismatch());
+    }
+    const participant = store.findActiveAgentByTerminal(route.value.terminalId);
+    if (
+      participant === null ||
+      participant.paneId !== route.value.paneId ||
+      participant.occupantAgent === null ||
+      participant.occupantAgent !== route.value.occupantAgent
+    ) {
+      return Result.err(unauthorized());
+    }
+    store.markSeen(participant.id);
+    return Result.ok(participant);
+  }
 
   const participant = store.findByToken(token.value);
   if (participant === null) return Result.err(unauthorized());

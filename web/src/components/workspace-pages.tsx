@@ -7,6 +7,7 @@ import {
   CircleAlert,
   Copy,
   MessageCircle,
+  MessageCirclePlus,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -35,7 +36,7 @@ import {
   isEmptyPane,
   matchedParticipantCount,
   unmanagedAgentCount,
-  paneIdentity,
+  paneIdentityDetails,
   paneStopConfirmation,
   paneStatusLabel,
   workspaceLabel,
@@ -284,19 +285,20 @@ function PaneStatus({ pane }: { pane: HerdrPaneView }) {
   return (
     <span className="inline-flex items-center gap-2 text-xs">
       <span aria-hidden="true" className={cn("size-2 rounded-full", empty ? "border border-current bg-transparent" : statusClass[pane.agentStatus])} />
-      <span>{paneStatusLabel(pane)}{pane.agentKind !== null && pane.participant === null ? " · not linked to chat" : ""}</span>
+      <span>{paneStatusLabel(pane)}{pane.agentKind !== null && pane.participant === null ? " · not connected to chat" : ""}</span>
     </span>
   )
 }
 
-function PaneActions({ controller, navigate, pane }: { controller: AppController; navigate: WorkspaceNavigate; pane: HerdrPaneView }) {
-  const direct = pane.participant === null
+function PaneActions({ controller, identity, navigate, pane }: { controller: AppController; identity: string; navigate: WorkspaceNavigate; pane: HerdrPaneView }) {
+  const participant = pane.participant
+  const direct = participant === null
     ? undefined
-    : controller.directConversations.find((conversation) => conversation.participants.includes(pane.participant ?? ""))
+    : controller.directConversations.find((conversation) => conversation.participants.includes(participant))
   const openMessage = () => {
-    if (pane.participant === null) return
+    if (participant === null) return
     if (direct === undefined) {
-      navigate({ kind: "create-direct" })
+      controller.startDirect(participant)
       return
     }
     controller.selectChannel(direct.channel, "direct")
@@ -308,6 +310,12 @@ function PaneActions({ controller, navigate, pane }: { controller: AppController
   const canClose = pane.agentKind === null && pane.label !== null && pane.label.length > 0
   return (
     <div className="flex shrink-0 items-center gap-1">
+      {pane.agentKind !== null && pane.participant === null && (
+        <Button aria-label={`Connect ${identity} to Sheppard chat`} disabled={!canWrite} onClick={() => controller.openConnectPane(pane, identity)} size="sm" title={canWrite ? "Create a pane-scoped chat identity" : NOT_CONNECTED_REASON} type="button" variant="ghost">
+          <MessageCirclePlus aria-hidden="true" />
+          Connect
+        </Button>
+      )}
       {pane.participant !== null && (
         <Button aria-label={`Message ${pane.participant}`} disabled={!canWrite} onClick={openMessage} size="sm" title={canWrite ? "Open a direct conversation" : NOT_CONNECTED_REASON} type="button" variant="ghost">
           <MessageCircle aria-hidden="true" />
@@ -328,33 +336,36 @@ function PaneActions({ controller, navigate, pane }: { controller: AppController
   )
 }
 
-function WorkspacePaneRow({ controller, navigate, pane }: { controller: AppController; navigate: WorkspaceNavigate; pane: HerdrPaneView }) {
-  const title = pane.participant !== null && pane.label !== null && pane.participant !== pane.label ? pane.label : undefined
-  const identity = paneIdentity(pane)
-  const identitySource = pane.participant !== null ? "participant" : pane.label !== null ? "label" : "pane-id"
+function WorkspacePaneRow({ controller, navigate, pane, workspace }: { controller: AppController; navigate: WorkspaceNavigate; pane: HerdrPaneView; workspace: HerdrWorkspaceView }) {
+  const identityDetails = paneIdentityDetails(pane, workspace)
+  const identity = identityDetails.label
   const openAgent = () => {
-    if (pane.participant !== null) navigate({ handle: pane.participant, kind: "agent" })
+    if (pane.participant !== null) {
+      navigate({ handle: pane.participant, kind: "agent" })
+      return
+    }
+    if (pane.agentKind !== null) controller.openConnectPane(pane, identity)
   }
   return (
     <li
-      className={cn("grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t px-3 py-2", pane.focused && "border-s-2 border-s-primary bg-primary/5", pane.participant !== null && "hover:bg-muted/30")}
+      className={cn("grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t px-3 py-2", pane.focused && "border-s-2 border-s-primary bg-primary/5", pane.agentKind !== null && "hover:bg-muted/30")}
       data-agent-row={pane.participant ?? undefined}
-      data-identity-source={identitySource}
+      data-identity-source={identityDetails.source}
       data-pane-id={pane.paneId}
       data-pane-status={paneStatusLabel(pane)}
-      title={title}
+      title={pane.title ?? undefined}
     >
-      <button aria-label={pane.participant === null ? undefined : `Open agent ${pane.participant}`} className={cn("flex min-w-0 items-center gap-3 text-left", pane.participant !== null && "cursor-pointer")} disabled={pane.participant === null} onClick={openAgent} type="button">
+      <button aria-label={pane.agentKind === null ? undefined : pane.participant === null ? `Connect ${identity} to Sheppard chat` : `Open agent ${pane.participant}`} className={cn("flex min-w-0 items-center gap-3 text-left", pane.agentKind !== null && "cursor-pointer")} disabled={pane.agentKind === null} onClick={openAgent} type="button">
         {pane.agentKind === null
           ? <span aria-label="empty pane" className="flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed text-muted-foreground" role="img"><SquareTerminal aria-hidden="true" className="size-3.5" /></span>
           : <AgentStatusMark size={20} status={pane.agentStatus} />}
         <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-sm font-medium", pane.participant === null && pane.label === null && "font-mono text-xs text-muted-foreground")}>{identity}</span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1"><PaneStatus pane={pane} />{pane.role !== undefined && pane.role !== null && <span className="text-xs text-muted-foreground" data-pane-role={pane.role}>role {pane.role}</span>}{pane.focused && <span className="text-xs text-primary">focused</span>}</span>
+          <span className={cn("block truncate text-sm font-medium", identityDetails.source === "pane-id" && "font-mono text-xs text-muted-foreground")}>{identity}</span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1"><span className="font-mono text-[11px] text-muted-foreground">pane {pane.paneId}</span><PaneStatus pane={pane} />{pane.role !== undefined && pane.role !== null && <span className="text-xs text-muted-foreground" data-pane-role={pane.role}>role {pane.role}</span>}{pane.focused && <span className="text-xs text-primary">focused</span>}</span>
         </span>
         <span className="hidden text-xs text-muted-foreground md:inline">{pane.agentKind ?? "No agent"}</span>
       </button>
-      <PaneActions controller={controller} navigate={navigate} pane={pane} />
+      <PaneActions controller={controller} identity={identity} navigate={navigate} pane={pane} />
     </li>
   )
 }
@@ -363,7 +374,7 @@ function WorkspacePaneList({ controller, navigate, panes: sourcePanes, workspace
   const panes = (sourcePanes ?? workspace.panes).toSorted(comparePanes)
   return (
     <ul aria-label={`Panes in ${workspaceLabel(workspace)}`} className="overflow-hidden rounded-xl border" data-workspace-panes={workspace.id}>
-      {panes.map((pane) => <WorkspacePaneRow controller={controller} navigate={navigate} pane={pane} key={pane.paneId} />)}
+      {panes.map((pane) => <WorkspacePaneRow controller={controller} navigate={navigate} pane={pane} workspace={workspace} key={pane.paneId} />)}
       {panes.length === 0 && <li className="px-4 py-8 text-center text-sm text-muted-foreground">No panes are open in this workspace.</li>}
     </ul>
   )
@@ -494,9 +505,9 @@ function WorkspaceDirectoryActions({ controller, onMenuClose, onMenuOpen, worksp
   )
 }
 
-function WorkspaceDirectoryAgentMenu({ controller, onClose, pane }: { controller: AppController; onClose: () => void; pane: HerdrPaneView }) {
+function WorkspaceDirectoryAgentMenu({ controller, identity, onClose, pane }: { controller: AppController; identity: string; onClose: () => void; pane: HerdrPaneView }) {
   const canWrite = controller.identity !== null
-  const identity = paneIdentity(pane)
+  const participant = pane.participant
   const stopAvailable = pane.agentKind !== null && paneStopConfirmation(pane) !== null
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -510,10 +521,19 @@ function WorkspaceDirectoryAgentMenu({ controller, onClose, pane }: { controller
   }, [onClose])
   return (
     <div aria-label={`${identity} actions`} className="absolute right-2 top-7 z-20 min-w-48 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg" data-agent-menu role="menu">
-      <button className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50" data-menu-item="message" disabled={pane.participant === null} onClick={() => { if (pane.participant !== null) controller.startDirect(pane.participant); onClose() }} role="menuitem" title={pane.participant === null ? "This pane has no messenger participant" : undefined} type="button">
-        <MessageCircle aria-hidden="true" className="size-4" />
-        Message
-      </button>
+      {participant === null
+        ? (
+          <button className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50" data-menu-item="connect-pane" disabled={!canWrite} onClick={() => { controller.openConnectPane(pane, identity); onClose() }} role="menuitem" title={canWrite ? "Create a pane-scoped chat identity" : NOT_CONNECTED_REASON} type="button">
+            <MessageCirclePlus aria-hidden="true" className="size-4" />
+            Connect to Sheppard
+          </button>
+        )
+        : (
+          <button className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none" data-menu-item="message" onClick={() => { controller.startDirect(participant); onClose() }} role="menuitem" type="button">
+            <MessageCircle aria-hidden="true" className="size-4" />
+            Message
+          </button>
+        )}
       {stopAvailable && (
         <button className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50" data-menu-item="stop-agent" disabled={!canWrite} onClick={() => { controller.openStopAgent(pane); onClose() }} role="menuitem" title={canWrite ? "Stop agent" : NOT_CONNECTED_REASON} type="button">
           <CircleAlert aria-hidden="true" className="size-4" />
@@ -535,8 +555,8 @@ function WorkspaceDirectoryAgentMenu({ controller, onClose, pane }: { controller
 }
 
 function WorkspaceDirectoryAgentRow({ controller, navigate, pane, workspace }: { controller: AppController; navigate: WorkspaceNavigate; pane: HerdrPaneView; workspace: HerdrWorkspaceView }) {
-  const identity = paneIdentity(pane)
-  const identitySource = pane.participant !== null ? "participant" : pane.label !== null ? "label" : "pane-id"
+  const identityDetails = paneIdentityDetails(pane, workspace)
+  const identity = identityDetails.label
   const [menuOpen, setMenuOpen] = useState(false)
   const rootRef = useRef<HTMLLIElement>(null)
   useEffect(() => {
@@ -554,25 +574,31 @@ function WorkspaceDirectoryAgentRow({ controller, navigate, pane, workspace }: {
     globalThis.addEventListener("pointerdown", closeOnPointerDown)
     return () => globalThis.removeEventListener("pointerdown", closeOnPointerDown)
   }, [menuOpen])
-  const open = () => navigate(pane.participant === null ? { kind: "workspace", workspaceId: workspace.id } : { handle: pane.participant, kind: "agent" })
+  const open = () => {
+    if (pane.participant !== null) {
+      navigate({ handle: pane.participant, kind: "agent" })
+      return
+    }
+    controller.openConnectPane(pane, identity)
+  }
   return (
     <li
       className={cn("group relative flex h-9 min-w-0 items-center border-t px-3 text-xs", pane.focused && "bg-primary/5")}
       data-agent-row={pane.participant ?? pane.paneId}
-      data-identity-source={identitySource}
+      data-identity-source={identityDetails.source}
       data-pane-id={pane.paneId}
       data-pane-status={paneStatusLabel(pane)}
       ref={rootRef}
     >
-      <button aria-label={pane.participant === null ? `Open workspace ${workspaceLabel(workspace)}` : `Open agent ${pane.participant}`} className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1" data-agent-open={pane.paneId} onClick={open} type="button">
+      <button aria-label={pane.participant === null ? `Connect ${identity} to Sheppard chat` : `Open agent ${pane.participant}`} className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1" data-agent-open={pane.paneId} onClick={open} type="button">
         <AgentStatusMark size={20} status={pane.agentStatus} />
-        <span className={cn("min-w-0 flex-1 truncate font-medium", identitySource === "pane-id" && "font-mono text-[11px]")}>{identity}</span>
+        <span className={cn("min-w-0 flex-1 truncate font-medium", identityDetails.source === "pane-id" && "font-mono text-[11px]")}>{identity}</span>
         <span className="max-w-24 shrink-0 truncate text-muted-foreground">{paneStatusLabel(pane)}</span>
       </button>
       <Button aria-expanded={menuOpen} aria-haspopup="menu" aria-label={`More actions for ${identity}`} className="shrink-0" data-menu-trigger="pane" onClick={() => setMenuOpen((current) => !current)} size="icon-sm" title="Agent actions" type="button" variant="ghost">
         <MoreHorizontal aria-hidden="true" />
       </Button>
-      {menuOpen && <WorkspaceDirectoryAgentMenu controller={controller} onClose={() => setMenuOpen(false)} pane={pane} />}
+      {menuOpen && <WorkspaceDirectoryAgentMenu controller={controller} identity={identity} onClose={() => setMenuOpen(false)} pane={pane} />}
     </li>
   )
 }

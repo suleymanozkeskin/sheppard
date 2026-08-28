@@ -3,8 +3,9 @@
  *
  * Every authenticated request also reports the pane the caller is running in, so
  * an ordinary command repairs delivery after a restart, a pane move, or a
- * reboot. The token travels in a header and is never placed in a URL, an
- * argument, or an error message.
+ * reboot. A launched agent uses its private token. An adopted pane uses the
+ * local-control credential plus its verified Herdr route. Neither credential
+ * is placed in a URL, an argument, or an error message.
  *
  * The hub and this client ship together, so the response shapes are an internal
  * invariant rather than untrusted input; only the error envelope is decoded
@@ -55,10 +56,8 @@ export function identityMissing(boundHandle: string | null = null): IdentityMiss
     const handle = escapeForTerminal(boundHandle);
     return new IdentityMissing({
       message:
-        `This pane is bound to the identity "${handle}", and this process does not hold its token. ` +
-        "Tokens are issued once and cannot be reissued. Do not provision a new handle: " +
-        "that mints a second identity and moves the route to it. Relaunch this pane with\n" +
-        `  msgr spawn ${handle} -- <command...>, or ask the fleet lead to respawn the agent`,
+        `This pane is connected as "${handle}", but pane authentication is unavailable. ` +
+        "Start Sheppard inside Herdr and confirm that this pane uses the same Herdr socket.",
     });
   }
   return new IdentityMissing({
@@ -283,15 +282,31 @@ export class HubClient {
   }
 
   get hasIdentity(): boolean {
-    return this.token !== null;
+    return this.token !== null || (
+      this.boundHandle !== null &&
+      this.localControlToken !== null &&
+      this.route !== null &&
+      this.herdrSocketPath !== null
+    );
   }
 
   private headers(authenticated: boolean): Result<Headers, IdentityMissing> {
     const headers = new Headers({ accept: "application/json" });
     if (!authenticated) return Result.ok(headers);
 
-    if (this.token === null) return Result.err(identityMissing(this.boundHandle));
-    headers.set(TOKEN_HEADER, this.token);
+    if (this.token !== null) {
+      headers.set(TOKEN_HEADER, this.token);
+    } else {
+      if (
+        this.boundHandle === null ||
+        this.localControlToken === null ||
+        this.route === null ||
+        this.herdrSocketPath === null
+      ) {
+        return Result.err(identityMissing(this.boundHandle));
+      }
+      headers.set(CONTROL_TOKEN_HEADER, this.localControlToken);
+    }
 
     if (this.route !== null) {
       headers.set(TERMINAL_HEADER, this.route.terminalId);

@@ -39,6 +39,8 @@ import type {
   Channel,
   ChannelReceipt,
   ChannelList,
+  ConnectAgentRequest,
+  ConnectAgentResult,
   ContextQuery,
   CreateAgentRequest,
   CreateChannelRequest,
@@ -516,11 +518,11 @@ export class MockMsgrApi implements MsgrApi {
   }
 
   public async listDirectories(path?: string): ApiResult<DirectoryList> {
-    const currentPath = path ?? "/Users/suleyman/Desktop/Personal-Projects"
+    const currentPath = path ?? "/workspace/projects"
     const parentPath = currentPath === "/"
       ? null
       : currentPath.replace(/\/[^/]+$/u, "") || "/"
-    const directories = currentPath === "/Users/suleyman/Desktop/Personal-Projects"
+    const directories = currentPath === "/workspace/projects"
       ? ["sheppard", "herdr-contribute"].map((name) => ({ name, path: `${currentPath}/${name}` }))
       : currentPath.endsWith("/sheppard")
         ? ["src", "tests", "web"].map((name) => ({ name, path: `${currentPath}/${name}` }))
@@ -775,6 +777,44 @@ export class MockMsgrApi implements MsgrApi {
     }
     this.prompts.push({ paneId, text: request.text })
     return Result.ok({ delivered: true })
+  }
+
+  public async connectAgent(paneId: string, request: ConnectAgentRequest): ApiResult<ConnectAgentResult> {
+    const workspace = this.workspaces.find((candidate) => candidate.panes.some((pane) => pane.paneId === paneId))
+    const pane = workspace?.panes.find((candidate) => candidate.paneId === paneId)
+    if (workspace === undefined || pane === undefined) {
+      return Result.err(new ApiHttpError({ body: JSON.stringify({ code: "NotFound", error: "No pane named " + paneId }), message: "Pane not found", status: 404, operation: "connectAgent" }))
+    }
+    if (pane.agentKind === null) {
+      return Result.err(new ApiHttpError({ body: JSON.stringify({ code: "ValidationFailed", error: "Pane has no agent occupant" }), message: "Pane has no agent occupant", status: 400, operation: "connectAgent" }))
+    }
+    if (pane.participant !== null) return Result.ok({ handle: pane.participant, paneId })
+    const requested = request.handle.trim()
+    let handle = requested
+    let suffix = 2
+    while (this.memberHandles.has(handle)) {
+      handle = `${requested}-${suffix}`
+      suffix += 1
+    }
+    pane.participant = handle
+    pane.participantRouteState = "active"
+    for (const tab of workspace.tabs) {
+      const tabPane = tab.panes.find((candidate) => candidate.paneId === paneId)
+      if (tabPane !== undefined) {
+        tabPane.participant = handle
+        tabPane.participantRouteState = "active"
+      }
+    }
+    this.memberHandles.add(handle)
+    this.members.push({
+      agentKind: pane.agentKind,
+      handle,
+      joinedAt: new Date().toISOString(),
+      kind: "agent",
+      routeState: "active",
+      unread: 0,
+    })
+    return Result.ok({ handle, paneId })
   }
 
   public async stopAgent(paneId: string, request: StopAgentRequest): ApiResult<StopAgentResult> {

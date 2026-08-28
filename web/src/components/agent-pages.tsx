@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Bot, ChevronDown, ChevronRight, ExternalLink, Focus, Send, SquareTerminal, StopCircle, Wrench } from "lucide-react"
+import { Bot, ChevronDown, ChevronRight, ExternalLink, Focus, MessageCircle, MessageCirclePlus, Send, SquareTerminal, StopCircle, Wrench } from "lucide-react"
 
 import { NOT_CONNECTED_REASON } from "@/api/auto-identify"
 import { apiCall } from "@/api/runtime"
@@ -29,7 +29,7 @@ const statusPriority = {
 
 function collectAgents(workspaces: readonly HerdrWorkspaceView[]): AgentEntry[] {
   return workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) =>
-    pane.agentKind === null ? [] : [{ identity: paneIdentity(pane), pane, workspace }],
+    pane.agentKind === null ? [] : [{ identity: paneIdentity(pane, workspace), pane, workspace }],
   )).toSorted((left, right) =>
     statusPriority[left.pane.agentStatus] - statusPriority[right.pane.agentStatus]
       || left.identity.localeCompare(right.identity)
@@ -61,12 +61,12 @@ function AgentMeta({ entry }: { entry: AgentEntry }) {
   )
 }
 
-function AgentEntryCard({ entry, onOpen }: { entry: AgentEntry; onOpen: () => void }) {
+function AgentEntryCard({ entry, onConnect, onMessage, onOpen, onOpenWorkspace }: { entry: AgentEntry; onConnect: () => void; onMessage: () => void; onOpen: () => void; onOpenWorkspace: () => void }) {
   const linked = entry.pane.participant !== null
   const routeState = entry.pane.participantRouteState
   return (
     <li className="overflow-hidden rounded-xl border bg-card transition-colors hover:bg-muted/40" data-agent-row={entry.identity}>
-      <button aria-label={linked ? `Open agent ${entry.identity}` : `Open workspace for ${entry.identity}`} className="flex min-h-16 w-full min-w-0 items-center gap-3 px-4 py-3 text-left" onClick={onOpen} type="button">
+      <button aria-label={linked ? `Open agent ${entry.identity}` : `Connect ${entry.identity} to Sheppard chat`} className="flex min-h-16 w-full min-w-0 items-center gap-3 px-4 py-3 text-left" onClick={onOpen} type="button">
         <AgentStatusMark size={20} status={entry.pane.agentStatus} />
         <span className="min-w-0 flex-1" data-agent-identity>
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -78,11 +78,19 @@ function AgentEntryCard({ entry, onOpen }: { entry: AgentEntry; onOpen: () => vo
         <span className="shrink-0 text-right text-xs">
           <span className="block font-medium capitalize text-foreground">{paneStatusLabel(entry.pane)}</span>
           <span className="mt-1 block text-muted-foreground">
-            {linked ? routeState === "active" ? `Chat: ${entry.pane.participant}` : "Chat route inactive" : "Not linked to chat"}
+            {linked ? routeState === "active" ? "Chat connected" : "Chat unavailable" : "Not connected"}
           </span>
         </span>
-        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        {linked
+          ? <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          : <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
       </button>
+      <div className="flex items-center justify-end gap-1 border-t px-3 py-1.5">
+        {linked
+          ? <Button onClick={onMessage} size="sm" type="button" variant="ghost"><MessageCircle aria-hidden="true" />Message</Button>
+          : <Button onClick={onConnect} size="sm" type="button" variant="ghost"><MessageCirclePlus aria-hidden="true" />Connect to chat</Button>}
+        <Button onClick={onOpenWorkspace} size="sm" type="button" variant="ghost">Workspace</Button>
+      </div>
     </li>
   )
 }
@@ -110,9 +118,12 @@ export function AgentsDirectoryPage({ controller, navigate }: { controller: AppC
             <AgentEntryCard
               entry={entry}
               key={`${entry.workspace.id}:${entry.pane.paneId}`}
+              onConnect={() => controller.openConnectPane(entry.pane, entry.identity)}
+              onMessage={() => { if (entry.pane.participant !== null) controller.startDirect(entry.pane.participant) }}
               onOpen={() => entry.pane.participant === null
-                ? navigate({ kind: "workspace", workspaceId: entry.workspace.id })
+                ? controller.openConnectPane(entry.pane, entry.identity)
                 : navigate({ handle: entry.pane.participant, kind: "agent" })}
+              onOpenWorkspace={() => navigate({ kind: "workspace", workspaceId: entry.workspace.id })}
             />
           ))}
         </ul>
@@ -665,6 +676,16 @@ export function AgentDetailPage({ controller, handle, navigate }: { controller: 
     navigate(route)
   }
 
+  const openDirect = () => {
+    if (direct === undefined) {
+      controller.startDirect(handle)
+      return
+    }
+    controller.selectChannel(direct.channel, "direct")
+    controller.setFocusedMessageId(undefined)
+    navigate({ channel: direct.channel, kind: "conversation" })
+  }
+
   const selectSession = (sessionId: string) => {
     if (sessionPaneId === null || controller.identity === null || sessionSelectionStateRef.current.status === "working") return
     const requestId = sessionSelectionRequestRef.current + 1
@@ -782,6 +803,10 @@ export function AgentDetailPage({ controller, handle, navigate }: { controller: 
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button disabled={controller.identity === null} onClick={openDirect} title={controller.identity === null ? NOT_CONNECTED_REASON : `Open a direct conversation with ${handle}`} type="button">
+              <MessageCircle aria-hidden="true" />
+              Message
+            </Button>
             <Button disabled={controller.identity === null || pane === null} onClick={() => setPromptOpen((open) => !open)} title={controller.identity === null ? NOT_CONNECTED_REASON : pane === null ? "This agent has no active pane" : `Type into pane ${pane.paneId}`} type="button" variant="outline">
               <SquareTerminal aria-hidden="true" />
               Prompt pane
@@ -818,20 +843,6 @@ export function AgentDetailPage({ controller, handle, navigate }: { controller: 
           state={promptState}
         />
       )}
-
-      <SessionPanel
-        canSelect={controller.identity !== null}
-        onLoadOlder={() => {
-          if (sessionState.status === "ready" && sessionState.session.nextBefore !== null) {
-            setSessionBefore(sessionState.session.nextBefore)
-          }
-        }}
-        onSelectSession={selectSession}
-        paneId={sessionPaneId}
-        selectionState={sessionSelectionState}
-        state={sessionState}
-      />
-
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <section aria-labelledby="agent-conversation-heading" className="rounded-xl border p-5" data-agent-conversation={conversationChannel ?? "none"}>
@@ -879,6 +890,19 @@ export function AgentDetailPage({ controller, handle, navigate }: { controller: 
           </section>
         </aside>
       </div>
+
+      <SessionPanel
+        canSelect={controller.identity !== null}
+        onLoadOlder={() => {
+          if (sessionState.status === "ready" && sessionState.session.nextBefore !== null) {
+            setSessionBefore(sessionState.session.nextBefore)
+          }
+        }}
+        onSelectSession={selectSession}
+        paneId={sessionPaneId}
+        selectionState={sessionSelectionState}
+        state={sessionState}
+      />
 
       {workspace !== undefined && <a className="inline-flex min-h-9 items-center gap-2 rounded-md px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={workspaceHref} onClick={(event) => { event.preventDefault(); navigate({ kind: "workspace", workspaceId: workspace.id }) }}><ExternalLink aria-hidden="true" />Open workspace</a>}
     </div>

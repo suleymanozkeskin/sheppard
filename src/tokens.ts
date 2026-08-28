@@ -1,7 +1,8 @@
 /**
- * Capability tokens. A token is the only proof of identity; a handle is display
- * text and proves nothing. The database stores only the hash, so reading the
- * database never yields a usable credential.
+ * Participant capability tokens. A token proves one launched identity. An
+ * explicitly connected Herdr pane uses the separate local-control credential
+ * and its exact current route. A handle is display text and proves nothing.
+ * The database stores only hashes, so reading it yields no usable credential.
  */
 
 const TOKEN_BYTES = 32;

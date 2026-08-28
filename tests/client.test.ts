@@ -62,3 +62,59 @@ describe("hub client failures", () => {
     }
   });
 });
+
+describe("pane-scoped hub client identity", () => {
+  test("uses the local control credential with the exact Herdr route", async () => {
+    let received: Headers | null = null;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        received = request.headers;
+        return Response.json({ inbox: [] });
+      },
+    });
+    servers.push(server);
+    const paneClient = new HubClient({
+      baseUrl: `http://127.0.0.1:${server.port}`,
+      token: null,
+      localControlToken: "local-control",
+      route: {
+        terminalId: "term-1",
+        paneId: "w1:p1",
+        occupantAgent: "codex",
+      },
+      herdrSocketPath: "/tmp/herdr.sock",
+      boundHandle: "lead-2",
+    });
+
+    expect(paneClient.hasIdentity).toBe(true);
+    expect((await paneClient.get("inbox", "/api/inbox", true)).isOk()).toBe(true);
+    expect(received?.get("x-msgr-control-token")).toBe("local-control");
+    expect(received?.get("x-msgr-token")).toBeNull();
+    expect(received?.get("x-msgr-terminal-id")).toBe("term-1");
+    expect(received?.get("x-msgr-pane-id")).toBe("w1:p1");
+    expect(received?.get("x-msgr-occupant")).toBe("codex");
+    expect(received?.get("x-msgr-herdr-socket-path")).toBe("/tmp/herdr.sock");
+  });
+
+  test("does not claim a pane identity when any required value is absent", () => {
+    const options = {
+      baseUrl: "http://127.0.0.1:6747",
+      token: null,
+      localControlToken: "local-control",
+      route: {
+        terminalId: "term-1",
+        paneId: "w1:p1",
+        occupantAgent: "codex",
+      },
+      herdrSocketPath: "/tmp/herdr.sock",
+      boundHandle: "lead-2",
+    };
+
+    expect(new HubClient({ ...options, localControlToken: null }).hasIdentity).toBe(false);
+    expect(new HubClient({ ...options, route: null }).hasIdentity).toBe(false);
+    expect(new HubClient({ ...options, herdrSocketPath: null }).hasIdentity).toBe(false);
+    expect(new HubClient({ ...options, boundHandle: null }).hasIdentity).toBe(false);
+  });
+});

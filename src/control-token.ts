@@ -2,8 +2,9 @@
  * Local configuration capability shared by the hub and the `msgr` process.
  *
  * The raw token exists only in a user-owned file. The hub keeps only its hash.
- * This lets local automation configure Sheppard without creating a participant
- * identity or opening the configuration API to every HTTP caller.
+ * This lets local automation configure Sheppard without a participant token.
+ * It also authenticates an explicitly connected Herdr pane when the request
+ * carries that pane's exact current route.
  */
 
 import { Result, TaggedError } from "better-result";

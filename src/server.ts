@@ -388,6 +388,23 @@ function routedPath(pathname: string): Result<RoutedPath, ValidationFailed> {
     third === "agents" &&
     segments.length === 5 &&
     fourth !== undefined &&
+    segments[4] === "connect"
+  ) {
+    return Result.try({
+      try: (): RoutedPath => ({
+        key: "/api/herdr/agents/:paneId/connect",
+        param: decodeURIComponent(fourth),
+        extra: "",
+      }),
+      catch: () => validationFailed("path", "must use valid URL encoding"),
+    });
+  }
+  if (
+    first === "api" &&
+    second === "herdr" &&
+    third === "agents" &&
+    segments.length === 5 &&
+    fourth !== undefined &&
     segments[4] === "prompt"
   ) {
     return Result.try({
@@ -1652,6 +1669,64 @@ function deleteHerdrLauncher(hub: Hub, name: string, headers: Headers): Response
 function herdrAgentIdentity(hub: Hub, paneId: string, headers: Headers): Response {
   const participant = hub.store.findActiveAgentByPaneId(paneId);
   return jsonResponse({ handle: participant?.handle ?? null }, 200, headers);
+}
+
+async function connectHerdrAgent(
+  hub: Hub,
+  paneId: string,
+  body: JsonValue,
+  headers: Headers,
+): Promise<Response> {
+  const validPaneId = validStoredText(paneId, "paneId");
+  if (validPaneId.isErr()) return errorResponse(validPaneId.error, headers);
+  const requestedHandle = decodeObject(body)
+    .andThen((object) => requiredString(object, "handle"))
+    .andThen((handle) => validName(handle, "handle"));
+  if (requestedHandle.isErr()) return errorResponse(requestedHandle.error, headers);
+
+  const herdr = herdrPort(hub);
+  if (herdr.isErr()) return errorResponse(herdr.error, headers);
+  const listed = await herdr.value.paneList();
+  if (listed.isErr()) return errorResponse(listed.error, headers);
+  const pane = listed.value.find((candidate) => candidate.paneId === validPaneId.value);
+  if (pane === undefined) return errorResponse(notFound("Pane"), headers);
+  if (pane.agent === null) {
+    return errorResponse(validationFailed("paneId", "has no agent occupant"), headers);
+  }
+
+  const routed = hub.store.participantRouteForTerminal(pane.terminalId);
+  const reusable = routed?.kind === "agent" && routed.occupantAgent === pane.agent ? routed : null;
+  const created = reusable === null ? hub.store.createAgent(requestedHandle.value) : null;
+  if (created?.isErr()) return errorResponse(created.error, headers);
+  const participant = reusable ?? created?.value.participant;
+  if (participant === undefined) {
+    return errorResponse(herdrCallFailed("agent identity was not created", "pane connect"), headers);
+  }
+
+  const relisted = await herdr.value.paneList();
+  const current = relisted.isOk()
+    ? relisted.value.find((candidate) => candidate.paneId === validPaneId.value)
+    : undefined;
+  if (
+    current === undefined ||
+    current.terminalId !== pane.terminalId ||
+    current.agent !== pane.agent
+  ) {
+    if (created?.isOk()) hub.store.deactivateParticipant(created.value.participant.handle);
+    return errorResponse(validationFailed("paneId", "changed while connecting"), headers);
+  }
+
+  hub.store.bindRoute(participant.id, {
+    terminalId: current.terminalId,
+    paneId: current.paneId,
+    occupantAgent: current.agent,
+  });
+  await hub.topology?.refresh();
+  return jsonResponse(
+    { handle: participant.handle, paneId: current.paneId },
+    reusable === null ? 201 : 200,
+    headers,
+  );
 }
 
 /**
@@ -3092,7 +3167,12 @@ async function eventStream(hub: Hub, request: Request, headers: Headers): Promis
   // Message frames keep their existing local stream semantics. Receipt frames
   // carry cursor state, so only an authenticated member of that channel can
   // receive them. An unauthenticated stream receives no receipt frames.
-  const receiptPermission = authenticate(request, hub.store, hub.config.herdrSocketPath).match({
+  const receiptPermission = authenticate(
+    request,
+    hub.store,
+    hub.config.herdrSocketPath,
+    presentsLocalControl(hub, request),
+  ).match({
     ok: (caller) => (channel: string) => hub.store.isMemberOfChannel(caller.id, channel),
     err: () => undefined,
   });
@@ -3208,7 +3288,12 @@ function requireAuth(
   headers: Headers,
   handler: (caller: Participant) => Response,
 ): Response {
-  return authenticate(request, hub.store, hub.config.herdrSocketPath).match({
+  return authenticate(
+    request,
+    hub.store,
+    hub.config.herdrSocketPath,
+    presentsLocalControl(hub, request),
+  ).match({
     ok: handler,
     err: (error: ApiError) => errorResponse(error, headers),
   });
@@ -3221,7 +3306,12 @@ function requireHuman(
   capability: string,
   handler: () => Response,
 ): Response {
-  return authenticate(request, hub.store, hub.config.herdrSocketPath).match({
+  return authenticate(
+    request,
+    hub.store,
+    hub.config.herdrSocketPath,
+    presentsLocalControl(hub, request),
+  ).match({
     ok: (caller) =>
       caller.kind === "human"
         ? handler()
@@ -3256,7 +3346,12 @@ async function requireHumanAsync(
   capability: string,
   handler: () => Promise<Response>,
 ): Promise<Response> {
-  const authenticated = authenticate(request, hub.store, hub.config.herdrSocketPath);
+  const authenticated = authenticate(
+    request,
+    hub.store,
+    hub.config.herdrSocketPath,
+    presentsLocalControl(hub, request),
+  );
   if (authenticated.isErr()) return errorResponse(authenticated.error, headers);
   if (authenticated.value.kind !== "human") {
     return errorResponse(operatorOnly(capability), headers);
@@ -3270,7 +3365,12 @@ async function requireAuthAsync(
   headers: Headers,
   handler: (caller: Participant) => Promise<Response>,
 ): Promise<Response> {
-  return authenticate(request, hub.store, hub.config.herdrSocketPath).match({
+  return authenticate(
+    request,
+    hub.store,
+    hub.config.herdrSocketPath,
+    presentsLocalControl(hub, request),
+  ).match({
     ok: handler,
     err: (error: ApiError) => errorResponse(error, headers),
   });
@@ -3402,6 +3502,10 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
         );
       case "GET /api/herdr/agents/:paneId":
         return herdrAgentIdentity(hub, param, headers);
+      case "POST /api/herdr/agents/:paneId/connect":
+        return requireHumanAsync(hub, request, headers, "connect agent panes", () =>
+          connectHerdrAgent(hub, param, body, headers),
+        );
       case "GET /api/herdr/agents/:paneId/session":
         return requireAuthAsync(hub, request, headers, (caller) =>
           herdrAgentSession(hub, caller, param, url, headers),

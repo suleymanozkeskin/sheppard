@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { HerdrWorkspaceView } from "@/api/types"
-import { compareWorkspaces, paneStatusLabel, unmanagedAgentCount, workspaceDirectoryBudget } from "@/workspace-presentation"
+import { compareWorkspaces, paneIdentityDetails, paneStatusLabel, suggestedPaneHandle, unmanagedAgentCount, workspaceDirectoryBudget } from "@/workspace-presentation"
 
 const workspace: HerdrWorkspaceView = {
   id: "workspace-test",
@@ -42,6 +42,21 @@ describe("workspace presentation", () => {
   test("keeps runtime status separate from chat linkage", () => {
     expect(unmanagedAgentCount(workspace)).toBe(1)
     expect(paneStatusLabel(workspace.panes[1]!)).toBe("done")
+  })
+
+  test("uses a tab label before a terminal title or pane id", () => {
+    const pane = { ...workspace.panes[1]!, label: null, title: "repository" }
+    const withTab = {
+      ...workspace,
+      panes: [pane],
+      tabs: [{ id: "tab-lead", label: "Lead", panes: [pane] }],
+    }
+    expect(paneIdentityDetails(pane, withTab)).toEqual({ label: "Lead", source: "tab-label" })
+  })
+
+  test("creates a valid default handle from a display label", () => {
+    expect(suggestedPaneHandle("SCHMART LEAD", "w1:p3")).toBe("schmart-lead")
+    expect(suggestedPaneHandle("1", "w1:p3")).toBe("agent-1")
   })
 
   test("derives a smaller full-block budget from a shorter page body", () => {

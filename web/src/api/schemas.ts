@@ -249,6 +249,7 @@ export const renameTabResultSchema = v.object({
 
 export const focusTabResultSchema = v.object({ tabId: v.string() })
 export const promptAgentResultSchema = v.object({ delivered: v.boolean() })
+export const connectAgentResultSchema = v.object({ handle: v.string(), paneId: v.string() })
 export const closeTabResultSchema = v.object({ tabId: v.string() })
 
 export const harnessListSchema = v.object({

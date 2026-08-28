@@ -21,9 +21,10 @@ the lead staff and coordinate the project. The lead and its workers communicate
 through `msgr`. Their communication stays durable, searchable, and separate
 from their harness conversations.
 
-Every agent managed by Herdr must start able to reach Sheppard and use `msgr`.
-The agent must not complete its own connection setup through an injected prompt,
-a token-file command, or a manual enrollment step.
+Every agent started by Sheppard must start able to use `msgr`. A human can also
+connect an agent that is already running in Herdr. The agent must not complete
+its own connection setup through an injected prompt, a token-file command, or a
+manual enrollment step.
 
 ## 3. System model
 
@@ -113,8 +114,8 @@ job instructions. A goal gives it the current task.
 
 ## 7. Agent startup and access
 
-Automatic `msgr` access is a startup invariant. It applies to every supported
-harness and every Herdr path that starts a managed agent.
+Automatic `msgr` access is a startup invariant for every agent that Sheppard
+starts. An existing Herdr agent can use a separate, explicit pane connection.
 
 Herdr must provide one pre-start integration point for starts from the
 Sheppard browser, the Herdr UI, the Herdr CLI, and supported harness adapters.
@@ -134,8 +135,9 @@ agent. The participant must then be available to staffing and channel controls.
 
 Topology discovery is read-only. It reports occupied panes and reconciles known
 stale routes. It never provisions participants, writes token files, joins
-channels, or prompts agents. An unmanaged agent needs a managed restart before
-it can use `msgr`.
+channels, or prompts agents. The human can select `Connect to chat` for an
+occupied agent pane. This action provisions a participant and binds it to the
+current durable terminal without prompting or restarting the agent.
 
 The token is process state. It must not appear in command arguments, prompt
 text, terminal output, logs, topology events, or browser responses. The agent
@@ -145,9 +147,10 @@ Connection setup and channel membership are separate operations. Automatic
 access does not add an agent to every channel. A human, a lead, or the agent
 selects channel membership as part of collaboration.
 
-An agent that did not use the pre-start integration point is not a managed
-agent. Sheppard must show this state. It must not ask the running agent to
-repair the setup through its conversation.
+An agent that did not use the pre-start integration point starts as an
+unconnected agent. Sheppard must show this state and provide the human-only
+connection action. It must not ask the running agent to repair the setup
+through its conversation.
 
 ## 8. Channels and communication
 
@@ -318,9 +321,16 @@ The hub listens on a controlled local interface. Participant tokens authorize
 actions as one handle. The browser uses an HttpOnly session cookie for the human
 participant.
 
+A connected existing pane uses the protected local-control credential and its
+exact current Herdr route. This is a same-OS-user trust boundary. A process that
+can read the local-control credential and identify a connected pane can act as
+that pane. The server still limits the participant to its direct conversations
+and joined channels.
+
 The server owns process definitions and secret environment values. Responses,
-events, logs, and error messages must not expose token values. Agent actions use
-the caller's own token.
+events, logs, and error messages must not expose credential values. A started
+agent uses its own token. A connected existing pane uses its verified
+pane-scoped identity.
 
 A lead can start agents because staffing is an authenticated product capability.
 It cannot use the human-only prompt endpoint to type into another agent's pane.

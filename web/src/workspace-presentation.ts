@@ -153,8 +153,45 @@ export function defaultExpandedWorkspaceIds(workspaces: readonly HerdrWorkspaceV
   return new Set(expanded)
 }
 
-export function paneIdentity(pane: HerdrPaneView): string {
-  return pane.participant ?? pane.label ?? pane.paneId
+export type PaneIdentitySource = "participant" | "label" | "tab-label" | "terminal-title" | "pane-id"
+
+export interface PaneIdentity {
+  label: string
+  source: PaneIdentitySource
+}
+
+function usablePaneText(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized === undefined || normalized.length === 0 ? undefined : normalized
+}
+
+export function paneIdentityDetails(pane: HerdrPaneView, workspace?: HerdrWorkspaceView): PaneIdentity {
+  const tabLabel = workspace?.tabs.find((tab) => tab.panes.some((candidate) => candidate.paneId === pane.paneId))?.label
+  const candidates: readonly PaneIdentity[] = [
+    { label: usablePaneText(pane.participant) ?? "", source: "participant" },
+    { label: usablePaneText(pane.label) ?? "", source: "label" },
+    { label: usablePaneText(tabLabel) ?? "", source: "tab-label" },
+    { label: usablePaneText(pane.title) ?? "", source: "terminal-title" },
+    { label: pane.paneId, source: "pane-id" },
+  ]
+  return candidates.find(({ label }) => label.length > 0) ?? { label: pane.paneId, source: "pane-id" }
+}
+
+export function paneIdentity(pane: HerdrPaneView, workspace?: HerdrWorkspaceView): string {
+  return paneIdentityDetails(pane, workspace).label
+}
+
+export function suggestedPaneHandle(label: string, paneId: string): string {
+  const fallback = `agent-${paneId.split(":").at(-1) ?? "pane"}`
+  const normalized = label
+    .normalize("NFKD")
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+  const started = /^[a-z]/u.test(normalized) ? normalized : `agent-${normalized}`
+  const candidate = started.replace(/-+$/gu, "").slice(0, 32).replace(/-+$/gu, "")
+  if (/^[a-z][a-z0-9_-]{0,31}$/u.test(candidate)) return candidate
+  return fallback.toLocaleLowerCase().replace(/[^a-z0-9_-]+/gu, "-").slice(0, 32)
 }
 
 export function paneTitle(pane: HerdrPaneView): string | undefined {
