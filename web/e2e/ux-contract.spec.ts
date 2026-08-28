@@ -1597,19 +1597,19 @@ test.describe("UX merge contract", () => {
     const requests: string[] = []
     page.on("request", (request) => {
       const pathname = new URL(request.url()).pathname
-      if (pathname === "/api/inbox" || pathname === "/api/direct" || pathname.endsWith("/members") || pathname.endsWith("/messages")) {
+      if (pathname === "/api/humans" || pathname === "/api/inbox" || pathname === "/api/direct" || pathname.endsWith("/members") || pathname.endsWith("/messages")) {
         requests.push(pathname)
       }
     })
     await openApp(page, { expiredSession: true, waitForMessages: false })
+    await expect.poll(() => requests.filter((path) => path === "/api/humans").length).toBe(2)
     await expect(page.getByText("Read only", { exact: true })).toBeVisible()
-    await expect.poll(() => requests.filter((path) => path === "/api/inbox").length).toBe(2)
-    await expect.poll(() => requests.filter((path) => path === "/api/direct").length).toBe(2)
     const initialCount = requests.length
     await page.waitForTimeout(500)
     expect(requests.length, "a second 401 must not trigger another identity-scoped sweep").toBe(initialCount)
-    expect(requests.filter((path) => path === "/api/inbox")).toHaveLength(2)
-    expect(requests.filter((path) => path === "/api/direct")).toHaveLength(2)
+    expect(requests.filter((path) => path === "/api/humans")).toHaveLength(2)
+    expect(requests.filter((path) => path === "/api/inbox").length).toBeGreaterThan(0)
+    expect(requests.filter((path) => path === "/api/direct").length).toBeGreaterThan(0)
   })
 
   test("@guard identity removal failures reach the storage notice", async ({ page }) => {

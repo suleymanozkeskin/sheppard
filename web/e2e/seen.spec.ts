@@ -261,7 +261,7 @@ test("@guard reconnect refetches the current channel receipts", async ({ page })
   })
   await page.goto("/channels/ops")
   await page.locator('[data-message-id="4"]').waitFor()
-  expect(requests.receiptRequests()).toBe(1)
+  await expect.poll(requests.receiptRequests).toBe(1)
   requests.setReceipts([
     { cursorMessageId: 4, handle: "planner", routeState: "active" },
     { cursorMessageId: 4, handle: "runner", routeState: "active" },
