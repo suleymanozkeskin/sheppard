@@ -7,6 +7,7 @@ import { formatApiError } from "@/api/errors"
 import type { AgentDetail, AgentSession, DirectConversation, HerdrPaneView, HerdrTabView, HerdrWorkspaceView, Message, SessionState, SessionTurn, SessionCandidate } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import { AgentStatusMark } from "@/components/agent-status-mark"
+import { DictationButton } from "@/components/dictation-button"
 import type { AppController } from "@/hooks/use-app-controller"
 import { useComposerAutosize } from "@/hooks/use-composer-autosize"
 import { useComposerFocusTarget } from "@/hooks/use-composer-focus"
@@ -411,6 +412,7 @@ function EmbeddedComposer({
       onSubmit={(event) => { event.preventDefault(); if (!blocked && !sending) onSend() }}
     >
       <label className="sr-only" htmlFor="agent-composer">Message {target}</label>
+      <DictationButton disabled={blocked || sending} inputRef={composerRef} onChange={onChange} value={draft} />
       <textarea
         className="min-h-10 max-h-48 min-w-0 flex-1 resize-none overflow-y-hidden rounded-lg border bg-muted/30 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20 motion-safe:transition-[height] motion-safe:duration-150 motion-safe:ease-out"
         disabled={blocked}

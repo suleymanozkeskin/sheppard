@@ -33,6 +33,7 @@ import type { CreationPagesController } from "@/components/creation-pages"
 import { AgentAvatar } from "@/components/agent-avatar"
 import { ChannelView } from "@/components/channel-view"
 import { AgentStatusOrb } from "@/components/agent-status-orb"
+import { DictationButton } from "@/components/dictation-button"
 import { KeyboardOverlay } from "@/components/ui/keyboard-overlay"
 import { cn } from "@/lib/utils"
 import { useComposerAutosize } from "@/hooks/use-composer-autosize"
@@ -2233,6 +2234,12 @@ function Composer({
           >
             <Paperclip aria-hidden="true" />
           </Button>
+        <DictationButton
+          disabled={readOnly || sendDisabled || sending}
+          inputRef={composerRef}
+          onChange={onChange}
+          value={draft}
+        />
         <label className="sr-only" htmlFor="message-composer">Message</label>
         <textarea
           className="min-h-10 max-h-48 min-w-0 flex-1 resize-none overflow-y-hidden rounded-lg border bg-muted/30 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20 motion-safe:transition-[height] motion-safe:duration-150 motion-safe:ease-out"
@@ -2468,6 +2475,7 @@ interface WorkspaceBroadcastDialogProps {
 
 function WorkspaceBroadcastDialog({ body, onBodyChange, onClose, onSubmit, recipients, state, workspaceLabel }: WorkspaceBroadcastDialogProps) {
   const recipientSummary = broadcastRecipientSummary(workspaceLabel, recipients)
+  const messageRef = useRef<HTMLTextAreaElement | null>(null)
   return (
     <KeyboardOverlay className="max-w-lg" dataDialog="workspace-broadcast" labelledBy="workspace-broadcast-title" onClose={onClose} scope="dialog">
       <h2 className="text-base font-semibold" id="workspace-broadcast-title">Broadcast to workspace</h2>
@@ -2478,7 +2486,26 @@ function WorkspaceBroadcastDialog({ body, onBodyChange, onClose, onSubmit, recip
       <p className="mt-1 text-xs text-muted-foreground">Active recipients: {recipients.active.length === 0 ? "none" : recipients.active.join(", ")}</p>
       {recipients.stale.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Inactive chat routes: {recipients.stale.join(", ")}</p>}
       {recipients.unmanaged.length > 0 && <p className="mt-1 text-xs text-muted-foreground" data-unmanaged-agents>{unmanagedRecipientSummary(recipients)} The broadcast cannot address these panes: {recipients.unmanaged.join(", ")}.</p>}
-      <form className="mt-5 space-y-4" onSubmit={onSubmit}><label className="text-sm font-medium" htmlFor="workspace-broadcast-body">Message</label><textarea data-autofocus className="min-h-28 w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20" id="workspace-broadcast-body" onChange={(event) => onBodyChange(event.target.value)} placeholder="Write a workspace broadcast" value={body} />{state.status === "error" && <p className="text-sm text-destructive" role="alert">{state.message}</p>}<div className="flex justify-end gap-2"><Button onClick={onClose} type="button" variant="ghost">Cancel</Button><Button disabled={state.status === "working"} type="submit">{state.status === "working" ? "Sending…" : "Broadcast"}</Button></div></form>
+      <form className="mt-5 space-y-4" onSubmit={onSubmit}>
+        <label className="text-sm font-medium" htmlFor="workspace-broadcast-body">Message</label>
+        <div className="flex items-end gap-2">
+          <textarea
+            className="min-h-28 min-w-0 flex-1 resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+            data-autofocus
+            id="workspace-broadcast-body"
+            onChange={(event) => onBodyChange(event.target.value)}
+            placeholder="Write a workspace broadcast"
+            ref={messageRef}
+            value={body}
+          />
+          <DictationButton disabled={state.status === "working"} inputRef={messageRef} onChange={onBodyChange} value={body} />
+        </div>
+        {state.status === "error" && <p className="text-sm text-destructive" role="alert">{state.message}</p>}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="ghost">Cancel</Button>
+          <Button disabled={state.status === "working"} type="submit">{state.status === "working" ? "Sending…" : "Broadcast"}</Button>
+        </div>
+      </form>
     </KeyboardOverlay>
   )
 }

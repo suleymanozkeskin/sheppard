@@ -1,8 +1,9 @@
-import type { FormEvent } from "react"
+import { useRef, type FormEvent } from "react"
 import { ChevronLeft, ChevronRight, Folder, FolderOpen, Paperclip, RefreshCw, X } from "lucide-react"
 
 import type { Participant } from "@/api/types"
 import { AgentAvatar } from "@/components/agent-avatar"
+import { DictationButton } from "@/components/dictation-button"
 import { Button } from "@/components/ui/button"
 import type { CreateChannelState, DirectCreateState, WorkspaceActionState, WorkspaceDirectoryPickerState } from "@/hooks/use-app-controller"
 import type { AttachmentPath } from "@/hooks/use-composer-state"
@@ -238,6 +239,7 @@ export function DirectMessagePage({
   state,
 }: DirectMessagePageProps) {
   const attachmentBlocked = attachments.some((attachment) => attachment.status === "uploading" || attachment.status === "error" || attachment.error !== undefined)
+  const messageRef = useRef<HTMLTextAreaElement | null>(null)
   return (
     <div className="mx-auto w-full max-w-3xl p-4 sm:p-6" data-creation-page="direct">
       <div className="rounded-xl border bg-card p-5 shadow-sm sm:p-6">
@@ -285,13 +287,17 @@ export function DirectMessagePage({
           </div>
           <div>
             <label className="text-sm font-medium" htmlFor="direct-body">Message</label>
-            <textarea
-              className="mt-2 min-h-28 w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
-              id="direct-body"
-              onChange={(event) => onBodyChange(event.target.value)}
-              placeholder="Write the first direct message"
-              value={body}
-            />
+            <div className="mt-2 flex items-end gap-2">
+              <textarea
+                className="min-h-28 min-w-0 flex-1 resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+                id="direct-body"
+                onChange={(event) => onBodyChange(event.target.value)}
+                placeholder="Write the first direct message"
+                ref={messageRef}
+                value={body}
+              />
+              <DictationButton disabled={state.status === "creating"} inputRef={messageRef} onChange={onBodyChange} value={body} />
+            </div>
           </div>
           {state.status === "error" && <p className="text-sm text-destructive" role="alert">{state.message}</p>}
           <div className="flex justify-end gap-2">
