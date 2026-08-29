@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Result } from "better-result";
@@ -9,11 +9,11 @@ import {
   dictationUnavailable,
   validationFailed,
 } from "./errors";
-import { SHEPPARD_VERSION } from "./version";
 
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 const LOCALE_PATTERN = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$/u;
 const HELPER_NAME = "sheppard-dictation";
+const HELPER_APP_NAME = "Sheppard Dictation.app";
 let helperPromise: Promise<Result<string, DictationUnavailable>> | undefined;
 
 function failure(
@@ -61,7 +61,13 @@ async function runCommand(command: readonly string[], timeout: number): Promise<
 }
 
 async function compileHelper(databasePath: string): Promise<Result<string, DictationUnavailable>> {
-  const bundledPath = join(dirname(process.execPath), HELPER_NAME);
+  const bundledPath = join(
+    dirname(process.execPath),
+    HELPER_APP_NAME,
+    "Contents",
+    "MacOS",
+    HELPER_NAME,
+  );
   if (await executable(bundledPath)) return Result.ok(bundledPath);
 
   const xcrun = Bun.which("xcrun");
@@ -84,9 +90,12 @@ async function compileHelper(databasePath: string): Promise<Result<string, Dicta
   }
 
   const cacheRoot = join(dirname(databasePath), "native");
-  const helperPath = join(cacheRoot, `${HELPER_NAME}-${SHEPPARD_VERSION}`);
+  const appPath = join(cacheRoot, HELPER_APP_NAME);
+  const contentsPath = join(appPath, "Contents");
+  const helperPath = join(contentsPath, "MacOS", HELPER_NAME);
   if (await executable(helperPath)) return Result.ok(helperPath);
-  await mkdir(cacheRoot, { recursive: true });
+  await mkdir(join(contentsPath, "MacOS"), { recursive: true });
+  await copyFile(plistPath, join(contentsPath, "Info.plist"));
 
   const compilation = await runCommand([
     xcrun,
@@ -98,14 +107,6 @@ async function compileHelper(databasePath: string): Promise<Result<string, Dicta
     "-framework",
     "Speech",
     sourcePath,
-    "-Xlinker",
-    "-sectcreate",
-    "-Xlinker",
-    "__TEXT",
-    "-Xlinker",
-    "__info_plist",
-    "-Xlinker",
-    plistPath,
     "-o",
     helperPath,
   ], 30_000);
@@ -115,19 +116,21 @@ async function compileHelper(databasePath: string): Promise<Result<string, Dicta
 
   await chmod(helperPath, 0o755);
   const codesign = Bun.which("codesign");
-  if (codesign !== null) {
-    const signed = await runCommand([
-      codesign,
-      "--force",
-      "--sign",
-      "-",
-      "--identifier",
-      "com.sheppard.dictation",
-      helperPath,
-    ], 10_000);
-    if (signed === null || signed.exitCode !== 0) {
-      return failure("compile_failed", "The macOS dictation helper could not be prepared.");
-    }
+  if (codesign === null) {
+    return failure("compile_failed", "The macOS dictation helper could not be signed.");
+  }
+  const signed = await runCommand([
+    codesign,
+    "--force",
+    "--deep",
+    "--sign",
+    "-",
+    "--identifier",
+    "com.sheppard.dictation",
+    appPath,
+  ], 10_000);
+  if (signed === null || signed.exitCode !== 0) {
+    return failure("compile_failed", "The macOS dictation helper could not be prepared.");
   }
   return Result.ok(helperPath);
 }
@@ -145,7 +148,14 @@ function hasWaveHeader(bytes: Uint8Array): boolean {
 }
 
 function messageForHelperFailure(code: string): DictationUnavailable {
-  switch (code) {
+  const [category] = code.split(":", 1);
+  if (category === "recognition-failed" && code.includes("kLSRErrorDomain:201")) {
+    return dictationUnavailable(
+      "dictation_disabled",
+      "Turn on Dictation in System Settings > Keyboard. If Voice Control is on, turn it off first.",
+    );
+  }
+  switch (category) {
     case "permission-denied":
     case "permission-timeout":
       return dictationUnavailable(

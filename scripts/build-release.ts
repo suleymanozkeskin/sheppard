@@ -49,8 +49,12 @@ async function buildMacOsDictationHelper(
   targetRoot: string,
 ): Promise<void> {
   if (!target.name.startsWith("darwin-")) return;
-  const helperPath = join(targetRoot, "sheppard-dictation");
   const nativeRoot = join(repositoryRoot, "native");
+  const appPath = join(targetRoot, "Sheppard Dictation.app");
+  const contentsPath = join(appPath, "Contents");
+  const helperPath = join(contentsPath, "MacOS", "sheppard-dictation");
+  await mkdir(join(contentsPath, "MacOS"), { recursive: true });
+  await copyFile(join(nativeRoot, "macos-dictation.plist"), join(contentsPath, "Info.plist"));
   await run([
     "xcrun",
     "clang",
@@ -62,25 +66,18 @@ async function buildMacOsDictationHelper(
     "-framework",
     "Speech",
     join(nativeRoot, "macos-dictation.m"),
-    "-Xlinker",
-    "-sectcreate",
-    "-Xlinker",
-    "__TEXT",
-    "-Xlinker",
-    "__info_plist",
-    "-Xlinker",
-    join(nativeRoot, "macos-dictation.plist"),
     "-o",
     helperPath,
   ], "macOS dictation helper build");
   await run([
     "codesign",
     "--force",
+    "--deep",
     "--sign",
     "-",
     "--identifier",
     "com.sheppard.dictation",
-    helperPath,
+    appPath,
   ], "macOS dictation helper signing");
   await chmod(helperPath, 0o755);
 }

@@ -127,6 +127,7 @@ export class UploadStorageFailed extends TaggedError("UploadStorageFailed")<{
 
 export type DictationFailureReason =
   | "compile_failed"
+  | "dictation_disabled"
   | "local_recognition_unavailable"
   | "locale_unsupported"
   | "no_speech"

@@ -54,7 +54,7 @@ int main(int argc, const char *argv[]) {
 
         dispatch_semaphore_t recognitionReady = dispatch_semaphore_create(0);
         __block NSString *finalTranscript = nil;
-        __block BOOL recognitionFailed = NO;
+        __block NSString *recognitionFailure = nil;
         SFSpeechRecognitionTask *task = [recognizer
             recognitionTaskWithRequest:request
                          resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
@@ -67,7 +67,10 @@ int main(int argc, const char *argv[]) {
                 return;
             }
             if (error != nil) {
-                recognitionFailed = YES;
+                recognitionFailure = [NSString stringWithFormat:@"recognition-failed:%@:%ld:%@",
+                    error.domain,
+                    (long)error.code,
+                    error.localizedDescription];
                 dispatch_semaphore_signal(recognitionReady);
             }
         }];
@@ -77,7 +80,7 @@ int main(int argc, const char *argv[]) {
             Fail(@"recognition-timeout");
         }
         if (finalTranscript.length == 0) {
-            Fail(recognitionFailed ? @"recognition-failed" : @"no-speech");
+            Fail(recognitionFailure ?: @"no-speech");
         }
 
         [[NSFileHandle fileHandleWithStandardOutput]

@@ -106,6 +106,7 @@ export function statusFor(error: ApiError): number {
         case "no_speech":
           return 422;
         case "compile_failed":
+        case "dictation_disabled":
         case "local_recognition_unavailable":
         case "locale_unsupported":
         case "recognition_failed":
