@@ -30,6 +30,7 @@ export interface CreationPagesController {
   directAttachmentPathInput: string
   directAttachments: AttachmentPath[]
   directBody: string
+  handleDirectFiles: (files: readonly File[]) => void
   handleDirectAttachmentInputChange: (value: string) => void
   addDirectAttachmentPath: () => void
   setDirectBody: (value: string) => void
@@ -213,6 +214,7 @@ export interface DirectMessagePageProps {
   onBodyChange: (value: string) => void
   onClose: () => void
   onRemoveAttachment: (path: string) => void
+  onSelectFiles: (files: readonly File[]) => void
   onToggleAttachmentInput: () => void
   participants: Participant[]
   onRecipientsChange: (value: string) => void
@@ -231,6 +233,7 @@ export function DirectMessagePage({
   onBodyChange,
   onClose,
   onRemoveAttachment,
+  onSelectFiles,
   onToggleAttachmentInput,
   participants,
   onRecipientsChange,
@@ -240,6 +243,7 @@ export function DirectMessagePage({
 }: DirectMessagePageProps) {
   const attachmentBlocked = attachments.some((attachment) => attachment.status === "uploading" || attachment.status === "error" || attachment.error !== undefined)
   const messageRef = useRef<HTMLTextAreaElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   return (
     <div className="mx-auto w-full max-w-3xl p-4 sm:p-6" data-creation-page="direct">
       <div className="rounded-xl border bg-card p-5 shadow-sm sm:p-6">
@@ -277,9 +281,11 @@ export function DirectMessagePage({
               <Button onClick={onToggleAttachmentInput} size="sm" type="button" variant="outline"><Paperclip aria-hidden="true" /> Attach path</Button>
             </div>
             {attachmentInputOpen && (
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 <label className="sr-only" htmlFor="direct-attachment-path">Absolute attachment path</label>
-                <input className="h-9 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20" id="direct-attachment-path" onChange={(event) => onAttachmentInputChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onAttachmentInputSubmit() } }} placeholder="/absolute/path/to/file" value={attachmentPathInput} />
+                <input className="h-9 min-w-52 flex-1 rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20" id="direct-attachment-path" onChange={(event) => onAttachmentInputChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onAttachmentInputSubmit() } }} placeholder="/absolute/path/to/file" value={attachmentPathInput} />
+                <input className="sr-only" multiple onChange={(event) => { onSelectFiles(Array.from(event.target.files ?? [])); event.target.value = "" }} ref={fileInputRef} tabIndex={-1} type="file" />
+                <Button onClick={() => fileInputRef.current?.click()} size="sm" type="button" variant="outline"><FolderOpen aria-hidden="true" /> Browse</Button>
                 <Button onClick={onAttachmentInputSubmit} size="sm" type="button">Add</Button>
               </div>
             )}

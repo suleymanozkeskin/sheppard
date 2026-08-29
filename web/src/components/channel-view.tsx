@@ -1,6 +1,7 @@
 import { Result, TaggedError } from "better-result"
 import ReactMarkdown from "react-markdown"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import {
   CalendarDays,
   Check,
@@ -49,6 +50,7 @@ import type { AgentStatus, ApiResult, AttachmentMeta, ChannelReceipt, Message, M
 import { AgentAvatar } from "@/components/agent-avatar"
 import { AgentStatusOrb } from "@/components/agent-status-orb"
 import { Button } from "@/components/ui/button"
+import { KeyboardOverlay } from "@/components/ui/keyboard-overlay"
 import { useChannelReceipts } from "@/hooks/use-channel-receipts"
 import { firstUnreadMessageId } from "@/message-unread"
 import { useKeyboardLayer } from "@/hooks/use-keyboard-dispatcher"
@@ -591,22 +593,30 @@ function MessageBody({ body, canPreview, fetchMessageMarkdown, messageId }: Mess
   }, [])
 
   const referencedPath = viewerState.status === "idle" ? undefined : viewerState.path
+  const viewerTitleId = `message-markdown-viewer-${messageId}-title`
   return (
     <>
       <p className="whitespace-pre-wrap break-words">
         {renderMessageBody(body, canPreview ? openMarkdown : undefined)}
       </p>
-      {referencedPath !== undefined && (
-        <section
-          aria-label={`Markdown preview for ${attachmentBasename(referencedPath)}`}
-          className="my-2 max-h-[min(34rem,60vh)] min-w-0 overflow-hidden rounded-lg border bg-background text-foreground shadow-sm"
-          data-message-markdown-viewer={messageId}
+      {referencedPath !== undefined && createPortal(
+        <KeyboardOverlay
+          className="max-w-5xl"
+          dataDialog="message-markdown-viewer"
+          labelledBy={viewerTitleId}
+          onClose={closeViewer}
+          scope="dialog"
         >
-          <header className="flex min-w-0 items-center gap-2 border-b px-3 py-2 text-xs">
-            <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate font-medium" title={referencedPath}>
-              {attachmentBasename(referencedPath)}
-            </span>
+          <header className="flex min-w-0 items-start gap-3 border-b pb-4">
+            <FileText aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-base font-semibold" id={viewerTitleId} title={referencedPath}>
+                {attachmentBasename(referencedPath)}
+              </h2>
+              <p className="mt-1 truncate font-mono text-xs text-muted-foreground" title={referencedPath}>
+                {referencedPath}
+              </p>
+            </div>
             <Button
               aria-label={`Copy path for ${attachmentBasename(referencedPath)}`}
               onClick={() => handleCopy(referencedPath)}
@@ -622,17 +632,17 @@ function MessageBody({ body, canPreview, fetchMessageMarkdown, messageId }: Mess
             </Button>
           </header>
           {viewerState.status === "loading" && (
-            <p className="px-3 py-3 text-xs text-muted-foreground" role="status">Loading Markdown…</p>
+            <p className="py-6 text-sm text-muted-foreground" role="status">Loading Markdown…</p>
           )}
           {viewerState.status === "error" && (
-            <p className="px-3 py-3 text-xs text-destructive" role="alert">{viewerState.message}</p>
+            <p className="py-6 text-sm text-destructive" role="alert">{viewerState.message}</p>
           )}
           {viewerState.status === "ready" && (
-            <RenderedMarkdown className="max-h-[min(30rem,52vh)] max-w-none overflow-auto px-4 py-3" content={viewerState.content} />
+            <RenderedMarkdown className="max-w-none pt-5" content={viewerState.content} />
           )}
           {copyState === "failed" && <span className="sr-only" role="status">Copy failed</span>}
-          <AttachmentViewerLayer onClose={closeViewer} />
-        </section>
+        </KeyboardOverlay>,
+        document.body,
       )}
     </>
   )

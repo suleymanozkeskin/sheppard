@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent, type ReactNode, type RefObject } from "react"
 import {
   Bot,
+  FolderOpen,
   Hash,
   Inbox,
   Keyboard,
@@ -109,6 +110,7 @@ function creationPagesController(controller: AppController): CreationPagesContro
     directAttachmentPathInput: controller.directAttachmentPathInput,
     directAttachments: controller.directAttachments,
     directBody: controller.directBody,
+    handleDirectFiles: controller.handleDirectFiles,
     handleDirectAttachmentInputChange: controller.handleDirectAttachmentInputChange,
     addDirectAttachmentPath: controller.addDirectAttachmentPath,
     setDirectBody: controller.setDirectBody,
@@ -1478,6 +1480,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             onAttachmentInputChange={handleAttachmentInputChange}
             onAttachmentInputSubmit={handleAttachmentInputSubmit}
             onAttach={() => dispatchAction("composer.attach")}
+            onSelectFiles={handleDropFiles}
             onChange={handleComposerChange}
             onRemoveAttachment={removeAttachmentPath}
             onSubmit={handleComposerSubmit}
@@ -2068,6 +2071,7 @@ interface ComposerProps {
   onAttachmentInputChange: (value: string) => void
   onAttachmentInputSubmit: () => void
   onAttach: () => void
+  onSelectFiles: (files: readonly File[]) => void
   onChange: (value: string) => void
   onRemoveAttachment: (path: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
@@ -2148,6 +2152,7 @@ function Composer({
   onAttachmentInputChange,
   onAttachmentInputSubmit,
   onAttach,
+  onSelectFiles,
   onChange,
   onRemoveAttachment,
   onSubmit,
@@ -2158,6 +2163,7 @@ function Composer({
   sendDisabledReason,
 }: ComposerProps) {
   const attachmentBlocked = attachments.some((attachment) => attachment.status === "uploading" || attachment.status === "error" || attachment.error !== undefined)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useComposerAutosize(composerRef, draft)
 
@@ -2203,10 +2209,10 @@ function Composer({
           </ul>
         )}
         {attachmentInputOpen && (
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <label className="sr-only" htmlFor="attachment-path">Absolute attachment path</label>
             <input
-              className="h-8 min-w-0 flex-1 rounded-md border bg-muted/30 px-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+              className="h-8 min-w-52 flex-1 rounded-md border bg-muted/30 px-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
               id="attachment-path"
               onChange={(event) => onAttachmentInputChange(event.target.value)}
               onKeyDown={(event) => {
@@ -2219,16 +2225,31 @@ function Composer({
               ref={attachmentPathRef}
               value={attachmentPathInput}
             />
+            <input
+              className="sr-only"
+              multiple
+              onChange={(event) => {
+                onSelectFiles(Array.from(event.target.files ?? []))
+                event.target.value = ""
+              }}
+              ref={fileInputRef}
+              tabIndex={-1}
+              type="file"
+            />
+            <Button onClick={() => fileInputRef.current?.click()} size="sm" type="button" variant="outline">
+              <FolderOpen aria-hidden="true" />
+              Browse
+            </Button>
             <Button onClick={onAttachmentInputSubmit} size="sm" type="button">Add</Button>
           </div>
         )}
         <div className="flex items-end gap-2">
           <Button
-            aria-label="Attach a file path"
+            aria-label="Attach files or paths"
             disabled={readOnly || sendDisabled}
             onClick={onAttach}
             size="icon-sm"
-            title={readOnly ? readOnlyReason : sendDisabled ? sendDisabledReason : "Attach a file path"}
+            title={readOnly ? readOnlyReason : sendDisabled ? sendDisabledReason : "Attach files or paths"}
             type="button"
             variant="outline"
           >

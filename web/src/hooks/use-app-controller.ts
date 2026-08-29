@@ -322,13 +322,17 @@ export function useAppController(
   }, [setDraft])
   const {
     addAttachmentPath: addDirectAttachmentPath,
+    addUploadPlaceholder: addDirectUploadPlaceholder,
     attachmentInputOpen: directAttachmentInputOpen,
     attachmentPathInput: directAttachmentPathInput,
     attachments: directAttachments,
+    completeUpload: completeDirectUpload,
     handleAttachmentInputChange: handleDirectAttachmentInputChange,
     markAttachmentErrors: markDirectAttachmentErrors,
+    markUploadError: markDirectUploadError,
     markSent: markDirectSent,
     removeAttachmentPath: removeDirectAttachmentPath,
+    setUploadProgress: setDirectUploadProgress,
     toggleAttachmentInput: toggleDirectAttachmentInput,
   } = directComposer
   const channelData = useChannelState(api, fallbackApi, identity, sessionExpired, onUnauthorized)
@@ -627,6 +631,51 @@ export function useAppController(
       uploadFiles(files)
     },
     [identity, setComposerStatus, uploadFiles],
+  )
+
+  const directUploadSequenceRef = useRef(0)
+  const handleDirectFiles = useCallback(
+    (files: readonly File[]) => {
+      if (files.length === 0) return
+      if (identity === null) {
+        setDirectState({ message: NOT_CONNECTED_REASON, status: "error" })
+        return
+      }
+      const remaining = Math.max(16 - directAttachments.length, 0)
+      if (remaining === 0) {
+        setDirectState({ message: "This message already has the maximum number of attachments.", status: "error" })
+        return
+      }
+      for (const file of files.slice(0, remaining)) {
+        const uploadKey = `direct-upload:${directUploadSequenceRef.current}:${file.name}`
+        directUploadSequenceRef.current += 1
+        addDirectUploadPlaceholder(uploadKey, file.name)
+        void apiCall(api, fallbackApi, (client) =>
+          client.uploadFile(file, file.name, ({ loaded, total }) => {
+            const progress = total === 0 ? 0 : Math.round((loaded / total) * 100)
+            setDirectUploadProgress(uploadKey, progress)
+          }),
+        ).then((result) => {
+          result.match({
+            ok: ({ path }) => completeDirectUpload(uploadKey, path),
+            err: (error) => markDirectUploadError(uploadKey, formatApiError(error)),
+          })
+        })
+      }
+      if (files.length > remaining) {
+        setDirectState({ message: `Only ${remaining} attachment${remaining === 1 ? "" : "s"} added; the message cap is 16.`, status: "error" })
+      }
+    },
+    [
+      addDirectUploadPlaceholder,
+      api,
+      completeDirectUpload,
+      directAttachments.length,
+      fallbackApi,
+      identity,
+      markDirectUploadError,
+      setDirectUploadProgress,
+    ],
   )
 
   useEffect(() => {
@@ -1728,6 +1777,7 @@ export function useAppController(
     submitComposer,
     startDirect,
     handleDropFiles,
+    handleDirectFiles,
     handleMemberAdd,
     toggleSearchScope,
     unread: identity === null ? 0 : selectedDirect?.unread ?? selectedInbox?.unread ?? 0,

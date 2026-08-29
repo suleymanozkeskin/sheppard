@@ -307,6 +307,7 @@ function routePageContent({ controller, copy, creation, navigate, route }: { con
           onBodyChange={creation.setDirectBody}
           onClose={() => navigate({ kind: "direct" })}
           onRemoveAttachment={creation.removeDirectAttachmentPath}
+          onSelectFiles={creation.handleDirectFiles}
           onToggleAttachmentInput={creation.toggleDirectAttachmentInput}
           onRecipientsChange={creation.setDirectRecipients}
           onSubmit={creation.handleDirectSubmit}
