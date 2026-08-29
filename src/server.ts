@@ -13,6 +13,7 @@ import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { ingestAttachment, readMarkdownPath, readPreview } from "./attachments";
+import { transcribeDictation } from "./dictation";
 import {
   DEFAULT_HARNESSES,
   DEFAULT_ROLES,
@@ -3455,7 +3456,8 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
     let body: JsonValue = {};
     if (
       (request.method === "POST" || request.method === "PUT" || request.method === "DELETE") &&
-      url.pathname !== "/api/uploads"
+      url.pathname !== "/api/uploads" &&
+      url.pathname !== "/api/dictation/transcribe"
     ) {
       const parsed = await readJsonBody(request);
       if (parsed.isErr()) return errorResponse(parsed.error, headers);
@@ -3658,6 +3660,13 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
         );
       case "POST /api/uploads":
         return requireAuthAsync(hub, request, headers, () => uploadFile(hub, request, headers));
+      case "POST /api/dictation/transcribe":
+        return requireHumanAsync(hub, request, headers, "use local dictation", async () =>
+          (await transcribeDictation(request, hub.config.databasePath)).match({
+            ok: (transcript) => jsonResponse(transcript, 200, headers),
+            err: (error) => errorResponse(error, headers),
+          }),
+        );
       default:
         break;
     }

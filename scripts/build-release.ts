@@ -43,6 +43,48 @@ async function run(command: readonly string[], description: string): Promise<voi
   if (exitCode !== 0) throw new Error(`${description} failed with exit code ${exitCode}.`);
 }
 
+async function buildMacOsDictationHelper(
+  target: TargetConfig,
+  repositoryRoot: string,
+  targetRoot: string,
+): Promise<void> {
+  if (!target.name.startsWith("darwin-")) return;
+  const helperPath = join(targetRoot, "sheppard-dictation");
+  const nativeRoot = join(repositoryRoot, "native");
+  await run([
+    "xcrun",
+    "clang",
+    "-fobjc-arc",
+    "-fblocks",
+    "-mmacosx-version-min=12.0",
+    "-framework",
+    "Foundation",
+    "-framework",
+    "Speech",
+    join(nativeRoot, "macos-dictation.m"),
+    "-Xlinker",
+    "-sectcreate",
+    "-Xlinker",
+    "__TEXT",
+    "-Xlinker",
+    "__info_plist",
+    "-Xlinker",
+    join(nativeRoot, "macos-dictation.plist"),
+    "-o",
+    helperPath,
+  ], "macOS dictation helper build");
+  await run([
+    "codesign",
+    "--force",
+    "--sign",
+    "-",
+    "--identifier",
+    "com.sheppard.dictation",
+    helperPath,
+  ], "macOS dictation helper signing");
+  await chmod(helperPath, 0o755);
+}
+
 async function filesBelow(root: string, directory = root): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files: string[] = [];
@@ -104,6 +146,7 @@ async function main(): Promise<void> {
   await rm(targetRoot, { force: true, recursive: true });
   await mkdir(generatedRoot, { recursive: true });
   await mkdir(targetRoot, { recursive: true });
+  await buildMacOsDictationHelper(target, repositoryRoot, targetRoot);
   const entryPath = join(generatedRoot, "standalone-entry.ts");
   await writeFile(entryPath, generatedEntry(webFiles));
 

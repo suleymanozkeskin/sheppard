@@ -13,6 +13,7 @@ import {
   type ChannelNotDeletable,
   type ChannelNotFound,
   type DirectMembershipLocked,
+  type DictationUnavailable,
   type HandleTaken,
   type LauncherExists,
   type RoleExists,
@@ -53,6 +54,7 @@ export type ApiError =
   | ChannelNotDeletable
   | ChannelNotFound
   | DirectMembershipLocked
+  | DictationUnavailable
   | HandleTaken
   | LauncherExists
   | RoleExists
@@ -97,6 +99,21 @@ export function statusFor(error: ApiError): number {
     HerdrSessionMismatch: () => 403,
     HerdrCallFailed: () => 503,
     HerdrNotConfigured: () => 503,
+    DictationUnavailable: ({ reason }) => {
+      switch (reason) {
+        case "permission_denied":
+          return 403;
+        case "no_speech":
+          return 422;
+        case "compile_failed":
+        case "local_recognition_unavailable":
+        case "locale_unsupported":
+        case "recognition_failed":
+        case "timeout":
+        case "unsupported_os":
+          return 503;
+      }
+    },
   });
 }
 
@@ -160,6 +177,9 @@ function contentTypeAllowed(request: Request): boolean {
   if (new URL(request.url).pathname === "/api/uploads") {
     return essence === "application/octet-stream";
   }
+  if (new URL(request.url).pathname === "/api/dictation/transcribe") {
+    return essence === "audio/wav";
+  }
   return essence === "application/json";
 }
 
@@ -178,7 +198,7 @@ export function admit(request: Request, config: ServerConfig): Result<Request, R
     return Result.err(
       new RequestRejectedError({
         reason: "content_type",
-        message: "Content-Type must be application/json",
+        message: "Content-Type is not allowed",
       }),
     );
   }
@@ -197,7 +217,7 @@ export function corsHeaders(request: Request, config: ServerConfig): Headers {
   headers.set("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
   headers.set(
     "access-control-allow-headers",
-    `Content-Type, Accept, ${TOKEN_HEADER}, X-Msgr-Filename`,
+    `Content-Type, Accept, ${TOKEN_HEADER}, X-Msgr-Filename, X-Sheppard-Dictation-Locale`,
   );
   headers.set("vary", "Origin");
   return headers;

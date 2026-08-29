@@ -125,6 +125,21 @@ export class UploadStorageFailed extends TaggedError("UploadStorageFailed")<{
   message: string;
 }> {}
 
+export type DictationFailureReason =
+  | "compile_failed"
+  | "local_recognition_unavailable"
+  | "locale_unsupported"
+  | "no_speech"
+  | "permission_denied"
+  | "recognition_failed"
+  | "timeout"
+  | "unsupported_os";
+
+export class DictationUnavailable extends TaggedError("DictationUnavailable")<{
+  reason: DictationFailureReason;
+  message: string;
+}> {}
+
 /** A request rejected before any handler ran, by the checks that keep browsers out. */
 export class RequestRejected extends TaggedError("RequestRejected")<{
   reason: "host" | "origin" | "content_type";
@@ -237,4 +252,11 @@ export function notPreviewable(attachmentId: number): NotPreviewable {
 
 export function uploadStorageFailed(): UploadStorageFailed {
   return new UploadStorageFailed({ message: "The upload could not be stored" });
+}
+
+export function dictationUnavailable(
+  reason: DictationFailureReason,
+  message: string,
+): DictationUnavailable {
+  return new DictationUnavailable({ reason, message });
 }
