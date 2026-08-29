@@ -191,6 +191,31 @@ export interface Preview {
 }
 
 /**
+ * Reads a Markdown path that a message names explicitly. The caller must first
+ * confirm that the stored message contains the path. This function only checks
+ * the file type and the renderer limits.
+ */
+export function readMarkdownPath(path: string): Result<Preview, NotFound> {
+  const kind = previewKindFor(path);
+  if (kind?.mediaType !== "text/markdown") return Result.err(notFound("Markdown file"));
+
+  return resolveRegularFile(path).match({
+    err: () => Result.err(notFound("Markdown file")),
+    ok: (file) => {
+      if (file.byteSize > kind.maxBytes) return Result.err(notFound("Markdown file"));
+      const bytes = Result.try({
+        try: (): Uint8Array => readFileSync(file.path),
+        catch: () => notFound("Markdown file"),
+      });
+      if (bytes.isErr()) return Result.err(bytes.error);
+      if (bytes.value.byteLength > kind.maxBytes) return Result.err(notFound("Markdown file"));
+      if (!kind.verify(bytes.value)) return Result.err(notFound("Markdown file"));
+      return Result.ok({ bytes: bytes.value, contentType: kind.contentType });
+    },
+  });
+}
+
+/**
  * Re-reads and re-hashes before serving. A file that changed since it was sent
  * is reported as absent rather than as a different file, so the response never
  * carries bytes nobody chose to share.

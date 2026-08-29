@@ -12,7 +12,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize } from "node:path";
-import { ingestAttachment, readPreview } from "./attachments";
+import { ingestAttachment, readMarkdownPath, readPreview } from "./attachments";
 import {
   DEFAULT_HARNESSES,
   DEFAULT_ROLES,
@@ -209,6 +209,15 @@ function routedPath(pathname: string): Result<RoutedPath, ValidationFailed> {
     third !== undefined
   ) {
     return Result.ok({ key: "/api/attachments/:id/content", param: third, extra: "" });
+  }
+  if (
+    first === "api" &&
+    second === "messages" &&
+    segments.length === 4 &&
+    fourth === "markdown" &&
+    third !== undefined
+  ) {
+    return Result.ok({ key: "/api/messages/:id/markdown", param: third, extra: "" });
   }
   if (first === "api" && second === "agents" && segments.length === 3 && third !== undefined) {
     return Result.try({
@@ -3147,6 +3156,53 @@ function serveAttachment(hub: Hub, rawId: string, headers: Headers): Response {
   });
 }
 
+const BEFORE_PATH_BOUNDARIES = new Set([" ", "\t", "\r", "\n", "`", "(", "[", "{", "<", "\"", "'", ":", ";", "="]);
+const AFTER_PATH_BOUNDARIES = new Set([" ", "\t", "\r", "\n", "`", ".", ",", ";", ":", "!", "?", ")", "]", "}", ">", "\"", "'"]);
+
+/** The exact path must be a distinct reference, not a substring of another path. */
+function messageReferencesPath(body: string, path: string): boolean {
+  if (!isAbsolute(path) || path.length > MAX_PATH_LENGTH) return false;
+  let cursor = body.indexOf(path);
+  while (cursor >= 0) {
+    const before = body[cursor - 1];
+    const after = body[cursor + path.length];
+    const startsReference = before === undefined || BEFORE_PATH_BOUNDARIES.has(before);
+    const endsReference = after === undefined || AFTER_PATH_BOUNDARIES.has(after);
+    if (startsReference && endsReference) return true;
+    cursor = body.indexOf(path, cursor + path.length);
+  }
+  return false;
+}
+
+/**
+ * A message reference grants the human browser access to that one Markdown
+ * path. Raw HTML stays disabled in the browser renderer.
+ */
+function serveMessageMarkdown(hub: Hub, rawId: string, url: URL, headers: Headers): Response {
+  const id = Number(rawId);
+  const path = url.searchParams.get("path");
+  if (!Number.isInteger(id) || id <= 0 || path === null) {
+    return errorResponse(notFound("Markdown file"), headers);
+  }
+
+  const message = hub.store.messageById(id);
+  if (message === null || !messageReferencesPath(message.body, path)) {
+    return errorResponse(notFound("Markdown file"), headers);
+  }
+
+  return readMarkdownPath(path).match({
+    ok: (preview) => {
+      headers.set("content-type", preview.contentType);
+      headers.set("content-length", String(preview.bytes.byteLength));
+      headers.set("x-content-type-options", "nosniff");
+      headers.set("content-security-policy", "sandbox");
+      headers.set("cache-control", "no-store");
+      return new Response(preview.bytes, { status: 200, headers });
+    },
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
 async function uploadFile(hub: Hub, request: Request, headers: Headers): Promise<Response> {
   const filename = request.headers.get("x-msgr-filename");
   if (filename === null || filename.length === 0) {
@@ -3596,6 +3652,10 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
         );
       case "GET /api/attachments/:id/content":
         return requireAuth(hub, request, headers, () => serveAttachment(hub, param, headers));
+      case "GET /api/messages/:id/markdown":
+        return requireHuman(hub, request, headers, "read referenced Markdown files", () =>
+          serveMessageMarkdown(hub, param, url, headers),
+        );
       case "POST /api/uploads":
         return requireAuthAsync(hub, request, headers, () => uploadFile(hub, request, headers));
       default:

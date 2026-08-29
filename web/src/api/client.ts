@@ -633,6 +633,52 @@ export class HttpMsgrApi implements MsgrApi {
     return `${this.baseUrl}/api/attachments/${id}/content`
   }
 
+  public messageMarkdownContent(messageId: number, referencedPath: string): ApiResult<string> {
+    const params = new URLSearchParams({ path: referencedPath })
+    const path = `/api/messages/${messageId}/markdown?${params.toString()}`
+    const operation: Operation = "messageMarkdownContent"
+    const headers = new Headers({ Accept: "text/markdown" })
+    if (this.token !== undefined) headers.set("X-Msgr-Token", this.token)
+    return Result.tryPromise<Response, ApiNetworkError>({
+      try: () =>
+        this.fetchImpl(`${this.baseUrl}${path}`, {
+          credentials: "include",
+          headers,
+          method: "GET",
+        }),
+      catch: (cause) =>
+        new ApiNetworkError({
+          cause,
+          message: "The Markdown file could not be reached",
+          operation,
+        }),
+    }).then((responseResult) =>
+      responseResult.andThenAsync(async (response) => {
+        const bodyResult = await Result.tryPromise<string, ApiNetworkError>({
+          try: () => response.text(),
+          catch: (cause) =>
+            new ApiNetworkError({
+              cause,
+              message: "The Markdown response could not be read",
+              operation,
+            }),
+        })
+        return response.ok
+          ? bodyResult
+          : bodyResult.andThen((body) =>
+              Result.err(
+                new ApiHttpError({
+                  body,
+                  message: `The messenger server rejected GET ${path}`,
+                  operation,
+                  status: response.status,
+                }),
+              ),
+            )
+      }),
+    )
+  }
+
   public uploadFile(file: Blob, filename: string, onProgress?: UploadProgressHandler): ApiResult<UploadResult> {
     const path = "/api/uploads"
     const operation: Operation = "uploadFile"

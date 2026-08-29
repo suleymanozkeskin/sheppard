@@ -524,6 +524,24 @@ const sidebarAgentStatusRank = {
   unknown: 4,
 } satisfies Record<AgentStatus, number>
 
+function runtimeStatusesByHandle(workspaces: readonly HerdrWorkspaceView[]): ReadonlyMap<string, readonly AgentStatus[]> {
+  const statusesByHandle = new Map<string, Set<AgentStatus>>()
+  for (const workspace of workspaces) {
+    for (const pane of workspace.panes) {
+      if (pane.participant === null) continue
+      const statuses = statusesByHandle.get(pane.participant) ?? new Set<AgentStatus>()
+      statuses.add(pane.agentStatus)
+      statusesByHandle.set(pane.participant, statuses)
+    }
+  }
+  return new Map(
+    [...statusesByHandle].map(([handle, statuses]) => [
+      handle,
+      [...statuses].toSorted((left, right) => sidebarAgentStatusRank[left] - sidebarAgentStatusRank[right]),
+    ] as const),
+  )
+}
+
 function AgentSidebarPanel({ controller, router }: { controller: AppController; router: ShellRouter }) {
   const [query, setQuery] = useState("")
   const [menu, setMenu] = useState<{ pane: HerdrPaneView; x: number; y: number } | undefined>()
@@ -1030,6 +1048,10 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
     () => new Set(participants.map((participant) => participant.handle)),
     [participants],
   )
+  const agentStatusesByHandle = useMemo(
+    () => runtimeStatusesByHandle(workspaceData.settledWorkspaces),
+    [workspaceData.settledWorkspaces],
+  )
   const receiptRouteStates = useMemo(
     () => new Map(selectedMembers.map((member) => [member.handle, member.routeState] as const)),
     [selectedMembers],
@@ -1409,9 +1431,13 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             </div>
           ) : (
             <ChannelView
+              agentStatusesByHandle={agentStatusesByHandle}
               attachmentContentUrl={(id) => api.attachmentContentUrl(id)}
               fetchAttachmentContent={(id) =>
                 apiCall(api, fallbackApi, (client) => client.attachmentContent(id))
+              }
+              fetchMessageMarkdown={(messageId, path) =>
+                apiCall(api, fallbackApi, (client) => client.messageMarkdownContent(messageId, path))
               }
               canPreview={identity !== null}
               canAcknowledge={identity !== null && (selectedChannelKind !== "chat" || isSelectedMember)}
@@ -1747,6 +1773,7 @@ interface WorkspacePanelProps {
 function WorkspacePanel({ api, fallbackApi, identity, onBroadcast, onOpenAttachments, receiptReloadKey, receiptUpdates, receiptUpdatesChannel, streamState, workspace, workspaceChannel }: WorkspacePanelProps) {
   const live = useLiveMessages(api, fallbackApi, workspaceChannel, 0, undefined, undefined, undefined, false, { enableStream: false })
   const recipients = workspace.panes.flatMap((pane) => pane.participant === null ? [] : [pane.participant])
+  const agentStatusesByHandle = useMemo(() => runtimeStatusesByHandle([workspace]), [workspace])
   const receiptRouteStates = useMemo(
     () => new Map(workspace.panes.flatMap((pane) => pane.participant === null || pane.participantRouteState === null ? [] : [[pane.participant, pane.participantRouteState] as const])),
     [workspace.panes],
@@ -1775,11 +1802,13 @@ function WorkspacePanel({ api, fallbackApi, identity, onBroadcast, onOpenAttachm
         <div className="flex flex-1 items-center justify-center px-6 text-sm text-muted-foreground">No broadcasts yet.</div>
       ) : (
         <ChannelView
+          agentStatusesByHandle={agentStatusesByHandle}
           attachmentContentUrl={(id) => api.attachmentContentUrl(id)}
           canPreview={identity !== null}
           channelName={workspaceChannel}
           errorMessage={live.messageState.status === "ready" ? live.messageState.errorMessage : undefined}
           fetchAttachmentContent={(id) => apiCall(api, fallbackApi, (client) => client.attachmentContent(id))}
+          fetchMessageMarkdown={(messageId, path) => apiCall(api, fallbackApi, (client) => client.messageMarkdownContent(messageId, path))}
           loadState={live.messageState.status}
           messages={live.selectedMessages}
           unread={0}
@@ -1874,18 +1903,10 @@ function WorkspaceOverlays({ controller, router }: { controller: AppController; 
     })),
     [membersPanelChannel, membersPanelMembers, settledMemberRouteStates],
   )
-  const agentRuntimeByHandle = useMemo(() => {
-    const statusesByHandle = new Map<string, Set<AgentStatus>>()
-    for (const workspace of controller.workspaceData.settledWorkspaces) {
-      for (const pane of workspace.panes) {
-        if (pane.participant === null) continue
-        const statuses = statusesByHandle.get(pane.participant) ?? new Set<AgentStatus>()
-        statuses.add(pane.agentStatus)
-        statusesByHandle.set(pane.participant, statuses)
-      }
-    }
-    return new Map([...statusesByHandle].map(([handle, statuses]) => [handle, [...statuses].toSorted()] as const))
-  }, [controller.workspaceData.settledWorkspaces])
+  const agentRuntimeByHandle = useMemo(
+    () => runtimeStatusesByHandle(controller.workspaceData.settledWorkspaces),
+    [controller.workspaceData.settledWorkspaces],
+  )
   const workspaceCloseWorkspace = controller.workspaceData.workspaces.find((workspace) => workspace.id === controller.workspaceCloseId)
   const workspaceBroadcastWorkspace = controller.workspaceData.workspaces.find((workspace) => workspace.id === controller.workspaceBroadcastId)
   const switcherEntries = useMemo(

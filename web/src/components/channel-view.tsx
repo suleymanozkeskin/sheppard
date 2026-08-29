@@ -45,8 +45,9 @@ import { useMessageScroller, useMessageScrollerVisibility } from "@/components/u
 import { highestContiguousVisibleId, type AckScheduler } from "@/api/ack"
 import { formatApiError } from "@/api/errors"
 import { cn } from "@/lib/utils"
-import type { ApiResult, AttachmentMeta, ChannelReceipt, Message, MsgrApi, RouteState } from "@/api/types"
+import type { AgentStatus, ApiResult, AttachmentMeta, ChannelReceipt, Message, MsgrApi, RouteState } from "@/api/types"
 import { AgentAvatar } from "@/components/agent-avatar"
+import { AgentStatusOrb } from "@/components/agent-status-orb"
 import { Button } from "@/components/ui/button"
 import { useChannelReceipts } from "@/hooks/use-channel-receipts"
 import { firstUnreadMessageId } from "@/message-unread"
@@ -64,7 +65,9 @@ export interface ChannelViewProps {
   errorMessage?: string
   attachmentContentUrl: (id: number) => string
   fetchAttachmentContent: (id: number) => ApiResult<string>
+  fetchMessageMarkdown: (messageId: number, path: string) => ApiResult<string>
   canPreview: boolean
+  agentStatusesByHandle?: ReadonlyMap<string, readonly AgentStatus[]>
   ackScheduler?: AckScheduler
   canAcknowledge?: boolean
   onJoin?: () => void
@@ -123,7 +126,9 @@ export function ChannelView({
   errorMessage,
   attachmentContentUrl,
   fetchAttachmentContent,
+  fetchMessageMarkdown,
   canPreview,
+  agentStatusesByHandle,
   ackScheduler,
   selfHandle,
   focusedMessageId,
@@ -157,7 +162,9 @@ export function ChannelView({
       <ChannelScroller
         attachmentContentUrl={attachmentContentUrl}
         fetchAttachmentContent={fetchAttachmentContent}
+        fetchMessageMarkdown={fetchMessageMarkdown}
         canPreview={canPreview}
+        agentStatusesByHandle={agentStatusesByHandle}
         ackScheduler={ackScheduler}
         canAcknowledge={canAcknowledge}
         onJoin={onJoin}
@@ -184,7 +191,9 @@ interface ChannelScrollerProps {
   channelName: string
   attachmentContentUrl: (id: number) => string
   fetchAttachmentContent: (id: number) => ApiResult<string>
+  fetchMessageMarkdown: (messageId: number, path: string) => ApiResult<string>
   canPreview: boolean
+  agentStatusesByHandle: ReadonlyMap<string, readonly AgentStatus[]> | undefined
   ackScheduler: AckScheduler | undefined
   canAcknowledge: boolean | undefined
   errorMessage: string | undefined
@@ -207,7 +216,9 @@ function ChannelScroller({
   channelName,
   attachmentContentUrl,
   fetchAttachmentContent,
+  fetchMessageMarkdown,
   canPreview,
+  agentStatusesByHandle,
   ackScheduler,
   canAcknowledge,
   errorMessage,
@@ -298,7 +309,9 @@ function ChannelScroller({
                 <MessageWithMarkers
                   attachmentContentUrl={attachmentContentUrl}
                   fetchAttachmentContent={fetchAttachmentContent}
+                  fetchMessageMarkdown={fetchMessageMarkdown}
                   canPreview={canPreview}
+                  agentStatusesByHandle={agentStatusesByHandle}
                   unreadMarker={message.id === firstUnreadId ? "first" : "none"}
                   groupState={canGroupMessages(messages[index - 1], message) ? "grouped" : "standalone"}
                   focusState={focusedMessageId !== undefined && message.id === activeFocusedMessageId
@@ -346,7 +359,9 @@ function ChannelReadTracker({ channelName, messages, ackScheduler }: ChannelRead
 interface MessageWithMarkersProps {
   attachmentContentUrl: (id: number) => string
   fetchAttachmentContent: (id: number) => ApiResult<string>
+  fetchMessageMarkdown: (messageId: number, path: string) => ApiResult<string>
   canPreview: boolean
+  agentStatusesByHandle: ReadonlyMap<string, readonly AgentStatus[]> | undefined
   unreadMarker: "first" | "none"
   groupState: "grouped" | "standalone"
   focusState: "focused" | "requested" | "unfocused"
@@ -362,7 +377,9 @@ interface MessageWithMarkersProps {
 function MessageWithMarkers({
   attachmentContentUrl,
   fetchAttachmentContent,
+  fetchMessageMarkdown,
   canPreview,
+  agentStatusesByHandle,
   unreadMarker,
   groupState,
   focusState,
@@ -405,7 +422,9 @@ function MessageWithMarkers({
         <MessageRow
           attachmentContentUrl={attachmentContentUrl}
           fetchAttachmentContent={fetchAttachmentContent}
+          fetchMessageMarkdown={fetchMessageMarkdown}
           canPreview={canPreview}
+          agentStatusesByHandle={agentStatusesByHandle}
           isGrouped={isGrouped}
           message={message}
           selfHandle={selfHandle}
@@ -421,7 +440,9 @@ function MessageWithMarkers({
 interface MessageRowProps {
   attachmentContentUrl: (id: number) => string
   fetchAttachmentContent: (id: number) => ApiResult<string>
+  fetchMessageMarkdown: (messageId: number, path: string) => ApiResult<string>
   canPreview: boolean
+  agentStatusesByHandle: ReadonlyMap<string, readonly AgentStatus[]> | undefined
   isGrouped: boolean
   message: Message
   selfHandle: string | undefined
@@ -433,7 +454,9 @@ interface MessageRowProps {
 function MessageRow({
   attachmentContentUrl,
   fetchAttachmentContent,
+  fetchMessageMarkdown,
   canPreview,
+  agentStatusesByHandle,
   isGrouped,
   message,
   selfHandle,
@@ -443,6 +466,7 @@ function MessageRow({
 }: MessageRowProps) {
   const isSelf = selfHandle !== undefined && message.sender === selfHandle
   const senderInitial = message.sender.slice(0, 1).toUpperCase()
+  const agentStatuses = message.senderKind === "agent" ? agentStatusesByHandle?.get(message.sender) ?? [] : []
 
   return (
     <MessagePrimitive align={isSelf ? "end" : "start"}>
@@ -463,6 +487,11 @@ function MessageRow({
       <MessageContent className="gap-1.5">
         {!isGrouped && <MessageHeader>
           <span>{message.sender}</span>
+          {agentStatuses.map((status) => (
+            <span className="-my-1 ml-1 inline-flex" key={status} title={`Agent status: ${status}`}>
+              <AgentStatusOrb ariaLabel={`Agent status: ${status}`} size={20} status={status} />
+            </span>
+          ))}
           {onStartDirect !== undefined && message.sender !== selfHandle && messageableHandles?.has(message.sender) === true && (
             <button
               aria-label={`Message ${message.sender} directly`}
@@ -489,7 +518,12 @@ function MessageRow({
         <MessageGroup className="gap-0.5">
           <Bubble align={isSelf ? "end" : "start"} variant={isSelf ? "default" : "secondary"}>
             <BubbleContent className="px-3 py-1">
-              <p className="whitespace-pre-wrap break-words">{renderMessageBody(message.body)}</p>
+              <MessageBody
+                body={message.body}
+                canPreview={canPreview}
+                fetchMessageMarkdown={fetchMessageMarkdown}
+                messageId={message.id}
+              />
             </BubbleContent>
           </Bubble>
           {message.attachments.length > 0 && (
@@ -509,6 +543,98 @@ function MessageRow({
         </MessageGroup>
       </MessageContent>
     </MessagePrimitive>
+  )
+}
+
+type MessageMarkdownViewerState =
+  | { status: "idle" }
+  | { status: "loading"; path: string }
+  | { status: "ready"; path: string; content: string }
+  | { status: "error"; path: string; message: string }
+
+interface MessageBodyProps {
+  body: string
+  canPreview: boolean
+  fetchMessageMarkdown: (messageId: number, path: string) => ApiResult<string>
+  messageId: number
+}
+
+function MessageBody({ body, canPreview, fetchMessageMarkdown, messageId }: MessageBodyProps) {
+  const [viewerState, setViewerState] = useState<MessageMarkdownViewerState>({ status: "idle" })
+  const [copyState, setCopyState] = useState<CopyState>("idle")
+
+  const closeViewer = useCallback(() => {
+    setViewerState({ status: "idle" })
+    setCopyState("idle")
+  }, [])
+  const openMarkdown = useCallback((path: string): void => {
+    if (!canPreview) return
+    if (viewerState.status !== "idle" && viewerState.path === path) {
+      closeViewer()
+      return
+    }
+
+    setViewerState({ path, status: "loading" })
+    void fetchMessageMarkdown(messageId, path).then((result) => {
+      setViewerState((current) => {
+        if (current.status === "idle" || current.path !== path) return current
+        if (result.isOk()) return { content: result.value, path, status: "ready" }
+        return { message: formatApiError(result.error), path, status: "error" }
+      })
+    })
+  }, [canPreview, closeViewer, fetchMessageMarkdown, messageId, viewerState])
+
+  const handleCopy = useCallback((path: string): void => {
+    void copyPath(path).then((result) => {
+      setCopyState(result.match({ ok: () => "copied" as const, err: () => "failed" as const }))
+    })
+  }, [])
+
+  const referencedPath = viewerState.status === "idle" ? undefined : viewerState.path
+  return (
+    <>
+      <p className="whitespace-pre-wrap break-words">
+        {renderMessageBody(body, canPreview ? openMarkdown : undefined)}
+      </p>
+      {referencedPath !== undefined && (
+        <section
+          aria-label={`Markdown preview for ${attachmentBasename(referencedPath)}`}
+          className="my-2 max-h-[min(34rem,60vh)] min-w-0 overflow-hidden rounded-lg border bg-background text-foreground shadow-sm"
+          data-message-markdown-viewer={messageId}
+        >
+          <header className="flex min-w-0 items-center gap-2 border-b px-3 py-2 text-xs">
+            <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate font-medium" title={referencedPath}>
+              {attachmentBasename(referencedPath)}
+            </span>
+            <Button
+              aria-label={`Copy path for ${attachmentBasename(referencedPath)}`}
+              onClick={() => handleCopy(referencedPath)}
+              size="icon-sm"
+              title={copyState === "copied" ? "Path copied" : "Copy path"}
+              type="button"
+              variant="ghost"
+            >
+              {copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </Button>
+            <Button aria-label="Close Markdown preview" onClick={closeViewer} size="icon-sm" title="Close preview" type="button" variant="ghost">
+              <X aria-hidden="true" />
+            </Button>
+          </header>
+          {viewerState.status === "loading" && (
+            <p className="px-3 py-3 text-xs text-muted-foreground" role="status">Loading Markdown…</p>
+          )}
+          {viewerState.status === "error" && (
+            <p className="px-3 py-3 text-xs text-destructive" role="alert">{viewerState.message}</p>
+          )}
+          {viewerState.status === "ready" && (
+            <RenderedMarkdown className="max-h-[min(30rem,52vh)] max-w-none overflow-auto px-4 py-3" content={viewerState.content} />
+          )}
+          {copyState === "failed" && <span className="sr-only" role="status">Copy failed</span>}
+          <AttachmentViewerLayer onClose={closeViewer} />
+        </section>
+      )}
+    </>
   )
 }
 
@@ -718,21 +844,7 @@ export function AttachmentCard({
         </div>
       )}
       {viewerState.status === "ready" && (
-        <div className="md-view prose basis-full max-w-[68ch] border-t px-3 py-3 text-foreground">
-          <ReactMarkdown
-            components={{
-              a: ({ children, href }) => (
-                <a href={href} rel="noreferrer" target="_blank">
-                  {children}
-                </a>
-              ),
-            }}
-            skipHtml
-            urlTransform={safeMarkdownUrl}
-          >
-            {viewerState.content}
-          </ReactMarkdown>
-        </div>
+        <RenderedMarkdown className="basis-full max-w-[68ch] border-t px-3 py-3" content={viewerState.content} />
       )}
       {viewerOpen && <AttachmentViewerLayer onClose={closeViewer} />}
     </Attachment>
@@ -742,6 +854,26 @@ export function AttachmentCard({
 function AttachmentViewerLayer({ onClose }: { onClose: () => void }) {
   useKeyboardLayer(VIEWER_KEYBOARD_LAYER, undefined, onClose)
   return null
+}
+
+function RenderedMarkdown({ className, content }: { className?: string; content: string }) {
+  return (
+    <div className={cn("md-view prose text-foreground", className)}>
+      <ReactMarkdown
+        components={{
+          a: ({ children, href }) => (
+            <a href={href} rel="noreferrer" target="_blank">
+              {children}
+            </a>
+          ),
+        }}
+        skipHtml
+        urlTransform={safeMarkdownUrl}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 function safeMarkdownUrl(url: string): string {
@@ -825,9 +957,10 @@ function formatByteSize(byteSize: number | null): string {
   return `${(byteSize / 1_000_000).toFixed(1)} MB`
 }
 
-const MESSAGE_TOKEN_PATTERN = /(`[^`\n]+`|\/(?:[A-Za-z0-9._~!$&'()*+,;=@%/-]+)|(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+(?::\d+(?:-\d+)?)?|[0-9a-f]{7,40})/giu
+const MESSAGE_TOKEN_PATTERN = /(`[^`\n]+`|\/[^\s`<>"']+?\.(?:md|markdown)(?=$|[\s.,;:!?)}\]])|\/(?:[A-Za-z0-9._~!$&'()*+,;=@%/-]+)|(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+(?::\d+(?:-\d+)?)?|[0-9a-f]{7,40})/giu
+const MARKDOWN_PATH_PATTERN = /^\/.+\.(?:md|markdown)$/iu
 
-function renderMessageBody(body: string): ReactNode {
+function renderMessageBody(body: string, onOpenMarkdown?: (path: string) => void): ReactNode {
   const nodes: ReactNode[] = []
   let cursor = 0
   for (const match of body.matchAll(MESSAGE_TOKEN_PATTERN)) {
@@ -836,15 +969,25 @@ function renderMessageBody(body: string): ReactNode {
     if (start === undefined) continue
     if (start > cursor) nodes.push(body.slice(cursor, start))
     const value = token.startsWith("`") && token.endsWith("`") ? token.slice(1, -1) : token
+    const opensMarkdown = onOpenMarkdown !== undefined && MARKDOWN_PATH_PATTERN.test(value)
     nodes.push(
       <button
-        className="rounded bg-primary-foreground px-1 font-mono text-[13px] text-primary hover:bg-primary-foreground/80"
+        aria-label={opensMarkdown ? `View Markdown file ${value}` : `Copy reference ${value}`}
+        className={cn(
+          "max-w-full rounded bg-primary-foreground px-1 font-mono text-[13px] text-primary hover:bg-primary-foreground/80",
+          opensMarkdown && "inline-flex items-center gap-1 underline decoration-primary/40 underline-offset-2",
+        )}
+        data-message-markdown-path={opensMarkdown ? value : undefined}
         data-surface-kind="code-chip"
         key={`${start}-${token}`}
-        onClick={() => { void copyPath(value) }}
-        title="Copy reference"
+        onClick={() => {
+          if (opensMarkdown) onOpenMarkdown?.(value)
+          else void copyPath(value)
+        }}
+        title={opensMarkdown ? "View Markdown file" : "Copy reference"}
         type="button"
       >
+        {opensMarkdown && <FileText aria-hidden="true" className="size-3 shrink-0" />}
         <code>{value}</code>
       </button>,
     )

@@ -1039,6 +1039,20 @@ export class MockMsgrApi implements MsgrApi {
     return `/api/attachments/${id}/content`
   }
 
+  public async messageMarkdownContent(messageId: number, path: string): ApiResult<string> {
+    const message = this.messages.find((candidate) => candidate.id === messageId)
+    if (message === undefined || !message.body.includes(path) || !/\.(?:md|markdown)$/iu.test(path)) {
+      return Result.err(
+        new ApiNotFoundError({
+          message: "The Markdown file was not found in the mock fixture",
+          resource: path,
+        }),
+      )
+    }
+    const name = path.slice(path.lastIndexOf("/") + 1)
+    return Result.ok(`# ${name}\n\nThis is a preview of a Markdown path referenced in the message.\n`)
+  }
+
   public async uploadFile(
     file: Blob,
     filename: string,

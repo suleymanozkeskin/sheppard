@@ -718,5 +718,6 @@ export interface MsgrApi {
   listAttachments(query?: AttachmentListQuery): ApiResult<AttachmentList>
   attachmentContent(id: number): ApiResult<string>
   attachmentContentUrl(id: number): string
+  messageMarkdownContent(messageId: number, path: string): ApiResult<string>
   uploadFile(file: Blob, filename: string, onProgress?: UploadProgressHandler): ApiResult<UploadResult>
 }
