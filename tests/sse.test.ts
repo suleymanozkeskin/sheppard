@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FakeHerdr } from "../src/herdr";
-import { BASE, auth, provision, testHub } from "./http-support";
+import { BASE, auth, operatorAuth, provision, testHub } from "./http-support";
 import type { TestHub } from "./http-support";
 
 const decoder = new TextDecoder();
@@ -157,6 +157,34 @@ describe("event stream", () => {
     const frames = await readFrames(stream.body!, 8);
     const directMeta = frames.filter((frame) => frame.includes("event: meta") && frame.includes('"direct"'));
     expect(directMeta).toHaveLength(1);
+    aborter.abort();
+  });
+
+  test("announces launcher and model changes", async () => {
+    const hub = testHub();
+    const operator = await operatorAuth(hub);
+    const { response, aborter } = subscribe(hub);
+    const stream = await response;
+
+    await hub.post(
+      "/api/herdr/models",
+      { harness: "claude", kind: "model", name: "opus" },
+      operator,
+    );
+    await hub.post(
+      "/api/herdr/launchers",
+      { agentKind: "claude", argv: ["claude"], name: "personal" },
+      operator,
+    );
+
+    const frames = await readFrames(stream.body!, 6);
+    // SAFETY: each frame was written by the hub's own frame encoder, so the data
+    // line is the JSON form of the MetadataUpdate the hub just published.
+    const scopes = frames
+      .filter((frame) => frame.includes("event: meta"))
+      .map((frame) => JSON.parse(frame.split("data: ")[1] ?? "{}") as { scopes?: string[] });
+    expect(scopes.some((frame) => frame.scopes?.includes("models"))).toBe(true);
+    expect(scopes.some((frame) => frame.scopes?.includes("launchers"))).toBe(true);
     aborter.abort();
   });
 

@@ -1501,6 +1501,7 @@ async function refreshHerdrModelCatalogue(
     launchers,
     target === null ? undefined : target,
   );
+  publishMetadata(hub, "models");
   return jsonResponse(snapshot, 200, headers);
 }
 
@@ -1528,7 +1529,10 @@ function createHerdrModel(hub: Hub, body: JsonValue, headers: Headers): Response
     )
     .andThen((model) => hub.store.createModel(model))
     .match({
-      ok: (model) => jsonResponse(modelEntryView(model), 201, headers),
+      ok: (model) => {
+        publishMetadata(hub, "models");
+        return jsonResponse(modelEntryView(model), 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1546,7 +1550,10 @@ function deleteHerdrModel(
       ),
     )
     .match({
-      ok: (deleted) => jsonResponse(deleted, 200, headers),
+      ok: (deleted) => {
+        publishMetadata(hub, "models");
+        return jsonResponse(deleted, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1688,7 +1695,10 @@ function createHerdrLauncher(hub: Hub, body: JsonValue, headers: Headers): Respo
       ),
     )
     .match({
-      ok: (launcher) => jsonResponse(launcherView(launcher), 201, headers),
+      ok: (launcher) => {
+        publishMetadata(hub, "launchers");
+        return jsonResponse(launcherView(launcher), 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1715,7 +1725,10 @@ function updateHerdrLauncher(
           );
     })
     .match({
-      ok: (launcher) => jsonResponse(launcherView(launcher), 200, headers),
+      ok: (launcher) => {
+        publishMetadata(hub, "launchers");
+        return jsonResponse(launcherView(launcher), 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1724,7 +1737,10 @@ function deleteHerdrLauncher(hub: Hub, name: string, headers: Headers): Response
   return validName(name, "name")
     .andThen((validLauncherName) => hub.store.deleteLauncher(validLauncherName))
     .match({
-      ok: (deleted) => jsonResponse(deleted, 200, headers),
+      ok: (deleted) => {
+        publishMetadata(hub, "launchers");
+        return jsonResponse(deleted, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }

@@ -25,6 +25,8 @@ export const METADATA_SCOPES = [
   "participants",
   "direct",
   "roles",
+  "launchers",
+  "models",
 ] as const;
 export type MetadataScope = (typeof METADATA_SCOPES)[number];
 

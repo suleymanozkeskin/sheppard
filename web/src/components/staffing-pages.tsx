@@ -161,6 +161,9 @@ export function StaffingPage({ controller, navigate }: StaffingPageProps) {
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [selectedRoleName, setSelectedRoleName] = useState("worker")
   const canWrite = controller.identity !== null
+  const launchersRevision = controller.metadataRevision("launchers")
+  const modelsRevision = controller.metadataRevision("models")
+  const rolesRevision = controller.metadataRevision("roles")
 
   useEffect(() => {
     let mounted = true
@@ -168,7 +171,7 @@ export function StaffingPage({ controller, navigate }: StaffingPageProps) {
       if (mounted) setState(next)
     })
     return () => { mounted = false }
-  }, [controller.api])
+  }, [controller.api, launchersRevision, modelsRevision, rolesRevision])
 
   function openDelete(role: RolePreset): void {
     if (role.native === true) return
@@ -324,6 +327,7 @@ export function RoleFormPage({ controller, name, navigate }: RoleFormPageProps) 
     })
   }, [controller.api])
 
+  const launchersRevision = controller.metadataRevision("launchers")
   useEffect(() => {
     let mounted = true
     setRuntimeState({ catalogues: [], launchers: [], status: "loading" })
@@ -344,7 +348,7 @@ export function RoleFormPage({ controller, name, navigate }: RoleFormPageProps) 
       })
     })
     return () => { mounted = false }
-  }, [controller.api, editing, name])
+  }, [controller.api, editing, name, launchersRevision])
 
   useEffect(() => {
     const launcher = form.launcher.trim()

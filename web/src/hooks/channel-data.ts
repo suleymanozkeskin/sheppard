@@ -113,6 +113,10 @@ function metadataReloaded(state: ChannelDataState, scope: MetadataScope): Channe
       return { ...state, directReloadKey: state.directReloadKey + 1 }
     case "roles":
       return state
+    case "launchers":
+      return state
+    case "models":
+      return state
     default:
       return assertNeverMetadataScope(scope)
   }

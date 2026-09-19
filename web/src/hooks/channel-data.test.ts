@@ -33,9 +33,9 @@ describe("channel metadata reloads", () => {
     expect(next.membersReloadKey).toBe(1)
   })
 
-  it("leaves the roles scope to the caller that owns it", () => {
+  it("leaves non-channel scopes to their callers", () => {
     const next = channelDataReducer(initialChannelData(null), {
-      scopes: ["roles"],
+      scopes: ["roles", "launchers", "models"],
       type: "metadata.reload",
     })
 

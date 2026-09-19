@@ -254,7 +254,7 @@ export function useAppController(
   const [workspaceBroadcastState, setWorkspaceBroadcastState] = useState<WorkspaceActionState>({ status: "idle" })
   const [workspaceHistoryChannels, setWorkspaceHistoryChannels] = useState<Map<string, string>>(new Map())
   const [roles, setRoles] = useState<RolePreset[]>([])
-  const [rolesReloadKey, setRolesReloadKey] = useState(0)
+  const [metadataRevisions, setMetadataRevisions] = useState<ReadonlyMap<MetadataScope, number>>(() => new Map())
   const [spawnAgentState, setSpawnAgentState] = useState<SpawnAgentState>({ status: "idle" })
   const [spawnAgentPaneId, setSpawnAgentPaneId] = useState<string | undefined>()
   const [spawnAgentAssignedHandle, setSpawnAgentAssignedHandle] = useState<string | undefined>()
@@ -376,15 +376,24 @@ export function useAppController(
   const reloadWorkspaces = workspaceData.reloadWorkspaces
   const onMetadata = useCallback((scopes: readonly MetadataScope[]) => {
     reloadMetadata(scopes)
-    if (scopes.includes("roles")) setRolesReloadKey((current) => current + 1)
     if (scopes.includes("channels")) reloadWorkspaces()
+    setMetadataRevisions((current) => {
+      const next = new Map(current)
+      for (const scope of new Set(scopes)) next.set(scope, (next.get(scope) ?? 0) + 1)
+      return next
+    })
   }, [reloadMetadata, reloadWorkspaces])
+  const metadataRevision = useCallback(
+    (scope: MetadataScope) => metadataRevisions.get(scope) ?? 0,
+    [metadataRevisions],
+  )
   const onTopologySnapshot = useCallback((snapshot: WorkspaceList) => {
     applyTopologySnapshot(snapshot)
     if (selectedChannel !== undefined) {
       updateMemberRouteStates(selectedChannel, routeStatesFromTopology(snapshot))
     }
   }, [applyTopologySnapshot, selectedChannel, updateMemberRouteStates])
+  const rolesRevision = metadataRevision("roles")
   useEffect(() => {
     let mounted = true
     void apiCall(api, fallbackApi, (client) => client.listRoles()).then((roleResult) => {
@@ -397,7 +406,7 @@ export function useAppController(
     return () => {
       mounted = false
     }
-  }, [api, fallbackApi, rolesReloadKey])
+  }, [api, fallbackApi, rolesRevision])
 
   const selectChannel = useCallback((channel: string | undefined, kind?: "chat" | "workspace" | "direct") => {
     setActiveWorkspaceId(undefined)
@@ -1667,6 +1676,7 @@ export function useAppController(
     removeAttachmentPath,
     reload,
     reloadChannels,
+    metadataRevision,
     runSearch,
     searchActive,
     searchInputRef,
