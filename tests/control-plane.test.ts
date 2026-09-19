@@ -82,7 +82,7 @@ describe("herdr control plane", () => {
 
     const harnesses = await hub.get("/api/herdr/harnesses");
     expect(harnesses.status).toBe(200);
-    expect(await harnesses.json()).toEqual({ harnesses: ["claude", "codex", "opencode", "pi"] });
+    expect(await harnesses.json()).toEqual({ harnesses: ["claude", "codex", "grok", "opencode", "pi"] });
 
     const roles = await hub.get("/api/herdr/roles");
     expect(roles.status).toBe(200);
@@ -177,6 +177,13 @@ describe("herdr control plane", () => {
           name: "codex",
           agentKind: "codex",
           argv: ["codex"],
+          envKeys: [],
+          startTimeoutMs: DEFAULT_AGENT_START_TIMEOUT_MS,
+        },
+        {
+          name: "grok",
+          agentKind: "grok",
+          argv: ["grok"],
           envKeys: [],
           startTimeoutMs: DEFAULT_AGENT_START_TIMEOUT_MS,
         },

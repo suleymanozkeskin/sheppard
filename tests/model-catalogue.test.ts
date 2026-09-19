@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   decodeClaudeCatalogue,
   decodeCodexModelList,
+  decodeGrokCatalogue,
   decodeOpenCodeCatalogue,
   decodePiCatalogue,
   DeviceModelCatalogue,
@@ -52,10 +53,11 @@ describe("launcher-scoped device model catalogue", () => {
     expect(response.status).toBe(200);
     // SAFETY: the endpoint returns the catalogue envelope used by this test.
     const body = (await response.json()) as { catalogues: CatalogueWire[] };
-    expect(body.catalogues).toHaveLength(4);
+    expect(body.catalogues).toHaveLength(5);
     expect(body.catalogues.map((entry) => entry.launcher)).toEqual([
       "claude",
       "codex",
+      "grok",
       "opencode",
       "pi",
     ]);
@@ -427,5 +429,70 @@ describe("launcher-scoped device model catalogue", () => {
       { launcher: "codex", argv: ["unsafe"] },
     )).status).toBe(400);
     expect((await hub.post("/api/herdr/model-catalogue", { launcher: "missing" })).status).toBe(400);
+  });
+
+  test("Grok maps the models list and documented effort levels", async () => {
+    const stdout = [
+      "You are logged in with grok.com.",
+      "",
+      "Default model: grok-4.6",
+      "",
+      "Available models:",
+      "  * grok-4.6 (default)",
+      "  - grok-4.5",
+    ].join("\n");
+    const models = decodeGrokCatalogue(stdout);
+    expect(models).toEqual([
+      {
+        name: "grok-4.6",
+        resolvedModel: null,
+        label: "grok-4.6",
+        description: null,
+        default: true,
+        efforts: [
+          { name: "none", description: null, default: false },
+          { name: "minimal", description: null, default: false },
+          { name: "low", description: null, default: false },
+          { name: "medium", description: null, default: false },
+          { name: "high", description: null, default: false },
+          { name: "xhigh", description: null, default: false },
+          { name: "max", description: null, default: false },
+        ],
+      },
+      {
+        name: "grok-4.5",
+        resolvedModel: null,
+        label: "grok-4.5",
+        description: null,
+        default: false,
+        efforts: [
+          { name: "none", description: null, default: false },
+          { name: "minimal", description: null, default: false },
+          { name: "low", description: null, default: false },
+          { name: "medium", description: null, default: false },
+          { name: "high", description: null, default: false },
+          { name: "xhigh", description: null, default: false },
+          { name: "max", description: null, default: false },
+        ],
+      },
+    ]);
+    expect(decodeGrokCatalogue("Available models:\n")).toBeNull();
+    expect(decodeGrokCatalogue("Default model: grok-4.6\nAvailable models:\n  - grok-4.5\n")).toBeNull();
+    expect(decodeGrokCatalogue("Available models:\n  - grok-4.6\n  - grok-4.6\n")).toBeNull();
+
+    const selectedLauncher = launcher("grok", "grok");
+    const device = new DeviceModelCatalogue({
+      executableAvailable: () => true,
+      grokRunner: async () => ({ status: "ok", models: models ?? [] }),
+    });
+    await device.refresh([selectedLauncher], selectedLauncher.name);
+    expect(device.resolveSelection(selectedLauncher, "grok-4.6", "high")).toEqual({
+      ok: true,
+      argvSuffix: ["-m", "grok-4.6", "--effort", "high"],
+    });
+    expect(device.resolveSelection(selectedLauncher, null, "high")).toEqual({
+      ok: true,
+      argvSuffix: ["--effort", "high"],
+    });
   });
 });

@@ -224,7 +224,7 @@ one of that launcher's available models when it starts an agent. Reporter keeps
 its special one-per-workspace and read-only observer behavior, but it does not
 require a harness.
 
-Sheppard supports `codex`, `claude`, `pi`, and `opencode` by default. The
+Sheppard supports `codex`, `claude`, `pi`, `opencode`, and `grok` by default. The
 selected launcher is the authority for its device model catalogue. Two
 launchers for one harness can report different models because they can use
 different accounts, settings, providers, or policies. A catalogue entry must

@@ -154,6 +154,7 @@ export interface DeviceModelCatalogueOptions {
   codexRunner?: CodexCatalogueRunner;
   piRunner?: CatalogueAdapter;
   opencodeRunner?: CatalogueAdapter;
+  grokRunner?: CatalogueAdapter;
   executableAvailable?: (binary: string) => boolean;
   ttlMs?: number;
 }
@@ -174,7 +175,8 @@ interface CatalogueState {
   reason: DeviceCatalogueReason | null;
 }
 
-const SUPPORTED_HARNESSES = new Set(["claude", "codex", "opencode", "pi"]);
+const SUPPORTED_HARNESSES = new Set(["claude", "codex", "grok", "opencode", "pi"]);
+const GROK_EFFORT_LEVELS = Object.freeze(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 function launcherFingerprint(launcher: DeviceLauncher): string {
   return JSON.stringify([launcher.harness, launcher.argv, launcher.env, launcher.revision]);
@@ -727,6 +729,73 @@ export function parseOpenCodeCatalogue(stdout: string): readonly DeviceModelEntr
   return decodeOpenCodeCatalogue(stdout) ?? [];
 }
 
+function grokEffortOptions(): DeviceEffortOption[] {
+  return GROK_EFFORT_LEVELS.map((name) => ({ name, description: null, default: false }));
+}
+
+function grokModelLine(line: string): { listedDefault: boolean; name: string } | null {
+  const matched = /^[*+-]\s+(\S+?)(?:\s+\(default\))?$/u.exec(line);
+  if (matched === null || matched[1] === undefined) return null;
+  return { listedDefault: line.startsWith("*") || line.endsWith("(default)"), name: matched[1] };
+}
+
+/** Decodes `grok models` text. Effort levels are the documented CLI ids. */
+export function decodeGrokCatalogue(stdout: string): readonly DeviceModelEntry[] | null {
+  const lines = cleanOutput(stdout).split(/\r?\n/u);
+  let defaultName: string | null = null;
+  let inList = false;
+  const rows: DeviceModelEntry[] = [];
+  const names = new Set<string>();
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.length === 0) continue;
+    const declared = /^Default model:\s+(\S+)$/u.exec(line);
+    if (declared !== null && declared[1] !== undefined) {
+      if (!validModelId(declared[1]) || defaultName !== null) return null;
+      defaultName = declared[1];
+      continue;
+    }
+    if (line === "Available models:") {
+      if (inList) return null;
+      inList = true;
+      continue;
+    }
+    if (!inList) continue;
+    const listed = grokModelLine(line);
+    if (listed === null || !validModelId(listed.name) || names.has(listed.name)) return null;
+    names.add(listed.name);
+    rows.push({
+      name: listed.name,
+      resolvedModel: null,
+      label: listed.name,
+      description: null,
+      default: listed.listedDefault || listed.name === defaultName,
+      efforts: grokEffortOptions(),
+    });
+    if (rows.length > MAX_CATALOGUE_MODELS) return null;
+  }
+  if (!inList || rows.length === 0) return null;
+  if (defaultName !== null && !names.has(defaultName)) return null;
+  let defaults = 0;
+  for (const row of rows) if (row.default) defaults += 1;
+  return defaults > 1 ? null : rows;
+}
+
+/** Runs Grok with only the registered launcher argv and the fixed models command. */
+export async function runGrokCatalogue(
+  launcher: DeviceLauncher,
+  commandRunner: FixedCommandRunner = runFixedCommand,
+): Promise<AdapterResult> {
+  const result = await commandRunner(
+    [...launcher.argv, "models"],
+    COMMAND_TIMEOUT_MS,
+    effectiveEnvironment(launcher),
+  );
+  if (result.status !== "ok") return { status: result.status, models: [] };
+  const models = decodeGrokCatalogue(result.stdout);
+  return models === null ? { status: "invalid-output", models: [] } : { status: "ok", models };
+}
+
 /** Runs OpenCode with only the registered launcher argv and fixed discovery args. */
 export async function runOpenCodeCatalogue(
   launcher: DeviceLauncher,
@@ -1072,6 +1141,7 @@ export class DeviceModelCatalogue {
   private readonly codexRunner: CodexCatalogueRunner;
   private readonly piRunner: CatalogueAdapter;
   private readonly opencodeRunner: CatalogueAdapter;
+  private readonly grokRunner: CatalogueAdapter;
   private readonly executableAvailable: (binary: string) => boolean;
   private readonly ttlMs: number;
   private readonly states = new Map<string, CatalogueState>();
@@ -1083,6 +1153,7 @@ export class DeviceModelCatalogue {
     this.codexRunner = options.codexRunner ?? runCodexCatalogue;
     this.piRunner = options.piRunner ?? runPiCatalogue;
     this.opencodeRunner = options.opencodeRunner ?? ((launcher) => runOpenCodeCatalogue(launcher, this.commandRunner));
+    this.grokRunner = options.grokRunner ?? ((launcher) => runGrokCatalogue(launcher, this.commandRunner));
     this.executableAvailable = options.executableAvailable ?? available;
     this.ttlMs = options.ttlMs ?? CATALOGUE_TTL_MS;
   }
@@ -1095,6 +1166,7 @@ export class DeviceModelCatalogue {
     switch (launcher.harness) {
       case "claude": return launcher.argv.length === 1;
       case "codex":
+      case "grok":
       case "pi":
       case "opencode": return true;
       default: return false;
@@ -1183,6 +1255,14 @@ export class DeviceModelCatalogue {
             ? []
             : ["--model", effort === null ? model.name : `${model.name}#${effort.name}`],
         };
+      case "grok":
+        return {
+          ok: true,
+          argvSuffix: [
+            ...(modelName === null ? [] : ["-m", model.name]),
+            ...(effort === null ? [] : ["--effort", effort.name]),
+          ],
+        };
       case "claude":
         return {
           ok: true,
@@ -1236,6 +1316,7 @@ export class DeviceModelCatalogue {
       case "codex": return this.codexRunner;
       case "pi": return this.piRunner;
       case "opencode": return this.opencodeRunner;
+      case "grok": return this.grokRunner;
       default: return async () => ({ status: "invalid-output", models: [] });
     }
   }

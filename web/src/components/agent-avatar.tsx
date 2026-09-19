@@ -15,10 +15,11 @@ interface AgentAvatarProps {
   className?: string
 }
 
-const LazyAgentBrand = lazy(() => import("@lobehub/icons").then(({ Claude, Codex, OpenCode, Pi }) => {
+const LazyAgentBrand = lazy(() => import("@lobehub/icons").then(({ Claude, Codex, Grok, OpenCode, Pi }) => {
   const agentMarks = new Map<string, AgentMark>([
     ["claude", { label: "Claude", icon: Claude.Color }],
     ["codex", { label: "Codex", icon: Codex.Color }],
+    ["grok", { label: "Grok", icon: Grok }],
     ["opencode", { label: "OpenCode", icon: OpenCode }],
     ["pi", { label: "Pi", icon: Pi }],
   ])

@@ -6,7 +6,7 @@ import type {
 import { accountProfileEnvironment, accountProfileFromSavedKeys, accountProfileKeys, type AccountProfileDraft } from "@/components/launchers/account-profile"
 
 /** The harness family that the installed Herdr supports. */
-export const SUPPORTED_HARNESS_KINDS = ["claude", "codex", "pi", "opencode"] as const
+export const SUPPORTED_HARNESS_KINDS = ["claude", "codex", "pi", "opencode", "grok"] as const
 
 export const DEFAULT_START_TIMEOUT_MS = 35_000
 
@@ -125,6 +125,8 @@ function supportedHarnessIndex(harness: string): number {
       return 2
     case "opencode":
       return 3
+    case "grok":
+      return 4
     default:
       return -1
   }
@@ -136,6 +138,8 @@ export function harnessLabel(harness: string): string {
       return "Claude"
     case "codex":
       return "Codex"
+    case "grok":
+      return "Grok"
     case "opencode":
       return "OpenCode"
     case "pi":

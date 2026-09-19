@@ -145,6 +145,11 @@ export interface TranscriptAdapter {
   parse(line: string): SessionTurn[];
   /** The session's own recorded cwd and start, from its head lines. */
   identify(head: string): { startedAt: string | null; cwd: string | null };
+  /**
+   * Join two adjacent turns when the harness streams one utterance as chunks.
+   * Absent means every parsed turn stays distinct.
+   */
+  mergeConsecutive?(older: SessionTurn, newer: SessionTurn): SessionTurn | null;
 }
 
 /**
@@ -435,6 +440,211 @@ export const codexAdapter: TranscriptAdapter = {
   },
 };
 
+export const MAX_GROK_SESSION_GROUPS = 256;
+export const MAX_GROK_SESSION_DIR_ENTRIES = 4_096;
+const MAX_ENCODED_CWD_LENGTH = 255;
+const MAX_GROK_CWD_MARKER_BYTES = 4_096;
+const GROK_TRANSCRIPT = "updates.jsonl";
+const GROK_CWD_MARKER = ".cwd";
+
+/**
+ * GROK_HOME decides where grok writes, the same way CLAUDE_CONFIG_DIR does for
+ * claude. Ask this helper; do not restate the default path at a call site.
+ */
+export function grokHome(env: Readonly<Record<string, string | undefined>>): ConfigDirectory {
+  const configured = env.GROK_HOME;
+  if (configured !== undefined && configured.trim().length > 0) {
+    return { dir: configured, fromEnvironment: true };
+  }
+  return { dir: join(homedir(), ".grok"), fromEnvironment: false };
+}
+
+export function grokEncodedCwd(cwd: string): string {
+  return encodeURIComponent(cwd);
+}
+
+function grokUnixToIso(value: number): string | null {
+  if (!Number.isFinite(value) || value < 0) return null;
+  const ms = value > 1e12 ? value : value * 1_000;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function grokAt(row: JsonObject): string | null {
+  const text = textField(row, "timestamp");
+  if (text !== null) {
+    const numeric = Number(text);
+    return Number.isFinite(numeric) && /^\d+(?:\.\d+)?$/u.test(text) ? grokUnixToIso(numeric) : text;
+  }
+  const numeric = Number(row.timestamp);
+  return Number.isFinite(numeric) ? grokUnixToIso(numeric) : null;
+}
+
+function grokSessionUpdate(row: JsonObject): JsonObject | null {
+  const params = objectField(row, "params");
+  if (params === null) return null;
+  return objectField(params, "update");
+}
+
+function grokChunkText(update: JsonObject): string {
+  const content = objectField(update, "content");
+  if (content === null) return "";
+  return textField(content, "text") ?? "";
+}
+
+function grokToolName(update: JsonObject): string {
+  const meta = objectField(update, "_meta");
+  const tool = meta === null ? null : objectField(meta, "x.ai/tool");
+  const named = tool === null ? null : textField(tool, "name");
+  return named ?? textField(update, "title") ?? "tool";
+}
+
+function mergeGrokTurns(older: SessionTurn, newer: SessionTurn): SessionTurn | null {
+  if (older.kind !== "turn" || newer.kind !== "turn") return null;
+  if (older.role === null || older.role !== newer.role) return null;
+  if (older.sidechain !== newer.sidechain || older.tool !== null || newer.tool !== null) return null;
+  return {
+    kind: "turn",
+    role: older.role,
+    text: `${older.text}${newer.text}`,
+    tool: null,
+    at: older.at,
+    sidechain: older.sidechain,
+  };
+}
+
+async function grokOverflowGroups(
+  root: string,
+  cwd: string,
+  reader: WindowReader,
+): Promise<Result<string[], TranscriptUnreadable>> {
+  const listed = await reader.list(root);
+  if (listed.isErr()) return Result.err(listed.error);
+  if (listed.value === null) return Result.ok([]);
+  if (listed.value.length > MAX_GROK_SESSION_DIR_ENTRIES) {
+    return Result.err(
+      unreadable("list bounded", `${listed.value.length} session groups exceeds ${MAX_GROK_SESSION_DIR_ENTRIES}`),
+    );
+  }
+  const dirs: string[] = [];
+  let overflowGroups = 0;
+  for (const name of listed.value) {
+    const group = join(root, name);
+    const children = await reader.list(group);
+    if (children.isErr()) return Result.err(children.error);
+    if (children.value === null || !children.value.includes(GROK_CWD_MARKER)) continue;
+    overflowGroups += 1;
+    if (overflowGroups > MAX_GROK_SESSION_GROUPS) {
+      return Result.err(
+        unreadable("list bounded", `more than ${MAX_GROK_SESSION_GROUPS} overflow groups`),
+      );
+    }
+    const marker = join(group, GROK_CWD_MARKER);
+    const sized = await reader.size(marker);
+    if (sized.isErr()) return Result.err(sized.error);
+    const body = await reader.slice(marker, 0, Math.min(MAX_GROK_CWD_MARKER_BYTES, sized.value));
+    if (body.isErr()) return Result.err(body.error);
+    if (body.value.trim() === cwd) dirs.push(group);
+  }
+  return Result.ok(dirs);
+}
+
+async function grokGroupDirs(
+  root: string,
+  cwd: string,
+  reader: WindowReader,
+): Promise<Result<string[], TranscriptUnreadable>> {
+  const encoded = grokEncodedCwd(cwd);
+  if (encoded.length > MAX_ENCODED_CWD_LENGTH) return grokOverflowGroups(root, cwd, reader);
+  const listed = await reader.list(join(root, encoded));
+  if (listed.isErr()) return Result.err(listed.error);
+  return Result.ok(listed.value === null ? [] : [join(root, encoded)]);
+}
+
+export const grokAdapter: TranscriptAdapter = {
+  harness: "grok",
+
+  async locate(pane, reader) {
+    const { dir } = grokHome(pane.env);
+    const groups = await grokGroupDirs(join(dir, "sessions"), pane.cwd, reader);
+    if (groups.isErr()) return Result.err(groups.error);
+    const candidates: SessionCandidate[] = [];
+    for (const group of groups.value) {
+      const listed = await reader.list(group);
+      if (listed.isErr()) return Result.err(listed.error);
+      if (listed.value === null) continue;
+      for (const name of listed.value) {
+        const sessionDir = join(group, name);
+        const children = await reader.list(sessionDir);
+        if (children.isErr()) return Result.err(children.error);
+        if (children.value === null || !children.value.includes(GROK_TRANSCRIPT)) continue;
+        const path = join(sessionDir, GROK_TRANSCRIPT);
+        const sized = await reader.size(path);
+        if (sized.isErr()) return Result.err(sized.error);
+        const head = await reader.slice(path, 0, Math.min(HEAD_BYTES, sized.value));
+        if (head.isErr()) return Result.err(head.error);
+        const identity = grokAdapter.identify(head.value);
+        candidates.push({
+          sessionId: name,
+          path,
+          startedAt: identity.startedAt,
+          sizeBytes: sized.value,
+          cwd: pane.cwd,
+          firstUserText: firstUserTextOf(grokAdapter, head.value),
+        });
+      }
+    }
+    return Result.ok(candidates);
+  },
+
+  identify(head) {
+    for (const line of head.split("\n")) {
+      const row = parseJsonLine(line);
+      if (row === null) continue;
+      const at = grokAt(row);
+      if (at !== null) return { startedAt: at, cwd: null };
+    }
+    return { startedAt: null, cwd: null };
+  },
+
+  parse(line) {
+    const row = parseJsonLine(line);
+    if (row === null) return [];
+    const update = grokSessionUpdate(row);
+    if (update === null) return [];
+    const kind = textField(update, "sessionUpdate");
+    const at = grokAt(row);
+    switch (kind) {
+      case "user_message_chunk":
+      case "agent_message_chunk": {
+        const text = grokChunkText(update);
+        if (text.length === 0) return [];
+        return [{
+          kind: "turn",
+          role: kind === "user_message_chunk" ? "user" : "assistant",
+          text,
+          tool: null,
+          at,
+          sidechain: false,
+        }];
+      }
+      case "tool_call":
+        return [{
+          kind: "tool",
+          role: null,
+          text: summarise(objectField(update, "rawInput") ?? textField(update, "title")),
+          tool: { name: grokToolName(update), outcome: "unknown" },
+          at,
+          sidechain: false,
+        }];
+      default:
+        return [];
+    }
+  },
+
+  mergeConsecutive: mergeGrokTurns,
+};
+
 async function codexDayDirs(
   root: string,
   reader: WindowReader,
@@ -469,7 +679,7 @@ function firstUserTextOf(adapter: TranscriptAdapter, head: string): string | nul
   return null;
 }
 
-const ADAPTERS: readonly TranscriptAdapter[] = [claudeAdapter, codexAdapter];
+const ADAPTERS: readonly TranscriptAdapter[] = [claudeAdapter, codexAdapter, grokAdapter];
 
 export function adapterFor(harness: string | null): Result<TranscriptAdapter, TranscriptUnsupported> {
   const found = ADAPTERS.find((adapter) => adapter.harness === harness);
@@ -553,6 +763,19 @@ function pageFrom(adapter: TranscriptAdapter, chunk: string, start: number, limi
     cursor += Buffer.byteLength(line) + 1;
   }
 
+  if (adapter.mergeConsecutive === undefined) {
+    return pageDistinctTurns(adapter, lines, offsets, first, limit);
+  }
+  return pageMergedTurns(adapter, lines, offsets, first, limit);
+}
+
+function pageDistinctTurns(
+  adapter: TranscriptAdapter,
+  lines: readonly string[],
+  offsets: readonly number[],
+  first: number,
+  limit: number,
+): Page {
   const picked: SessionTurn[][] = [];
   let counted = 0;
   let oldest = first;
@@ -568,8 +791,41 @@ function pageFrom(adapter: TranscriptAdapter, chunk: string, start: number, limi
     oldest = offsets[index] ?? first;
     if (counted >= limit) break;
   }
-
   return { turns: picked.flat(), nextBefore: oldest <= 0 ? null : oldest };
+}
+
+function pageMergedTurns(
+  adapter: TranscriptAdapter,
+  lines: readonly string[],
+  offsets: readonly number[],
+  first: number,
+  limit: number,
+): Page {
+  const merge = adapter.mergeConsecutive;
+  if (merge === undefined) return { turns: [], nextBefore: first <= 0 ? null : first };
+  const newestFirst: SessionTurn[] = [];
+  let counted = 0;
+  let oldest = first;
+  outer: for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const parsed = adapter.parse(lines[index] ?? "");
+    if (parsed.length === 0) continue;
+    for (let inner = parsed.length - 1; inner >= 0; inner -= 1) {
+      const turn = parsed[inner];
+      if (turn === undefined) continue;
+      const currentOldest = newestFirst[newestFirst.length - 1];
+      const merged = currentOldest === undefined ? null : merge(turn, currentOldest);
+      if (merged !== null) {
+        newestFirst[newestFirst.length - 1] = merged;
+        oldest = offsets[index] ?? first;
+        continue;
+      }
+      if (counted > 0 && counted >= limit) break outer;
+      newestFirst.push(turn);
+      counted += 1;
+      oldest = offsets[index] ?? first;
+    }
+  }
+  return { turns: newestFirst.reverse(), nextBefore: oldest <= 0 ? null : oldest };
 }
 
 /**

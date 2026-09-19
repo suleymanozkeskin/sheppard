@@ -147,12 +147,13 @@ export const mockWorkspaces: HerdrWorkspaceView[] = [
   },
 ]
 
-export const mockHarnesses = ["claude", "codex", "pi", "opencode"]
+export const mockHarnesses = ["claude", "codex", "pi", "opencode", "grok"]
 
 export const mockLaunchers: Launcher[] = [
   { name: "claude-personal", agentKind: "claude", argv: ["claude", "--profile", "personal"], envKeys: ["CLAUDE_CONFIG_DIR"], startTimeoutMs: 35_000 },
   { name: "claude-work", agentKind: "claude", argv: ["claude", "--profile", "work"], envKeys: ["CLAUDE_CONFIG_DIR"], startTimeoutMs: 35_000 },
   { name: "codex", agentKind: "codex", argv: ["codex"], envKeys: [], startTimeoutMs: 35_000 },
+  { name: "grok", agentKind: "grok", argv: ["grok"], envKeys: [], startTimeoutMs: 35_000 },
   { name: "opencode", agentKind: "opencode", argv: ["opencode"], envKeys: [], startTimeoutMs: 35_000 },
   { name: "pi", agentKind: "pi", argv: ["pi"], envKeys: [], startTimeoutMs: 35_000 },
 ]
@@ -206,6 +207,33 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
         label: "GPT-5.6 Sol",
         name: "gpt-5.6-sol",
         resolvedModel: "gpt-5.6-sol",
+      }],
+      executableAvailable: true,
+      checkedAt: "2026-08-23T08:00:00.000Z",
+      fetchedAt: "2026-08-23T08:00:00.000Z",
+      freshUntil: "2026-08-23T13:00:00.000Z",
+    },
+    {
+      launcher: "grok",
+      harness: "grok",
+      status: "ready",
+      error: null,
+      revision: 1,
+      models: [{
+        default: true,
+        efforts: [
+          { default: false, description: null, name: "none" },
+          { default: false, description: null, name: "minimal" },
+          { default: false, description: null, name: "low" },
+          { default: false, description: null, name: "medium" },
+          { default: false, description: null, name: "high" },
+          { default: false, description: null, name: "xhigh" },
+          { default: false, description: null, name: "max" },
+        ],
+        description: "A model discovered by Grok on this device.",
+        label: "grok-4.6",
+        name: "grok-4.6",
+        resolvedModel: null,
       }],
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
