@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import { channelDataReducer, initialChannelData } from "./use-channel-state"
+import { channelDataReducer, initialChannelData } from "./channel-data"
 
 function reduce(
   actions: ReadonlyArray<Parameters<typeof channelDataReducer>[1]>,
