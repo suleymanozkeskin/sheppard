@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { LoaderCircle, Mic, MicOff, X } from "lucide-react"
+import * as v from "valibot"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -33,8 +34,16 @@ interface DictationButtonProps {
   value: string
 }
 
+interface TranscriptInsertion {
+  cursor: number
+  value: string
+}
+
+const dictationErrorSchema = v.object({ error: v.string() })
+const dictationTranscriptSchema = v.object({ transcript: v.string() })
+
 function isMacOs(): boolean {
-  if (typeof navigator === "undefined") return false
+  // SAFETY: DictationButton mounts only in the browser window. Navigator.userAgentData is optional on the lib type.
   const device = navigator as NavigatorWithUserAgentData
   const platform = device.userAgentData?.platform ?? device.platform
   const isIPadDesktopMode = platform === "MacIntel" && device.maxTouchPoints > 1
@@ -42,14 +51,14 @@ function isMacOs(): boolean {
 }
 
 function audioContextConstructor(): typeof AudioContext | undefined {
-  if (typeof window === "undefined") return undefined
+  // SAFETY: This module runs in the browser window. Safari exposes AudioContext as webkitAudioContext.
   const audioWindow = window as AudioContextWindow
   return window.AudioContext ?? audioWindow.webkitAudioContext
 }
 
 function dictationAvailable(): boolean {
   return isMacOs() &&
-    typeof MediaRecorder !== "undefined" &&
+    "MediaRecorder" in globalThis &&
     navigator.mediaDevices?.getUserMedia !== undefined &&
     audioContextConstructor() !== undefined
 }
@@ -64,7 +73,7 @@ function stopStream(stream: MediaStream): void {
   for (const track of stream.getTracks()) track.stop()
 }
 
-function insertTranscript(value: string, start: number, end: number, transcript: string): { cursor: number; value: string } {
+function insertTranscript(value: string, start: number, end: number, transcript: string): TranscriptInsertion {
   const before = value.slice(0, start)
   const after = value.slice(end)
   const spaceBefore = before.length > 0 && !/[\s([{]$/u.test(before) && !/^[,.;:!?)}\]]/u.test(transcript) ? " " : ""
@@ -124,14 +133,6 @@ async function recordedWave(chunks: readonly Blob[], mimeType: string): Promise<
   }
 }
 
-function responseError(payload: unknown): string {
-  if (typeof payload !== "object" || payload === null || !("error" in payload)) {
-    return "Local dictation could not finish."
-  }
-  const message = payload.error
-  return typeof message === "string" && message.length > 0 ? message : "Local dictation could not finish."
-}
-
 async function transcribe(wave: ArrayBuffer): Promise<string> {
   const response = await fetch("/api/dictation/transcribe", {
     body: new Blob([wave], { type: "audio/wav" }),
@@ -143,19 +144,17 @@ async function transcribe(wave: ArrayBuffer): Promise<string> {
     },
     method: "POST",
   })
+  const raw = await response.json().catch(() => null)
   if (!response.ok) {
-    const errorPayload: unknown = await response.json().catch(() => null)
-    throw new Error(responseError(errorPayload))
+    const parsed = v.safeParse(dictationErrorSchema, raw)
+    const message = parsed.success ? parsed.output.error.trim() : ""
+    throw new Error(message.length > 0 ? message : "Local dictation could not finish.")
   }
-  const payload: unknown = await response.json().catch(() => null)
-  if (typeof payload !== "object" || payload === null || !("transcript" in payload)) {
-    throw new Error("Local dictation returned an invalid response.")
-  }
-  const transcript = payload.transcript
-  if (typeof transcript !== "string" || transcript.trim().length === 0) {
-    throw new Error("No speech was detected.")
-  }
-  return transcript.trim()
+  const parsed = v.safeParse(dictationTranscriptSchema, raw)
+  if (!parsed.success) throw new Error("Local dictation returned an invalid response.")
+  const transcript = parsed.output.transcript.trim()
+  if (transcript.length === 0) throw new Error("No speech was detected.")
+  return transcript
 }
 
 function recordingErrorMessage(cause: unknown): string {
