@@ -165,7 +165,7 @@ export const WORKER_BRIEFING = [
 ].join("\n\n");
 
 export const DEFAULT_HARNESSES: readonly HarnessConfig[] = Object.freeze(
-  ["claude", "codex", "pi", "opencode"].map((name) =>
+  ["claude", "codex", "pi", "opencode", "grok"].map((name) =>
     Object.freeze({
       name,
       argv: Object.freeze([name]),

@@ -32,6 +32,8 @@ function mappingDescription(harness: string): string {
       return "The folder sets CLAUDE_CONFIG_DIR."
     case "codex":
       return "The folder sets CODEX_HOME."
+    case "grok":
+      return "The folder sets GROK_HOME."
     case "pi":
       return "The folder sets PI_CODING_AGENT_DIR."
     case "opencode":

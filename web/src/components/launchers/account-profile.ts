@@ -10,6 +10,7 @@ export interface AccountProfileDraft {
 const ACCOUNT_PROFILE_KEY_MAP = {
   claude: ["CLAUDE_CONFIG_DIR"],
   codex: ["CODEX_HOME"],
+  grok: ["GROK_HOME"],
   opencode: ["XDG_CONFIG_HOME", "XDG_DATA_HOME"],
   pi: ["PI_CODING_AGENT_DIR"],
 } as const
@@ -20,6 +21,8 @@ export function accountProfileKeys(harness: string): string[] {
       return [...ACCOUNT_PROFILE_KEY_MAP.claude]
     case "codex":
       return [...ACCOUNT_PROFILE_KEY_MAP.codex]
+    case "grok":
+      return [...ACCOUNT_PROFILE_KEY_MAP.grok]
     case "pi":
       return [...ACCOUNT_PROFILE_KEY_MAP.pi]
     case "opencode":
@@ -39,6 +42,9 @@ export function accountProfileEnvironment(harness: string, folder: string) {
       break
     case "codex":
       values.set("CODEX_HOME", base)
+      break
+    case "grok":
+      values.set("GROK_HOME", base)
       break
     case "pi":
       values.set("PI_CODING_AGENT_DIR", base)

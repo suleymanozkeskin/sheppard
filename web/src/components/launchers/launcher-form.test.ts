@@ -91,12 +91,13 @@ describe("launcher form helpers", () => {
   })
 
   it("keeps the fixed harness family and adds unique saved kinds", () => {
-    expect(harnessOptions([{ agentKind: "custom", argv: ["custom"], envKeys: [], name: "custom-alias", startTimeoutMs: 35000 }])).toEqual(["claude", "codex", "pi", "opencode", "custom"])
+    expect(harnessOptions([{ agentKind: "custom", argv: ["custom"], envKeys: [], name: "custom-alias", startTimeoutMs: 35000 }])).toEqual(["claude", "codex", "pi", "opencode", "grok", "custom"])
   })
 
   it("maps every supported harness account profile without exposing a saved path", () => {
     expect(accountProfileEnvironment("claude", "/accounts/claude/")).toEqual({ CLAUDE_CONFIG_DIR: "/accounts/claude" })
     expect(accountProfileEnvironment("codex", "/accounts/codex")).toEqual({ CODEX_HOME: "/accounts/codex" })
+    expect(accountProfileEnvironment("grok", "/accounts/grok")).toEqual({ GROK_HOME: "/accounts/grok" })
     expect(accountProfileEnvironment("pi", "/accounts/pi")).toEqual({ PI_CODING_AGENT_DIR: "/accounts/pi" })
     expect(accountProfileEnvironment("opencode", "/accounts/open")).toEqual({ XDG_CONFIG_HOME: "/accounts/open/config", XDG_DATA_HOME: "/accounts/open/data" })
     expect(accountProfileFromSavedKeys("opencode", ["XDG_CONFIG_HOME"])).toEqual({ folder: "", partialKeys: ["XDG_CONFIG_HOME"], saved: false, selection: "default" })
