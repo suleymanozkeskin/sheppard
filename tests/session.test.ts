@@ -24,6 +24,8 @@ import {
   grokAdapter,
   grokEncodedCwd,
   grokHome,
+  MAX_GROK_SESSION_DIR_ENTRIES,
+  MAX_GROK_SESSION_GROUPS,
   glanceLine,
   readWindow,
   slugifyCwd,
@@ -271,6 +273,49 @@ describe("locating a session", () => {
     const located = await grokAdapter.locate({ cwd, env: { GROK_HOME: home } }, reader);
     expect(located.unwrap("locate").map((candidate) => candidate.sessionId)).toEqual(["01long"]);
   });
+
+  test("grok overflow locate does not spend its group cap on short-cwd folders", async () => {
+    const cwd = `/${"project".repeat(40)}`;
+    expect(grokEncodedCwd(cwd).length).toBeGreaterThan(255);
+    const started = "2026-08-19T08:00:00.000Z";
+    const unix = Date.parse(started) / 1_000;
+    const home = "/Users/demo/.grok-overflow-cap";
+    const files: Record<string, string> = {};
+    for (let index = 0; index < MAX_GROK_SESSION_GROUPS + 8; index += 1) {
+      files[`${home}/sessions/short-${String(index).padStart(3, "0")}/placeholder`] = "x";
+    }
+    files[`${home}/sessions/slug-hash/.cwd`] = `${cwd}\n`;
+    files[`${home}/sessions/slug-hash/01late/updates.jsonl`] = transcript([
+      JSON.stringify({
+        timestamp: unix,
+        method: "session/update",
+        params: {
+          sessionId: "01late",
+          update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "late" } },
+        },
+      }),
+    ]);
+    const located = await grokAdapter.locate(
+      { cwd, env: { GROK_HOME: home } },
+      countingReader(files),
+    );
+    expect(located.unwrap("locate").map((candidate) => candidate.sessionId)).toEqual(["01late"]);
+  });
+
+  test("grok overflow locate fails closed when the session root is larger than the bound", async () => {
+    const cwd = `/${"project".repeat(40)}`;
+    const home = "/Users/demo/.grok-overflow-bound";
+    const files: Record<string, string> = {};
+    for (let index = 0; index < MAX_GROK_SESSION_DIR_ENTRIES + 1; index += 1) {
+      files[`${home}/sessions/n${index}/placeholder`] = "x";
+    }
+    const located = await grokAdapter.locate(
+      { cwd, env: { GROK_HOME: home } },
+      countingReader(files),
+    );
+    expect(located.isErr()).toBe(true);
+    if (located.isErr()) expect(located.error.reason).toBe("list bounded");
+  });
 });
 
 describe("choosing among candidates", () => {
@@ -479,6 +524,39 @@ describe("reading a window", () => {
     expect(turns[1]).toMatchObject({ kind: "turn", role: "assistant" });
     expect(turns[2]).toMatchObject({ kind: "tool", tool: { name: "read_file", outcome: "unknown" } });
     expect(JSON.stringify(turns)).not.toContain("I will inspect the file.");
+  });
+
+  test("grok counts folded utterances against the page limit", async () => {
+    const unix = Date.parse("2026-08-19T08:00:00.000Z") / 1_000;
+    const path = "/s/grok-chunks.jsonl";
+    const chunk = (text: string) =>
+      JSON.stringify({
+        timestamp: unix,
+        method: "session/update",
+        params: {
+          sessionId: "01abc",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+        },
+      });
+    const user = JSON.stringify({
+      timestamp: unix,
+      method: "session/update",
+      params: {
+        sessionId: "01abc",
+        update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "fix the bug" } },
+      },
+    });
+    const reader = countingReader({
+      [path]: transcript([user, chunk("I will "), chunk("fix "), chunk("it.")]),
+    });
+
+    const newest = await readWindow(grokAdapter, path, reader, { before: null, limit: 1 });
+    const newestPage = newest.unwrap("newest");
+    expect(texts(newestPage.turns)).toEqual(["I will fix it."]);
+    expect(newestPage.nextBefore).not.toBeNull();
+
+    const older = await readWindow(grokAdapter, path, reader, { before: newestPage.nextBefore, limit: 1 });
+    expect(texts(older.unwrap("older").turns)).toEqual(["fix the bug"]);
   });
 
   test("the glance line is the last assistant utterance, or absent", () => {

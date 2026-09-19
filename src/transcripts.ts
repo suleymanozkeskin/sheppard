@@ -440,7 +440,8 @@ export const codexAdapter: TranscriptAdapter = {
   },
 };
 
-const MAX_GROK_SESSION_GROUPS = 256;
+export const MAX_GROK_SESSION_GROUPS = 256;
+export const MAX_GROK_SESSION_DIR_ENTRIES = 4_096;
 const MAX_ENCODED_CWD_LENGTH = 255;
 const MAX_GROK_CWD_MARKER_BYTES = 4_096;
 const GROK_TRANSCRIPT = "updates.jsonl";
@@ -520,12 +521,24 @@ async function grokOverflowGroups(
   const listed = await reader.list(root);
   if (listed.isErr()) return Result.err(listed.error);
   if (listed.value === null) return Result.ok([]);
+  if (listed.value.length > MAX_GROK_SESSION_DIR_ENTRIES) {
+    return Result.err(
+      unreadable("list bounded", `${listed.value.length} session groups exceeds ${MAX_GROK_SESSION_DIR_ENTRIES}`),
+    );
+  }
   const dirs: string[] = [];
-  for (const name of listed.value.slice(0, MAX_GROK_SESSION_GROUPS)) {
+  let overflowGroups = 0;
+  for (const name of listed.value) {
     const group = join(root, name);
     const children = await reader.list(group);
     if (children.isErr()) return Result.err(children.error);
     if (children.value === null || !children.value.includes(GROK_CWD_MARKER)) continue;
+    overflowGroups += 1;
+    if (overflowGroups > MAX_GROK_SESSION_GROUPS) {
+      return Result.err(
+        unreadable("list bounded", `more than ${MAX_GROK_SESSION_GROUPS} overflow groups`),
+      );
+    }
     const marker = join(group, GROK_CWD_MARKER);
     const sized = await reader.size(marker);
     if (sized.isErr()) return Result.err(sized.error);
@@ -750,6 +763,19 @@ function pageFrom(adapter: TranscriptAdapter, chunk: string, start: number, limi
     cursor += Buffer.byteLength(line) + 1;
   }
 
+  if (adapter.mergeConsecutive === undefined) {
+    return pageDistinctTurns(adapter, lines, offsets, first, limit);
+  }
+  return pageMergedTurns(adapter, lines, offsets, first, limit);
+}
+
+function pageDistinctTurns(
+  adapter: TranscriptAdapter,
+  lines: readonly string[],
+  offsets: readonly number[],
+  first: number,
+  limit: number,
+): Page {
   const picked: SessionTurn[][] = [];
   let counted = 0;
   let oldest = first;
@@ -765,20 +791,41 @@ function pageFrom(adapter: TranscriptAdapter, chunk: string, start: number, limi
     oldest = offsets[index] ?? first;
     if (counted >= limit) break;
   }
-
-  return { turns: foldConsecutiveTurns(adapter, picked.flat()), nextBefore: oldest <= 0 ? null : oldest };
+  return { turns: picked.flat(), nextBefore: oldest <= 0 ? null : oldest };
 }
 
-function foldConsecutiveTurns(adapter: TranscriptAdapter, turns: readonly SessionTurn[]): SessionTurn[] {
-  if (adapter.mergeConsecutive === undefined) return [...turns];
-  const folded: SessionTurn[] = [];
-  for (const turn of turns) {
-    const last = folded[folded.length - 1];
-    const merged = last === undefined ? null : adapter.mergeConsecutive(last, turn);
-    if (merged !== null) folded[folded.length - 1] = merged;
-    else folded.push(turn);
+function pageMergedTurns(
+  adapter: TranscriptAdapter,
+  lines: readonly string[],
+  offsets: readonly number[],
+  first: number,
+  limit: number,
+): Page {
+  const merge = adapter.mergeConsecutive;
+  if (merge === undefined) return { turns: [], nextBefore: first <= 0 ? null : first };
+  const newestFirst: SessionTurn[] = [];
+  let counted = 0;
+  let oldest = first;
+  outer: for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const parsed = adapter.parse(lines[index] ?? "");
+    if (parsed.length === 0) continue;
+    for (let inner = parsed.length - 1; inner >= 0; inner -= 1) {
+      const turn = parsed[inner];
+      if (turn === undefined) continue;
+      const currentOldest = newestFirst[newestFirst.length - 1];
+      const merged = currentOldest === undefined ? null : merge(turn, currentOldest);
+      if (merged !== null) {
+        newestFirst[newestFirst.length - 1] = merged;
+        oldest = offsets[index] ?? first;
+        continue;
+      }
+      if (counted > 0 && counted >= limit) break outer;
+      newestFirst.push(turn);
+      counted += 1;
+      oldest = offsets[index] ?? first;
+    }
   }
-  return folded;
+  return { turns: newestFirst.reverse(), nextBefore: oldest <= 0 ? null : oldest };
 }
 
 /**
