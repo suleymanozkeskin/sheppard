@@ -650,6 +650,8 @@ test("@guard creation pages expose their form controls to keyboard focus", async
   await expect(page.locator("#direct-attachment-path")).toBeVisible()
   await page.locator("#direct-attachment-path").focus()
   await page.keyboard.press("Tab")
+  await expect(directPage.getByRole("button", { name: "Browse", exact: true })).toBeFocused()
+  await page.keyboard.press("Tab")
   await expect(directPage.getByRole("button", { name: "Add", exact: true })).toBeFocused()
   await directPage.getByRole("link", { name: "Back to Direct", exact: true }).focus()
   await page.keyboard.press("Enter")
