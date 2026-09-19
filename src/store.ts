@@ -530,6 +530,12 @@ export interface WorkspaceMembershipChange {
   addedParticipantIds: number[];
 }
 
+/** One direct send. `created` is true only when this call made the channel. */
+export interface DirectSendResult {
+  message: Message;
+  created: boolean;
+}
+
 export class Store {
   private readonly db: Database;
   private readonly now: () => string;
@@ -2389,7 +2395,7 @@ export class Store {
     recipientHandles: readonly string[],
     body: string,
     attachments: readonly AttachmentInput[] = [],
-  ): Result<Message, NotFound | ChannelExists> {
+  ): Result<DirectSendResult, NotFound | ChannelExists> {
     return this.tx(() => {
       const sender = this.db
         .query<{ id: number }, { participantId: number }>(
@@ -2417,6 +2423,7 @@ export class Store {
         return Result.err(channelExists(channelName));
       }
 
+      let created = false;
       if (channel === null) {
         channel = this.db
           .query<ChannelRow, { name: string; now: string }>(
@@ -2426,6 +2433,7 @@ export class Store {
           )
           .get({ name: channelName, now: this.now() });
         if (channel === null) panic("INSERT direct channel RETURNING * produced no row");
+        created = true;
 
         for (const participantId of participantIds) {
           this.db
@@ -2437,7 +2445,10 @@ export class Store {
         }
       }
 
-      return Result.ok(this.insertMessage(channel.id, senderId, body, attachments));
+      return Result.ok({
+        created,
+        message: this.insertMessage(channel.id, senderId, body, attachments),
+      });
     });
   }
 

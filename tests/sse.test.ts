@@ -144,6 +144,22 @@ describe("event stream", () => {
     aborter.abort();
   });
 
+  test("announces a new direct conversation but not its replies", async () => {
+    const hub = testHub();
+    const alice = await provision(hub, "alice");
+    await provision(hub, "bob");
+    const { response, aborter } = subscribe(hub);
+    const stream = await response;
+
+    await hub.post("/api/direct", { body: "first", to: ["bob"] }, auth(alice));
+    await hub.post("/api/direct", { body: "second", to: ["bob"] }, auth(alice));
+
+    const frames = await readFrames(stream.body!, 8);
+    const directMeta = frames.filter((frame) => frame.includes("event: meta") && frame.includes('"direct"'));
+    expect(directMeta).toHaveLength(1);
+    aborter.abort();
+  });
+
   test("keeps each message on a single data line", async () => {
     const { hub, alice } = await seed();
     const { response, aborter } = subscribe(hub);

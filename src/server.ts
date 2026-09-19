@@ -1156,10 +1156,10 @@ function sendDirectMessage(
   );
 
   return sent.match({
-    ok: (message) => {
+    ok: ({ created, message }) => {
       hub.broadcaster.publish(message);
       void hub.notifier?.notifyChannel(message.channel);
-      publishMetadata(hub, "direct", "inbox");
+      if (created) publishMetadata(hub, "direct", "inbox");
       return jsonResponse({ channel: message.channel, messageId: message.id }, 201, headers);
     },
     err: (error) => errorResponse(error, headers),
