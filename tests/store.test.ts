@@ -90,7 +90,7 @@ describe("participants", () => {
     expectOk(store.send(retired.participant.id, "backend", "keep this attribution"));
     const direct = expectOk(
       store.sendDirect(retired.participant.id, ["alice"], "keep this direct history"),
-    );
+    ).message;
 
     expect(expectOk(store.deactivateParticipant("retired"))).toEqual({ handle: "retired" });
 
@@ -537,7 +537,7 @@ describe("channels and membership", () => {
     const { store } = freshStore();
     const alice = expectOk(store.createAgent("alice")).participant.id;
     expectOk(store.createAgent("bob"));
-    const direct = expectOk(store.sendDirect(alice, ["bob"], "keep this conversation"));
+    const direct = expectOk(store.sendDirect(alice, ["bob"], "keep this conversation")).message;
 
     expect(expectOk(store.deleteChannel(direct.channel, direct.channel))).toEqual({ name: direct.channel });
     expect(store.findChannel(direct.channel)).toBeNull();
@@ -600,8 +600,8 @@ describe("direct conversations", () => {
     const bob = expectOk(store.createAgent("bob")).participant.id;
     expectOk(store.createAgent("carol"));
 
-    const first = expectOk(store.sendDirect(alice, ["bob", "carol"], "first"));
-    const second = expectOk(store.sendDirect(alice, ["carol", "bob"], "second"));
+    const first = expectOk(store.sendDirect(alice, ["bob", "carol"], "first")).message;
+    const second = expectOk(store.sendDirect(alice, ["carol", "bob"], "second")).message;
 
     expect(second.channel).toBe(first.channel);
     expect(store.listChannels()).toEqual([]);
@@ -630,13 +630,26 @@ describe("direct conversations", () => {
     const alice = expectOk(store.createAgent("alice")).participant.id;
     const bob = expectOk(store.createAgent("bob")).participant.id;
     const outsider = expectOk(store.createAgent("outsider")).participant.id;
-    const sent = expectOk(store.sendDirect(alice, ["bob"], "private"));
+    const sent = expectOk(store.sendDirect(alice, ["bob"], "private")).message;
 
     expect(DirectMembershipLocked.is(expectErr(store.join(outsider, sent.channel)))).toBe(true);
     expect(DirectMembershipLocked.is(expectErr(store.addMember(sent.channel, "outsider")))).toBe(true);
     expect(DirectMembershipLocked.is(expectErr(store.removeMember(sent.channel, "bob")))).toBe(true);
     expect(DirectMembershipLocked.is(expectErr(store.send(outsider, sent.channel, "intrude")))).toBe(true);
     expectOk(store.join(bob, sent.channel));
+  });
+
+  test("reports whether a direct send created the conversation", () => {
+    const { store } = freshStore();
+    const alice = expectOk(store.createAgent("alice")).participant.id;
+    expectOk(store.createAgent("bob"));
+
+    const first = expectOk(store.sendDirect(alice, ["bob"], "one"));
+    const second = expectOk(store.sendDirect(alice, ["bob"], "two"));
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.message.channel).toBe(first.message.channel);
   });
 });
 

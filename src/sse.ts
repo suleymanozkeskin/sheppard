@@ -7,13 +7,17 @@
  * catch-up request.
  */
 
-import type { Message } from "./types";
+import type { MetadataScope, Message } from "./types";
 import type { HerdrTopologySnapshot } from "./types";
 
 export interface ReceiptUpdate {
   channel: string;
   handle: string;
   cursorMessageId: number;
+}
+
+export interface MetadataUpdate {
+  scopes: MetadataScope[];
 }
 
 type ReceiptPermission = (channel: string) => boolean;
@@ -33,6 +37,11 @@ export function frameForTopology(snapshot: HerdrTopologySnapshot): Uint8Array {
 export function frameForReceipt(update: ReceiptUpdate): Uint8Array {
   const data = JSON.stringify(update);
   return encoder.encode(`event: receipt\ndata: ${data}\n\n`);
+}
+
+export function frameForMetadata(update: MetadataUpdate): Uint8Array {
+  const data = JSON.stringify(update);
+  return encoder.encode(`event: meta\ndata: ${data}\n\n`);
 }
 
 /** Keeps the connection and any intermediary from treating a quiet hub as dead. */
@@ -94,6 +103,17 @@ export class Broadcaster {
         this.remove(controller);
       }
     }
+  }
+
+  /**
+   * Publishes changed metadata scopes to every subscriber. The frame carries
+   * scope names, never metadata values, and each subscriber refetches under
+   * its own credentials. An empty scope list publishes nothing.
+   */
+  publishMetadata(scopes: readonly MetadataScope[]): void {
+    const unique = [...new Set(scopes)];
+    if (unique.length === 0) return;
+    this.send(frameForMetadata({ scopes: unique }));
   }
 
   keepAlive(): void {

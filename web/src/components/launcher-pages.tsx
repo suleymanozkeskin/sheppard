@@ -70,6 +70,7 @@ export function LaunchersPage({ controller, launcherName, mode, navigate }: Laun
   const [deleteTarget, setDeleteTarget] = useState<Launcher | undefined>()
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const canWrite = controller.identity !== null
+  const launchersRevision = controller.metadataRevision("launchers")
 
   useEffect(() => {
     let active = true
@@ -92,7 +93,7 @@ export function LaunchersPage({ controller, launcherName, mode, navigate }: Laun
     return () => {
       active = false
     }
-  }, [controller.api])
+  }, [controller.api, launchersRevision])
 
   const editingLauncher = launcherByName(launchersState, launcherName)
   const routeSource = formRouteSource(mode, launcherName)

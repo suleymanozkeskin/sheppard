@@ -9,7 +9,7 @@ import { mergeMessages } from "./message-merge"
 import { MockMsgrApi } from "./mock"
 import { withMockFallback } from "./runtime"
 import { HerdrSseClient, MessageSseClient, parseSseRecords } from "./sse"
-import type { ApiResult, FetchImplementation, ReceiptUpdate } from "./types"
+import type { ApiResult, FetchImplementation, MetadataScope, ReceiptUpdate } from "./types"
 
 describe("MockMsgrApi", () => {
   it("returns the fixture channel list", async () => {
@@ -507,6 +507,34 @@ describe("M3 client helpers", () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(update).toEqual({ channel: "ops", handle: "bob", cursorMessageId: 4 })
+  })
+
+  it("decodes a metadata event into its changed scopes", async () => {
+    let scopes: MetadataScope[] | undefined
+    const encoder = new TextEncoder()
+    const fetchImpl: FetchImplementation = async (_input, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          controller.enqueue(encoder.encode(`event: meta\ndata: ${JSON.stringify({ scopes: ["channels", "members"] })}\n\n`))
+          init?.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")), { once: true })
+        },
+      })
+      return new Response(body, { status: 200 })
+    }
+    const stream = new MessageSseClient(
+      { fetchImpl, maxRetryDelayMs: 0, retryDelayMs: 0, retryJitterMs: 0, url: "/api/events" },
+      {
+        onError: () => undefined,
+        onMessage: () => undefined,
+        onOpen: () => undefined,
+        onMetadata: (received) => { scopes = received },
+      },
+    )
+    stream.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    stream.close()
+
+    expect(scopes).toEqual(["channels", "members"])
   })
 
   it("finds the highest visible contiguous message", () => {

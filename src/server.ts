@@ -96,6 +96,7 @@ import type {
   Launcher,
   LauncherDefinition,
   Message,
+  MetadataScope,
   ModelEntry,
   Participant,
   RoleDetail,
@@ -521,6 +522,15 @@ function ensureTopology(hub: Hub): HerdrTopology | null {
   return hub.topology;
 }
 
+/**
+ * Tells every live subscriber which cached metadata reads are now stale. The
+ * frame carries scope names only; each subscriber refetches under its own
+ * credentials. Call this only after the store committed the change.
+ */
+function publishMetadata(hub: Hub, ...scopes: MetadataScope[]): void {
+  hub.broadcaster.publishMetadata(scopes);
+}
+
 function herdrPort(hub: Hub): Result<HerdrPort, ReturnType<typeof herdrNotConfigured>> {
   return hub.herdr === undefined ? Result.err(herdrNotConfigured()) : Result.ok(hub.herdr);
 }
@@ -911,8 +921,14 @@ function createAgent(hub: Hub, body: JsonValue, headers: Headers): Response {
       }),
     )
     .match({
-      ok: (created) =>
-        jsonResponse({ handle: created.participant.handle, token: created.token }, 201, headers),
+      ok: (created) => {
+        publishMetadata(hub, "participants");
+        return jsonResponse(
+          { handle: created.participant.handle, token: created.token },
+          201,
+          headers,
+        );
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -935,7 +951,10 @@ function createHuman(hub: Hub, body: JsonValue, headers: Headers): Response {
         const existing = hub.store.findByHandle(handle);
         if (existing?.kind === "human" && !existing.deactivated) {
           return hub.store.reissueHuman(handle).match({
-            ok: (created) => humanSessionResponse(created, 200, headers),
+            ok: (created) => {
+              publishMetadata(hub, "participants");
+              return humanSessionResponse(created, 200, headers);
+            },
             err: (error) => errorResponse(error, headers),
           });
         }
@@ -945,7 +964,10 @@ function createHuman(hub: Hub, body: JsonValue, headers: Headers): Response {
           return errorResponse(handleTaken(activeHuman.handle), headers);
         }
         return hub.store.createHuman(handle).match({
-          ok: (created) => humanSessionResponse(created, 201, headers),
+          ok: (created) => {
+            publishMetadata(hub, "participants");
+            return humanSessionResponse(created, 201, headers);
+          },
           err: (error) => errorResponse(error, headers),
         });
       },
@@ -965,7 +987,10 @@ function createChannel(hub: Hub, body: JsonValue, headers: Headers): Response {
       }),
     )
     .match({
-      ok: (channel) => jsonResponse(channel, 201, headers),
+      ok: (channel) => {
+        publishMetadata(hub, "channels");
+        return jsonResponse(channel, 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -977,14 +1002,20 @@ function deleteChannel(hub: Hub, channel: string, body: JsonValue, headers: Head
     .andThen((confirm) => validName(channel, "name").map(() => confirm))
     .andThen((confirm) => hub.store.deleteChannel(channel, confirm))
     .match({
-      ok: (deleted) => jsonResponse(deleted, 200, headers),
+      ok: (deleted) => {
+        publishMetadata(hub, "channels", "members", "inbox", "direct");
+        return jsonResponse(deleted, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
 
 function joinChannel(hub: Hub, caller: Participant, channel: string, headers: Headers): Response {
   return hub.store.join(caller.id, channel).match({
-    ok: (joined) => jsonResponse(joined, 200, headers),
+    ok: (joined) => {
+      publishMetadata(hub, "members", "inbox");
+      return jsonResponse(joined, 200, headers);
+    },
     err: (error) => errorResponse(error, headers),
   });
 }
@@ -1040,7 +1071,10 @@ function addMember(
     .andThen((handle) => validName(handle, "handle"))
     .andThen((handle) => hub.store.addMember(channel, handle))
     .match({
-      ok: (added) => jsonResponse(added, 201, headers),
+      ok: (added) => {
+        publishMetadata(hub, "members", "inbox");
+        return jsonResponse(added, 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1052,7 +1086,10 @@ function removeMember(
   headers: Headers,
 ): Response {
   return validName(handle, "handle").andThen((valid) => hub.store.removeMember(channel, valid)).match({
-    ok: (removed) => jsonResponse(removed, 200, headers),
+    ok: (removed) => {
+      publishMetadata(hub, "members", "inbox");
+      return jsonResponse(removed, 200, headers);
+    },
     err: (error) => errorResponse(error, headers),
   });
 }
@@ -1119,9 +1156,10 @@ function sendDirectMessage(
   );
 
   return sent.match({
-    ok: (message) => {
+    ok: ({ created, message }) => {
       hub.broadcaster.publish(message);
       void hub.notifier?.notifyChannel(message.channel);
+      if (created) publishMetadata(hub, "direct", "inbox");
       return jsonResponse({ channel: message.channel, messageId: message.id }, 201, headers);
     },
     err: (error) => errorResponse(error, headers),
@@ -1239,7 +1277,10 @@ function deactivateParticipant(hub: Hub, handle: string, headers: Headers): Resp
   return validName(handle, "handle")
     .andThen((validHandle) => hub.store.deactivateParticipant(validHandle))
     .match({
-      ok: (deactivated) => jsonResponse(deactivated, 200, headers),
+      ok: (deactivated) => {
+        publishMetadata(hub, "participants", "members", "inbox");
+        return jsonResponse(deactivated, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1325,7 +1366,10 @@ function createHerdrRole(hub: Hub, body: JsonValue, headers: Headers): Response 
       roleDefinition(body).andThen((definition) => hub.store.createRole({ name, ...definition })),
     )
     .match({
-      ok: (role) => jsonResponse(rolePresetView(role), 201, headers),
+      ok: (role) => {
+        publishMetadata(hub, "roles");
+        return jsonResponse(rolePresetView(role), 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1350,7 +1394,10 @@ function updateHerdrRole(hub: Hub, name: string, body: JsonValue, headers: Heade
       );
     })
     .match({
-      ok: (role) => jsonResponse(rolePresetView(role), 200, headers),
+      ok: (role) => {
+        publishMetadata(hub, "roles");
+        return jsonResponse(rolePresetView(role), 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1379,7 +1426,10 @@ function updateHerdrRoleRuntime(hub: Hub, name: string, body: JsonValue, headers
       ),
     )
     .match({
-      ok: (role) => jsonResponse(rolePresetView(role), 200, headers),
+      ok: (role) => {
+        publishMetadata(hub, "roles");
+        return jsonResponse(rolePresetView(role), 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1388,7 +1438,10 @@ function deleteHerdrRole(hub: Hub, name: string, headers: Headers): Response {
   return validName(name, "name")
     .andThen((validRoleName) => hub.store.deleteRole(validRoleName))
     .match({
-      ok: (deleted) => jsonResponse(deleted, 200, headers),
+      ok: (deleted) => {
+        publishMetadata(hub, "roles");
+        return jsonResponse(deleted, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1448,6 +1501,7 @@ async function refreshHerdrModelCatalogue(
     launchers,
     target === null ? undefined : target,
   );
+  publishMetadata(hub, "models");
   return jsonResponse(snapshot, 200, headers);
 }
 
@@ -1475,7 +1529,10 @@ function createHerdrModel(hub: Hub, body: JsonValue, headers: Headers): Response
     )
     .andThen((model) => hub.store.createModel(model))
     .match({
-      ok: (model) => jsonResponse(modelEntryView(model), 201, headers),
+      ok: (model) => {
+        publishMetadata(hub, "models");
+        return jsonResponse(modelEntryView(model), 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1493,7 +1550,10 @@ function deleteHerdrModel(
       ),
     )
     .match({
-      ok: (deleted) => jsonResponse(deleted, 200, headers),
+      ok: (deleted) => {
+        publishMetadata(hub, "models");
+        return jsonResponse(deleted, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1635,7 +1695,10 @@ function createHerdrLauncher(hub: Hub, body: JsonValue, headers: Headers): Respo
       ),
     )
     .match({
-      ok: (launcher) => jsonResponse(launcherView(launcher), 201, headers),
+      ok: (launcher) => {
+        publishMetadata(hub, "launchers");
+        return jsonResponse(launcherView(launcher), 201, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1662,7 +1725,10 @@ function updateHerdrLauncher(
           );
     })
     .match({
-      ok: (launcher) => jsonResponse(launcherView(launcher), 200, headers),
+      ok: (launcher) => {
+        publishMetadata(hub, "launchers");
+        return jsonResponse(launcherView(launcher), 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1671,7 +1737,10 @@ function deleteHerdrLauncher(hub: Hub, name: string, headers: Headers): Response
   return validName(name, "name")
     .andThen((validLauncherName) => hub.store.deleteLauncher(validLauncherName))
     .match({
-      ok: (deleted) => jsonResponse(deleted, 200, headers),
+      ok: (deleted) => {
+        publishMetadata(hub, "launchers");
+        return jsonResponse(deleted, 200, headers);
+      },
       err: (error) => errorResponse(error, headers),
     });
 }
@@ -1732,6 +1801,7 @@ async function connectHerdrAgent(
     occupantAgent: current.agent,
   });
   await hub.topology?.refresh();
+  publishMetadata(hub, "participants");
   return jsonResponse(
     { handle: participant.handle, paneId: current.paneId },
     reusable === null ? 201 : 200,
@@ -2163,6 +2233,8 @@ function finalizeLifecycleSpawn(
   }
 
   hub.store.completeLifecycleSpawn(operation.operationKey);
+  publishMetadata(hub, "participants");
+  if (membershipChange !== null) publishMetadata(hub, "members", "inbox");
   return Result.ok(membershipChange);
 }
 
@@ -2767,6 +2839,7 @@ async function stopHerdrAgent(
     if (revalidated.participantId !== null) hub.store.markRouteStale(revalidated.participantId);
     hub.store.deactivateLifecycleAgent(paneId);
     await ensureTopology(hub)?.refresh();
+    publishMetadata(hub, "participants", "members");
     return jsonResponse({ paneId }, 200, headers);
   });
 }
@@ -3036,6 +3109,7 @@ async function closeHerdrWorkspace(
   if (closed.isErr()) return errorResponse(closed.error, headers);
 
   await ensureTopology(hub)?.refresh();
+  publishMetadata(hub, "participants", "members", "inbox");
   return jsonResponse({ workspaceId }, 200, headers);
 }
 
@@ -3071,6 +3145,7 @@ async function broadcastToHerdrWorkspace(
     ok: (result) => {
       hub.broadcaster.publish(result.message);
       void hub.notifier?.notifyChannel(result.message.channel);
+      publishMetadata(hub, "channels", "members", "inbox");
       return jsonResponse(
         {
           channel: result.message.channel,

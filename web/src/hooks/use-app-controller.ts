@@ -7,7 +7,7 @@ import { AUTO_IDENTIFY_HANDLE, autoIdentify, NOT_CONNECTED_REASON } from "@/api/
 import { identityForHandle, removeIdentity, saveIdentity, type StoredIdentity } from "@/api/identity"
 import { mockApi } from "@/api/mock"
 import { apiCall, createBrowserApi } from "@/api/runtime"
-import type { DirectoryList, HerdrPaneView, Member, Message, MsgrApi, RolePreset, RouteState, WorkspaceList } from "@/api/types"
+import { type DirectoryList, type HerdrPaneView, type Member, type Message, type MetadataScope, type MsgrApi, type RolePreset, type RouteState, type WorkspaceList } from "@/api/types"
 import { useChannelState } from "@/hooks/use-channel-state"
 import { focusActiveComposer } from "@/hooks/use-composer-focus"
 import { useComposerState, type AttachmentPath } from "@/hooks/use-composer-state"
@@ -254,6 +254,7 @@ export function useAppController(
   const [workspaceBroadcastState, setWorkspaceBroadcastState] = useState<WorkspaceActionState>({ status: "idle" })
   const [workspaceHistoryChannels, setWorkspaceHistoryChannels] = useState<Map<string, string>>(new Map())
   const [roles, setRoles] = useState<RolePreset[]>([])
+  const [metadataRevisions, setMetadataRevisions] = useState<ReadonlyMap<MetadataScope, number>>(() => new Map())
   const [spawnAgentState, setSpawnAgentState] = useState<SpawnAgentState>({ status: "idle" })
   const [spawnAgentPaneId, setSpawnAgentPaneId] = useState<string | undefined>()
   const [spawnAgentAssignedHandle, setSpawnAgentAssignedHandle] = useState<string | undefined>()
@@ -351,6 +352,7 @@ export function useAppController(
     participantsState,
     reload,
     reloadChannels,
+    reloadMetadata,
     reloadKey,
     removeDirect,
     selectedChannel,
@@ -371,12 +373,27 @@ export function useAppController(
   } = channelData
   const workspaceData = useHerdrWorkspaces(api, fallbackApi)
   const applyTopologySnapshot = workspaceData.onTopologySnapshot
+  const reloadWorkspaces = workspaceData.reloadWorkspaces
+  const onMetadata = useCallback((scopes: readonly MetadataScope[]) => {
+    reloadMetadata(scopes)
+    if (scopes.includes("channels")) reloadWorkspaces()
+    setMetadataRevisions((current) => {
+      const next = new Map(current)
+      for (const scope of new Set(scopes)) next.set(scope, (next.get(scope) ?? 0) + 1)
+      return next
+    })
+  }, [reloadMetadata, reloadWorkspaces])
+  const metadataRevision = useCallback(
+    (scope: MetadataScope) => metadataRevisions.get(scope) ?? 0,
+    [metadataRevisions],
+  )
   const onTopologySnapshot = useCallback((snapshot: WorkspaceList) => {
     applyTopologySnapshot(snapshot)
     if (selectedChannel !== undefined) {
       updateMemberRouteStates(selectedChannel, routeStatesFromTopology(snapshot))
     }
   }, [applyTopologySnapshot, selectedChannel, updateMemberRouteStates])
+  const rolesRevision = metadataRevision("roles")
   useEffect(() => {
     let mounted = true
     void apiCall(api, fallbackApi, (client) => client.listRoles()).then((roleResult) => {
@@ -389,7 +406,7 @@ export function useAppController(
     return () => {
       mounted = false
     }
-  }, [api, fallbackApi])
+  }, [api, fallbackApi, rolesRevision])
 
   const selectChannel = useCallback((channel: string | undefined, kind?: "chat" | "workspace" | "direct") => {
     setActiveWorkspaceId(undefined)
@@ -554,6 +571,7 @@ export function useAppController(
     onUnauthorized,
     sessionExpired,
     {
+      onMetadata,
       onTopologyDegraded: workspaceData.onTopologyDegraded,
       onTopologyError: workspaceData.onTopologyError,
       onTopologyOpen: workspaceData.onTopologyOpen,
@@ -1658,6 +1676,7 @@ export function useAppController(
     removeAttachmentPath,
     reload,
     reloadChannels,
+    metadataRevision,
     runSearch,
     searchActive,
     searchInputRef,
