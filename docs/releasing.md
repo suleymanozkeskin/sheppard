@@ -1,6 +1,6 @@
 # Releasing Sheppard
 
-GitHub Releases are the source for standalone archives. The direct installer and `sheppard update` download from the latest published release. Homebrew and npm are optional distribution adapters.
+GitHub Releases are the source for standalone archives. The direct installer and a standalone `sheppard update` download from the latest published release. A source `sheppard update` fast-forwards the tracked git branch and rebuilds. Homebrew and npm are optional distribution adapters.
 
 ## Release requirements
 

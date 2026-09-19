@@ -190,3 +190,111 @@ describe("standalone distribution", () => {
     expect(result.lines).toContain(`Data was kept at ${databasePath}.`);
   });
 });
+
+describe("source distribution", () => {
+  function sourceRoot(version: string): string {
+    const root = scratchDirectory();
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "sheppard", version }));
+    return root;
+  }
+
+  test("fast-forwards the tracked branch and rebuilds", async () => {
+    const root = sourceRoot("0.2.0");
+    const commands: string[][] = [];
+    const result = output();
+
+    expect(await updateSheppard(
+      { kind: "source" },
+      "0.1.0",
+      config(join(root, "msgr.db")),
+      result.value,
+      {
+        runProcess: async (cmd) => {
+          commands.push([...cmd]);
+          if (cmd.includes("status")) return { exitCode: 0, stderr: "", stdout: "" };
+          if (cmd.includes("rev-parse")) return { exitCode: 0, stderr: "", stdout: "origin/main\n" };
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        sourceRoot: root,
+      },
+    )).toBe(0);
+
+    expect(result.errors).toEqual([]);
+    expect(result.lines).toContain("Updated Sheppard 0.1.0 to 0.2.0.");
+    expect(commands.some((cmd) => cmd.includes("fetch") && cmd.includes("origin"))).toBe(true);
+    expect(commands.some((cmd) => cmd.includes("merge") && cmd.includes("--ff-only"))).toBe(true);
+    expect(commands.some((cmd) => cmd.includes("build:web"))).toBe(true);
+    expect(commands.some((cmd) => cmd.includes("link"))).toBe(true);
+  });
+
+  test("rebuilds when the source version is already current", async () => {
+    const root = sourceRoot("0.1.2");
+    const result = output();
+
+    expect(await updateSheppard(
+      { kind: "source" },
+      "0.1.2",
+      config(join(root, "msgr.db")),
+      result.value,
+      {
+        runProcess: async (cmd) => {
+          if (cmd.includes("status")) return { exitCode: 0, stderr: "", stdout: "" };
+          if (cmd.includes("rev-parse")) return { exitCode: 0, stderr: "", stdout: "origin/main\n" };
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        sourceRoot: root,
+      },
+    )).toBe(0);
+
+    expect(result.errors).toEqual([]);
+    expect(result.lines).toContain("Rebuilt Sheppard 0.1.2.");
+  });
+
+  test("refuses a dirty source tree", async () => {
+    const root = sourceRoot("0.1.2");
+    const result = output();
+    const commands: string[][] = [];
+
+    expect(await updateSheppard(
+      { kind: "source" },
+      "0.1.2",
+      config(join(root, "msgr.db")),
+      result.value,
+      {
+        runProcess: async (cmd) => {
+          commands.push([...cmd]);
+          if (cmd.includes("status")) return { exitCode: 0, stderr: "", stdout: " M src/distribution.ts\n" };
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        sourceRoot: root,
+      },
+    )).toBe(1);
+
+    expect(result.errors).toEqual([
+      "The source tree has local changes. Commit or stash them, then run sheppard update.",
+    ]);
+    expect(commands.some((cmd) => cmd.includes("fetch"))).toBe(false);
+  });
+
+  test("refuses a source branch with no upstream", async () => {
+    const root = sourceRoot("0.1.2");
+    const result = output();
+
+    expect(await updateSheppard(
+      { kind: "source" },
+      "0.1.2",
+      config(join(root, "msgr.db")),
+      result.value,
+      {
+        runProcess: async (cmd) => {
+          if (cmd.includes("status")) return { exitCode: 0, stderr: "", stdout: "" };
+          if (cmd.includes("rev-parse")) return { exitCode: 128, stderr: "no upstream", stdout: "" };
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        sourceRoot: root,
+      },
+    )).toBe(1);
+
+    expect(result.errors[0]).toContain("This branch has no upstream.");
+  });
+});

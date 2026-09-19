@@ -18,7 +18,7 @@ const SHEPPARD_HELP = `Sheppard — the agent messaging and control plane for He
   sheppard                       start Sheppard and open the web interface
   sheppard --no-open             start without opening a browser
   sheppard stop                  stop the running Sheppard server
-  sheppard update                install the latest verified release
+  sheppard update                update this Sheppard installation
   sheppard --version             print the installed version
   sheppard uninstall [--yes]     remove the standalone commands and keep user data
   sheppard msgr <command...>     run an agent messaging command

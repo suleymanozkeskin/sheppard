@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { ServerConfig } from "./config";
+import { decodeObject, requiredString, type JsonValue } from "./json";
 import { activeHubPid } from "./lock";
 
 const RELEASE_DOWNLOAD_ROOT =
@@ -32,6 +33,23 @@ export type SheppardDistribution =
 export interface DistributionOutput {
   fail: (line: string) => void;
   write: (line: string) => void;
+}
+
+export interface ProcessOutput {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+}
+
+export type ProcessRunner = (
+  cmd: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+) => Promise<ProcessOutput>;
+
+export interface UpdateSheppardOptions {
+  runProcess?: ProcessRunner;
+  sourceRoot?: string;
 }
 
 type ReleaseTarget =
@@ -179,12 +197,147 @@ function homebrewManaged(path: string): boolean {
   return path.includes("/Cellar/sheppard/") || path.includes("/Homebrew/Cellar/sheppard/");
 }
 
-function sourceInstallAction(action: "update" | "uninstall"): string {
-  switch (action) {
-    case "update":
-      return "This is a source installation. Update the repository, then rebuild Sheppard.";
-    case "uninstall":
-      return "This is a source installation. Remove its global link with `bun unlink` from the repository root.";
+const SOURCE_GIT_TIMEOUT_MS = 60_000;
+const SOURCE_BUILD_TIMEOUT_MS = 180_000;
+
+function sourceUninstallMessage(): string {
+  return "This is a source installation. Remove its global link with `bun unlink` from the repository root.";
+}
+
+async function defaultRunProcess(
+  cmd: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+): Promise<ProcessOutput> {
+  const binary = cmd[0];
+  if (binary === undefined) return { exitCode: 1, stderr: "command was empty", stdout: "" };
+  const child = Bun.spawn({
+    cmd: [...cmd],
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: timeoutMs,
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (child.signalCode !== null) {
+    return { exitCode: 1, stderr: `${binary} timed out after ${timeoutMs}ms.`, stdout: "" };
+  }
+  return { exitCode: exitCode ?? 1, stderr, stdout };
+}
+
+async function runRequired(
+  runner: ProcessRunner,
+  cmd: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+  failure: string,
+): Promise<string> {
+  const result = await runner(cmd, cwd, timeoutMs);
+  if (result.exitCode === 0) return result.stdout;
+  const detail = result.stderr.trim() || result.stdout.trim();
+  throw new Error(detail.length > 0 ? `${failure} ${detail}` : failure);
+}
+
+function gitBinary(): string {
+  const git = Bun.which("git");
+  if (git === null) throw new Error("git is required to update a source installation.");
+  return git;
+}
+
+async function readSheppardVersion(root: string): Promise<string> {
+  const raw = await Bun.file(join(root, "package.json")).text();
+  let parsed: JsonValue;
+  try {
+    // SAFETY: JSON.parse yields JSON; decodeObject rejects anything that is not an object.
+    parsed = JSON.parse(raw) as JsonValue;
+  } catch {
+    throw new Error("The source tree does not contain a readable package.json.");
+  }
+  const object = decodeObject(parsed);
+  if (object.isErr()) throw new Error("The source tree package.json must be an object.");
+  const name = requiredString(object.value, "name");
+  const version = requiredString(object.value, "version");
+  if (name.isErr() || name.value !== "sheppard" || version.isErr()) {
+    throw new Error("The source tree is not a Sheppard repository.");
+  }
+  return version.value;
+}
+
+async function requireCleanWorktree(root: string, runner: ProcessRunner): Promise<void> {
+  const git = gitBinary();
+  const status = await runRequired(
+    runner,
+    [git, "status", "--porcelain"],
+    root,
+    SOURCE_GIT_TIMEOUT_MS,
+    "Cannot read the source git status.",
+  );
+  if (status.trim().length > 0) {
+    throw new Error("The source tree has local changes. Commit or stash them, then run sheppard update.");
+  }
+}
+
+async function fastForwardToUpstream(root: string, runner: ProcessRunner): Promise<void> {
+  const git = gitBinary();
+  const upstream = (await runRequired(
+    runner,
+    [git, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    root,
+    SOURCE_GIT_TIMEOUT_MS,
+    "This branch has no upstream. Set an upstream, then run sheppard update.",
+  )).trim();
+  const slash = upstream.indexOf("/");
+  if (slash <= 0) throw new Error("This branch has no upstream remote.");
+  const remote = upstream.slice(0, slash);
+  await runRequired(runner, [git, "fetch", remote], root, SOURCE_GIT_TIMEOUT_MS, "git fetch failed.");
+  await runRequired(
+    runner,
+    [git, "merge", "--ff-only", upstream],
+    root,
+    SOURCE_GIT_TIMEOUT_MS,
+    "Cannot fast-forward the source tree.",
+  );
+}
+
+async function rebuildSourceTree(root: string, runner: ProcessRunner): Promise<void> {
+  const bun = process.execPath;
+  await runRequired(runner, [bun, "install"], root, SOURCE_BUILD_TIMEOUT_MS, "bun install failed.");
+  await runRequired(
+    runner,
+    [bun, "install", "--cwd", join(root, "web")],
+    root,
+    SOURCE_BUILD_TIMEOUT_MS,
+    "web bun install failed.",
+  );
+  await runRequired(runner, [bun, "run", "build:web"], root, SOURCE_BUILD_TIMEOUT_MS, "web build failed.");
+  await runRequired(runner, [bun, "link"], root, SOURCE_BUILD_TIMEOUT_MS, "bun link failed.");
+}
+
+async function updateSourceSheppard(
+  currentVersion: string,
+  output: DistributionOutput,
+  options: UpdateSheppardOptions,
+): Promise<number> {
+  const root = options.sourceRoot ?? join(import.meta.dir, "..");
+  const runner = options.runProcess ?? defaultRunProcess;
+  output.write("Updating the Sheppard source tree…");
+  try {
+    const before = await readSheppardVersion(root);
+    await requireCleanWorktree(root, runner);
+    await fastForwardToUpstream(root, runner);
+    output.write("Rebuilding Sheppard…");
+    await rebuildSourceTree(root, runner);
+    const after = await readSheppardVersion(root);
+    if (after === currentVersion && after === before) output.write(`Rebuilt Sheppard ${after}.`);
+    else output.write(`Updated Sheppard ${currentVersion} to ${after}.`);
+    return 0;
+  } catch (cause) {
+    output.fail(cause instanceof Error ? cause.message : "The update failed.");
+    return 1;
   }
 }
 
@@ -200,12 +353,10 @@ export async function updateSheppard(
   currentVersion: string,
   config: ServerConfig,
   output: DistributionOutput,
+  options: UpdateSheppardOptions = {},
 ): Promise<number> {
-  if (distribution.kind === "source") {
-    output.fail(sourceInstallAction("update"));
-    return 1;
-  }
   if (!stoppedHub(config, output)) return 1;
+  if (distribution.kind === "source") return updateSourceSheppard(currentVersion, output, options);
 
   const executablePath = await realpath(distribution.executablePath);
   if (homebrewManaged(executablePath)) {
@@ -274,7 +425,7 @@ export async function uninstallSheppard(
   output: DistributionOutput,
 ): Promise<number> {
   if (distribution.kind === "source") {
-    output.fail(sourceInstallAction("uninstall"));
+    output.fail(sourceUninstallMessage());
     return 1;
   }
   if (!stoppedHub(config, output)) return 1;

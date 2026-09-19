@@ -59,7 +59,7 @@ sheppard update
 sheppard uninstall
 ```
 
-Run `sheppard stop` from any terminal to stop the server. Stop the running server before `update` or `uninstall`. The updater verifies the release SHA-256 checksum before it replaces the executable. Uninstall removes the standalone commands and keeps data in `~/.config/msgr`.
+Run `sheppard stop` from any terminal to stop the server. Stop the running server before `update` or `uninstall`. A standalone updater verifies the release SHA-256 checksum before it replaces the executable. A source updater fast-forwards the tracked git branch, then runs `bun install`, `bun install --cwd web`, `bun run build:web`, and `bun link`. It refuses a dirty worktree and a non-fast-forward merge. Uninstall removes the standalone commands and keeps data in `~/.config/msgr`.
 
 For a Homebrew installation, use `brew upgrade sheppard` and `brew uninstall sheppard`.
 
