@@ -1,9 +1,9 @@
 import { Result } from "better-result"
 import * as v from "valibot"
 
-import { messageSchema, receiptUpdateSchema, workspaceListSchema } from "./schemas"
+import { messageSchema, metadataScopesSchema, receiptUpdateSchema, workspaceListSchema } from "./schemas"
 import { MessageSseClient, SseError, type SseClientOptions, type SseHandlers } from "./sse"
-import type { Message, ReceiptUpdate, WorkspaceList } from "./types"
+import { type Message, type MetadataScope, type ReceiptUpdate, type WorkspaceList } from "./types"
 
 const DEFAULT_CHANNEL_NAME = "sheppard-events"
 const DEFAULT_LOCK_NAME = "sheppard-events-leader"
@@ -51,6 +51,14 @@ const sharedEventSchema = v.variant("type", [
     sequence: integer,
   }),
   v.object({
+    type: v.literal("meta"),
+    epoch: v.string(),
+    eventId: v.optional(v.string()),
+    lastEventId: v.optional(v.string()),
+    scopes: metadataScopesSchema,
+    sequence: integer,
+  }),
+  v.object({
     type: v.literal("topology"),
     epoch: v.string(),
     eventId: v.optional(v.string()),
@@ -81,6 +89,7 @@ type SharedEventPayload =
   | { type: "open"; reconnecting: boolean }
   | { type: "message"; eventId?: string; message: Message }
   | { type: "receipt"; eventId?: string; receipt: ReceiptUpdate }
+  | { type: "meta"; eventId?: string; scopes: MetadataScope[] }
   | { type: "topology"; eventId?: string; snapshot: WorkspaceList }
   | { type: "error"; message: string; status?: number }
   | { type: "degraded"; degraded: boolean }
@@ -221,6 +230,7 @@ export class SharedMessageSseClient {
         onError: (error) => this.publishError(error),
         onMessage: (message, eventId) => this.publishMessage(message, eventId),
         onReceipt: (receipt, eventId) => this.publishReceipt(receipt, eventId),
+        onMetadata: (scopes, eventId) => this.publishMetadata(scopes, eventId),
         onOpen: (reconnecting) => this.publishOpen(reconnecting || (this.hadLeadership && this.lastSequence > 0)),
         onTopologySnapshot: (snapshot, eventId) => this.publishTopology(snapshot, eventId),
       },
@@ -253,6 +263,11 @@ export class SharedMessageSseClient {
   private publishReceipt(receipt: ReceiptUpdate, eventId: string | undefined): void {
     this.lastEventId = eventId ?? this.lastEventId
     this.publish({ eventId, receipt, type: "receipt" })
+  }
+
+  private publishMetadata(scopes: MetadataScope[], eventId: string | undefined): void {
+    this.lastEventId = eventId ?? this.lastEventId
+    this.publish({ eventId, scopes, type: "meta" })
   }
 
   private publishTopology(snapshot: WorkspaceList, eventId: string | undefined): void {
@@ -305,6 +320,7 @@ export class SharedMessageSseClient {
       case "open":
       case "message":
       case "receipt":
+      case "meta":
       case "topology":
       case "error":
       case "degraded":
@@ -358,6 +374,9 @@ export class SharedMessageSseClient {
         return
       case "receipt":
         this.handlers.onReceipt?.(event.receipt, event.eventId)
+        return
+      case "meta":
+        this.handlers.onMetadata?.(event.scopes, event.eventId)
         return
       case "topology":
         this.handlers.onTopologySnapshot?.(event.snapshot, event.eventId)

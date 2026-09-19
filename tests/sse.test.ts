@@ -103,10 +103,44 @@ describe("event stream", () => {
     await hub.post("/api/channels", { name: "backend" }, auth(alice));
     await hub.post("/api/channels/backend/join", {}, auth(alice));
     await hub.post("/api/channels/backend/messages", { body: "hello" }, auth(alice));
-    const message = await reader.read();
-    expect(decoder.decode(message.value)).toContain("id: 1");
+
+    let sawChannelsMeta = false;
+    let messageFrame = "";
+    for (let index = 0; index < 8; index += 1) {
+      const next = await Promise.race([reader.read(), Bun.sleep(500).then(() => null)]);
+      if (next === null || next.done) break;
+      const text = decoder.decode(next.value);
+      if (text.includes("event: meta") && text.includes('"channels"')) sawChannelsMeta = true;
+      if (text.startsWith("id: 1")) {
+        messageFrame = text;
+        break;
+      }
+    }
+    expect(sawChannelsMeta).toBe(true);
+    expect(messageFrame).toContain("hello");
 
     await reader.cancel();
+    aborter.abort();
+  });
+
+  test("announces changed metadata scopes as they are committed", async () => {
+    const hub = testHub();
+    const { response, aborter } = subscribe(hub);
+    const stream = await response;
+
+    const alice = await provision(hub, "alice");
+    await hub.post("/api/channels", { name: "backend" }, auth(alice));
+    await hub.post("/api/channels/backend/join", {}, auth(alice));
+
+    const frames = await readFrames(stream.body!, 5);
+    // SAFETY: each frame was written by the hub's own frame encoder, so the data
+    // line is the JSON form of the MetadataUpdate the hub just published.
+    const scopes = frames
+      .filter((frame) => frame.includes("event: meta"))
+      .map((frame) => JSON.parse(frame.split("data: ")[1] ?? "{}") as { scopes?: string[] });
+    expect(scopes.some((frame) => frame.scopes?.includes("participants"))).toBe(true);
+    expect(scopes.some((frame) => frame.scopes?.includes("channels"))).toBe(true);
+    expect(scopes.some((frame) => frame.scopes?.includes("members") && frame.scopes?.includes("inbox"))).toBe(true);
     aborter.abort();
   });
 

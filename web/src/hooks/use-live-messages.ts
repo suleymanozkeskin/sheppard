@@ -4,7 +4,7 @@ import { apiCall } from "@/api/runtime"
 import { formatApiError, type ApiError } from "@/api/errors"
 import { mergeMessages } from "@/api/message-merge"
 import { SharedMessageSseClient } from "@/api/shared-sse"
-import type { Message, MsgrApi, ReceiptUpdate, WorkspaceList } from "@/api/types"
+import type { Message, MetadataScope, MsgrApi, ReceiptUpdate, WorkspaceList } from "@/api/types"
 
 export type MessageLoadState =
   | { status: "loading" }
@@ -15,6 +15,7 @@ export type StreamState = "connecting" | "live" | "reconnecting" | "degraded" | 
 export interface LiveMessagesOptions {
   contextTarget?: { channel: string; messageId: number }
   enableStream?: boolean
+  onMetadata?: (scopes: MetadataScope[]) => void
   onTopologyDegraded?: (degraded: boolean) => void
   onTopologyError?: () => void
   onTopologyOpen?: (reconnecting: boolean) => void
@@ -145,6 +146,7 @@ export function useLiveMessages(
   const loadContextRef = useRef(loadContext)
   const onIncomingMessageRef = useRef(onIncomingMessage)
   const onRecoveryRef = useRef(onRecovery)
+  const onMetadataRef = useRef(options.onMetadata)
   const onTopologyDegradedRef = useRef(options.onTopologyDegraded)
   const onTopologyErrorRef = useRef(options.onTopologyError)
   const onTopologyOpenRef = useRef(options.onTopologyOpen)
@@ -158,6 +160,7 @@ export function useLiveMessages(
     loadContextRef.current = loadContext
     onIncomingMessageRef.current = onIncomingMessage
     onRecoveryRef.current = onRecovery
+    onMetadataRef.current = options.onMetadata
     onTopologyDegradedRef.current = options.onTopologyDegraded
     onTopologyErrorRef.current = options.onTopologyError
     onTopologyOpenRef.current = options.onTopologyOpen
@@ -165,7 +168,7 @@ export function useLiveMessages(
     contextTargetRef.current = contextTargetChannel === undefined || contextTargetMessageId === undefined
       ? undefined
       : { channel: contextTargetChannel, messageId: contextTargetMessageId }
-  }, [contextTargetChannel, contextTargetMessageId, loadContext, loadSnapshot, onIncomingMessage, onRecovery, options.onTopologyDegraded, options.onTopologyError, options.onTopologyOpen, options.onTopologySnapshot])
+  }, [contextTargetChannel, contextTargetMessageId, loadContext, loadSnapshot, onIncomingMessage, onRecovery, options.onMetadata, options.onTopologyDegraded, options.onTopologyError, options.onTopologyOpen, options.onTopologySnapshot])
 
   useEffect(() => {
     if (options.enableStream === false) return
@@ -207,6 +210,9 @@ export function useLiveMessages(
             next.set(receipt.handle, receipt.cursorMessageId)
             return next
           })
+        },
+        onMetadata: (scopes) => {
+          if (mountedRef.current) onMetadataRef.current?.(scopes)
         },
         onTopologySnapshot: (snapshot) => {
           if (mountedRef.current) onTopologySnapshotRef.current?.(snapshot)

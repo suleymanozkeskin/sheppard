@@ -1,5 +1,7 @@
 import * as v from "valibot"
 
+import { METADATA_SCOPES } from "./types"
+
 const integer = v.pipe(v.number(), v.integer())
 const nonNegativeAttachmentCount = v.pipe(v.number(), v.integer(), v.minValue(0))
 const nullableString = v.nullable(v.string())
@@ -54,6 +56,15 @@ export const receiptUpdateSchema = v.object({
   channel: v.string(),
   handle: v.string(),
   cursorMessageId: integer,
+})
+
+/** The wire form of one `meta` stream frame: the scopes that changed. */
+export const metadataScopesSchema = v.pipe(
+  v.array(v.picklist(METADATA_SCOPES)),
+  v.maxLength(METADATA_SCOPES.length),
+)
+export const metadataUpdateSchema = v.object({
+  scopes: metadataScopesSchema,
 })
 
 const participantSchema = v.object({

@@ -8,6 +8,20 @@ export type AgentKind = string
 export type ChannelKind = "chat" | "direct" | "workspace"
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown"
 
+/**
+ * Metadata reads that a live subscriber can cache. A `meta` stream frame names
+ * the scopes that changed, so the subscriber refetches only those reads.
+ */
+export const METADATA_SCOPES = [
+  "channels",
+  "members",
+  "inbox",
+  "participants",
+  "direct",
+  "roles",
+] as const
+export type MetadataScope = (typeof METADATA_SCOPES)[number]
+
 export interface Channel {
   id: number
   kind: ChannelKind

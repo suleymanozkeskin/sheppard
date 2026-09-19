@@ -1,8 +1,8 @@
 import { Result, TaggedError } from "better-result"
 import * as v from "valibot"
 
-import { messageSchema, receiptUpdateSchema, workspaceListSchema } from "./schemas"
-import type { FetchImplementation, Message, WorkspaceList } from "./types"
+import { messageSchema, metadataUpdateSchema, receiptUpdateSchema, workspaceListSchema } from "./schemas"
+import type { FetchImplementation, Message, MetadataScope, WorkspaceList } from "./types"
 import type { ReceiptUpdate } from "./types"
 
 export interface SseMessageEvent {
@@ -26,6 +26,7 @@ export interface SseHandlers {
   onOpen: (reconnecting: boolean) => void
   onMessage: (message: Message, eventId?: string) => void
   onReceipt?: (update: ReceiptUpdate, eventId?: string) => void
+  onMetadata?: (scopes: MetadataScope[], eventId?: string) => void
   onError: (error: SseError) => void
   onDegraded?: (degraded: boolean) => void
   onTopologySnapshot?: (snapshot: WorkspaceList, eventId?: string) => void
@@ -159,6 +160,34 @@ function decodeReceipt(event: SseMessageEvent): Result<ReceiptUpdate, SseError> 
         new SseError({
           cause: decoded.issues,
           message: "The receipt event did not match the API contract",
+        }),
+      )
+}
+
+function decodeMetadata(event: SseMessageEvent): Result<MetadataScope[], SseError> {
+  const parsed = Result.try<unknown, SseParseError>({
+    try: () => JSON.parse(event.data),
+    catch: (cause) =>
+      new SseParseError({
+        cause,
+        message: "The metadata event contained invalid JSON",
+      }),
+  })
+  if (parsed.isErr()) {
+    return Result.err(
+      new SseError({
+        cause: parsed.error.cause,
+        message: parsed.error.message,
+      }),
+    )
+  }
+  const decoded = v.safeParse(metadataUpdateSchema, parsed.value)
+  return decoded.success
+    ? Result.ok(decoded.output.scopes)
+    : Result.err(
+        new SseError({
+          cause: decoded.issues,
+          message: "The metadata event did not match the API contract",
         }),
       )
 }
@@ -386,6 +415,12 @@ export class MessageSseClient {
         const receiptResult = decodeReceipt(event)
         if (receiptResult.isErr()) return Result.err(receiptResult.error)
         this.handlers.onReceipt?.(receiptResult.value, event.id)
+        continue
+      }
+      if (event.event === "meta") {
+        const metadataResult = decodeMetadata(event)
+        if (metadataResult.isErr()) return Result.err(metadataResult.error)
+        this.handlers.onMetadata?.(metadataResult.value, event.id)
         continue
       }
       const messageResult = decodeMessage(event)

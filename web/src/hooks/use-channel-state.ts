@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useReducer } from "react"
 import { apiCall } from "@/api/runtime"
 import { formatApiError, type ApiError } from "@/api/errors"
 import type { StoredIdentity } from "@/api/identity"
-import type { Channel, ChannelKind, DirectConversation, InboxEntry, Member, MsgrApi, Participant, RouteState } from "@/api/types"
+import type { Channel, ChannelKind, DirectConversation, InboxEntry, Member, MetadataScope, MsgrApi, Participant, RouteState } from "@/api/types"
 import { useSettledRouteStates, type RouteObservation } from "@/hooks/use-settled-route-state"
 
 export type SelectedChannelKind = ChannelKind | "direct"
@@ -37,6 +37,10 @@ interface ChannelDataState {
   selectedChannelKind: SelectedChannelKind | undefined
   reloadKey: number
   channelReloadKey: number
+  directReloadKey: number
+  inboxReloadKey: number
+  membersReloadKey: number
+  participantsReloadKey: number
   directConversations: DirectConversation[]
   directState: DirectState
   membersState: MemberState
@@ -56,6 +60,7 @@ type ChannelDataAction =
   | { type: "channel.add"; channel: Channel }
   | { type: "reload" }
   | { type: "reload.channels" }
+  | { type: "metadata.reload"; scopes: readonly MetadataScope[] }
   | { type: "direct.disabled" }
   | { type: "direct.loading" }
   | { type: "direct.loaded"; conversations: DirectConversation[] }
@@ -76,18 +81,22 @@ type ChannelDataAction =
   | { type: "participants.loaded"; participants: Participant[] }
   | { type: "participants.error"; message: string }
 
-function initialChannelData(identity: StoredIdentity | null): ChannelDataState {
+export function initialChannelData(identity: StoredIdentity | null): ChannelDataState {
   return {
     channelReloadKey: 0,
     channelState: { status: "loading" },
     cursorByChannel: new Map(),
     directConversations: [],
+    directReloadKey: 0,
     directState: identity === null ? { status: "disabled" } : { status: "loading" },
     inboxEntries: [],
+    inboxReloadKey: 0,
     inboxState: identity === null ? { status: "disabled" } : { status: "loading" },
     membersByChannel: new Map(),
+    membersReloadKey: 0,
     membersState: { status: "loading" },
     participants: [],
+    participantsReloadKey: 0,
     participantsState: { status: "loading" },
     reloadKey: 0,
     selectedChannel: undefined,
@@ -95,7 +104,31 @@ function initialChannelData(identity: StoredIdentity | null): ChannelDataState {
   }
 }
 
-function channelDataReducer(state: ChannelDataState, action: ChannelDataAction): ChannelDataState {
+function metadataReloaded(state: ChannelDataState, scope: MetadataScope): ChannelDataState {
+  switch (scope) {
+    case "channels":
+      return { ...state, channelReloadKey: state.channelReloadKey + 1 }
+    case "members":
+      return { ...state, membersReloadKey: state.membersReloadKey + 1 }
+    case "inbox":
+      return { ...state, inboxReloadKey: state.inboxReloadKey + 1 }
+    case "participants":
+      return { ...state, participantsReloadKey: state.participantsReloadKey + 1 }
+    case "direct":
+      return { ...state, directReloadKey: state.directReloadKey + 1 }
+    case "roles":
+      return state
+    default:
+      return assertNeverMetadataScope(scope)
+  }
+}
+
+/** A new metadata scope must fail typecheck here, not fall through silently. */
+function assertNeverMetadataScope(scope: never): never {
+  throw new Error(`Unhandled metadata scope: ${String(scope)}`)
+}
+
+export function channelDataReducer(state: ChannelDataState, action: ChannelDataAction): ChannelDataState {
   switch (action.type) {
     case "channels.loading":
       return state.channelState.status === "ready"
@@ -140,14 +173,27 @@ function channelDataReducer(state: ChannelDataState, action: ChannelDataAction):
       return {
         ...state,
         channelReloadKey: state.channelReloadKey + 1,
+        directReloadKey: state.directReloadKey + 1,
+        inboxReloadKey: state.inboxReloadKey + 1,
+        membersReloadKey: state.membersReloadKey + 1,
+        participantsReloadKey: state.participantsReloadKey + 1,
         reloadKey: state.reloadKey + 1,
       }
     case "reload.channels":
       return { ...state, channelReloadKey: state.channelReloadKey + 1 }
+    case "metadata.reload": {
+      let next = state
+      for (const scope of new Set(action.scopes)) {
+        next = metadataReloaded(next, scope)
+      }
+      return next
+    }
     case "direct.disabled":
       return { ...state, directConversations: [], directState: { status: "disabled" } }
     case "direct.loading":
-      return { ...state, directState: { status: "loading" } }
+      return state.directState.status === "ready"
+        ? state
+        : { ...state, directState: { status: "loading" } }
     case "direct.loaded":
       return {
         ...state,
@@ -194,7 +240,9 @@ function channelDataReducer(state: ChannelDataState, action: ChannelDataAction):
     case "direct.error":
       return { ...state, directState: { errorMessage: action.message, status: "ready" } }
     case "members.loading":
-      return { ...state, membersState: { status: "loading" } }
+      return state.membersState.status === "ready"
+        ? state
+        : { ...state, membersState: { status: "loading" } }
     case "members.loaded": {
       const membersByChannel = new Map(state.membersByChannel)
       membersByChannel.set(action.channel, action.members)
@@ -220,13 +268,17 @@ function channelDataReducer(state: ChannelDataState, action: ChannelDataAction):
     case "inbox.disabled":
       return { ...state, inboxEntries: [], inboxState: { status: "disabled" } }
     case "inbox.loading":
-      return { ...state, inboxState: { status: "loading" } }
+      return state.inboxState.status === "ready"
+        ? state
+        : { ...state, inboxState: { status: "loading" } }
     case "inbox.loaded":
       return { ...state, inboxEntries: action.entries, inboxState: { status: "ready" } }
     case "inbox.error":
       return { ...state, inboxState: { errorMessage: action.message, status: "ready" } }
     case "participants.loading":
-      return { ...state, participantsState: { status: "loading" } }
+      return state.participantsState.status === "ready"
+        ? state
+        : { ...state, participantsState: { status: "loading" } }
     case "participants.loaded":
       return { ...state, participants: action.participants, participantsState: { status: "ready" } }
     case "participants.error":
@@ -260,6 +312,7 @@ export interface ChannelData {
   participantsState: ParticipantState
   reload: () => void
   reloadChannels: () => void
+  reloadMetadata: (scopes: readonly MetadataScope[]) => void
   reloadKey: number
   removeDirect: (channel: string) => void
   selectedChannel: string | undefined
@@ -339,7 +392,7 @@ export function useChannelState(
     return () => {
       mounted = false
     }
-  }, [api, fallback, memberChannelKey, onUnauthorized, sessionExpired, state.reloadKey, state.selectedChannel])
+  }, [api, fallback, memberChannelKey, onUnauthorized, sessionExpired, state.membersReloadKey, state.selectedChannel])
 
   useEffect(() => {
     if (identity === null || sessionExpired) {
@@ -368,7 +421,7 @@ export function useChannelState(
     return () => {
       mounted = false
     }
-  }, [api, fallback, identity, onUnauthorized, sessionExpired, state.reloadKey])
+  }, [api, fallback, identity, onUnauthorized, sessionExpired, state.inboxReloadKey])
 
   useEffect(() => {
     let mounted = true
@@ -385,7 +438,7 @@ export function useChannelState(
     return () => {
       mounted = false
     }
-  }, [api, fallback, state.reloadKey])
+  }, [api, fallback, state.participantsReloadKey])
 
   useEffect(() => {
     if (identity === null || sessionExpired) {
@@ -414,7 +467,7 @@ export function useChannelState(
     return () => {
       mounted = false
     }
-  }, [api, fallback, identity, onUnauthorized, sessionExpired, state.reloadKey])
+  }, [api, fallback, identity, onUnauthorized, sessionExpired, state.directReloadKey])
 
   const selectChannel = useCallback((channel: string | undefined, kind?: SelectedChannelKind) => {
     dispatch({ channel, kind, type: "channel.select" })
@@ -424,6 +477,10 @@ export function useChannelState(
   }, [])
   const reload = useCallback(() => dispatch({ type: "reload" }), [])
   const reloadChannels = useCallback(() => dispatch({ type: "reload.channels" }), [])
+  const reloadMetadata = useCallback(
+    (scopes: readonly MetadataScope[]) => dispatch({ scopes, type: "metadata.reload" }),
+    [],
+  )
   const removeDirect = useCallback((channel: string) => dispatch({ channel, type: "direct.removed" }), [])
   const activeChannel = state.channelState.status === "ready"
     ? state.channelState.channels.find((channel) => channel.name === state.selectedChannel)
@@ -508,6 +565,7 @@ export function useChannelState(
     participantsState: state.participantsState,
     reload,
     reloadChannels,
+    reloadMetadata,
     reloadKey: state.reloadKey,
     removeDirect,
     selectedChannel: state.selectedChannel,
