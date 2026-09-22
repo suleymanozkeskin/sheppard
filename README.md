@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/suleymanozkeskin/sheppard/main/inst
 sheppard
 ```
 
-The installer supports macOS and Linux on ARM64 and x64. The command `sheppard` is the first match on `PATH`. When an earlier copy exists, the installer prints that command and leaves it in place.
+The installer supports macOS and Linux on ARM64 and x64. The command `sheppard` is the first match on `PATH`. The installer points an earlier Sheppard command at the new binary.
 
 The macOS archives are not signed or notarized. macOS can require manual approval before the first run.
 

@@ -36,6 +36,65 @@ resolved_command() {
   command -v "$1" 2>/dev/null || true
 }
 
+same_command() {
+  [ "$(physical_path "$1")" = "$(physical_path "$2")" ]
+}
+
+sheppard_version_line() {
+  case "$1" in
+    "sheppard "[0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+point_command_at() {
+  link_path="$1"
+  target="$2"
+  if same_command "${link_path}" "${target}"; then
+    return 0
+  fi
+  link_directory="$(dirname "${link_path}")"
+  if [ ! -w "${link_directory}" ]; then
+    echo "Sheppard could not replace ${link_path}." >&2
+    return 1
+  fi
+  ln -sfn "${target}" "${link_path}" || return 1
+}
+
+adopt_earlier_commands() {
+  install_directory="$1"
+  installed_sheppard="${install_directory}/sheppard"
+  installed_msgr="${install_directory}/msgr"
+  step=0
+  while [ "${step}" -lt "${PATH_LINK_LIMIT}" ]; do
+    step=$((step + 1))
+    resolved_sheppard="$(resolved_command sheppard)"
+    if [ -z "${resolved_sheppard}" ] || same_command "${resolved_sheppard}" "${installed_sheppard}"; then
+      return 0
+    fi
+    version_line="$("${resolved_sheppard}" --version 2>/dev/null || true)"
+    if ! sheppard_version_line "${version_line}"; then
+      return 0
+    fi
+    shadow_directory="$(dirname "${resolved_sheppard}")"
+    point_command_at "${resolved_sheppard}" "${installed_sheppard}" || return 1
+    if [ -e "${shadow_directory}/msgr" ] || [ -L "${shadow_directory}/msgr" ]; then
+      point_command_at "${shadow_directory}/msgr" "${installed_msgr}" || return 1
+    fi
+  done
+}
+
+stop_running_sheppard() {
+  install_directory="$1"
+  stop_status=0
+  stop_output="$("${install_directory}/sheppard" stop 2>&1)" || stop_status=$?
+  if [ "${stop_output}" = "Sheppard is not running." ]; then
+    return 0
+  fi
+  printf '%s\n' "${stop_output}"
+  return "${stop_status}"
+}
+
 report_install_commands() {
   install_directory="$1"
   installed_sheppard="${install_directory}/sheppard"
@@ -69,6 +128,7 @@ report_install_commands() {
 }
 
 if [ "${SHEPPARD_INSTALL_PATH_CHECK:-}" = "1" ]; then
+  adopt_earlier_commands "${INSTALL_DIRECTORY}"
   report_install_commands "${INSTALL_DIRECTORY}"
   exit 0
 fi
@@ -160,4 +220,6 @@ mv -f "${staged_sheppard}" "${INSTALL_DIRECTORY}/sheppard"
 mv -f "${staged_msgr}" "${INSTALL_DIRECTORY}/msgr"
 
 echo "Installed $("${INSTALL_DIRECTORY}/sheppard" --version) in ${INSTALL_DIRECTORY}."
+adopt_earlier_commands "${INSTALL_DIRECTORY}" || true
+stop_running_sheppard "${INSTALL_DIRECTORY}" || true
 report_install_commands "${INSTALL_DIRECTORY}"
