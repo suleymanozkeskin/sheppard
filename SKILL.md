@@ -13,7 +13,7 @@ If the user gives only the path to this file, start role preset setup. Read the 
 
 ## Install
 
-The standalone installer supports macOS and Linux on arm64 and x64. It installs `sheppard` and `msgr` in `~/.local/bin` by default.
+The standalone installer supports macOS and Linux on arm64 and x64. It installs `sheppard` and `msgr` in `~/.local/bin` by default. The shell runs the first `sheppard` on `PATH`. When an earlier copy exists, the installer prints that command and leaves it in place.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/suleymanozkeskin/sheppard/main/install.sh | sh

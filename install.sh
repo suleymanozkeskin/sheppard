@@ -4,6 +4,74 @@ set -eu
 REPOSITORY="suleymanozkeskin/sheppard"
 INSTALL_DIRECTORY="${SHEPPARD_INSTALL_DIR:-${HOME}/.local/bin}"
 REQUESTED_VERSION="${SHEPPARD_VERSION:-latest}"
+PATH_LINK_LIMIT=8
+
+physical_path() {
+  (
+    current="$1"
+    step=0
+    while [ -L "${current}" ]; do
+      step=$((step + 1))
+      if [ "${step}" -gt "${PATH_LINK_LIMIT}" ]; then
+        break
+      fi
+      target="$(readlink "${current}")"
+      case "${target}" in
+        /*) current="${target}" ;;
+        *)
+          directory="$(dirname "${current}")"
+          current="$(CDPATH= cd "${directory}" && pwd)/${target}"
+          ;;
+      esac
+    done
+    directory="$(dirname "${current}")"
+    if [ -d "${directory}" ]; then
+      current="$(CDPATH= cd "${directory}" && pwd)/$(basename "${current}")"
+    fi
+    printf '%s\n' "${current}"
+  )
+}
+
+resolved_command() {
+  command -v "$1" 2>/dev/null || true
+}
+
+report_install_commands() {
+  install_directory="$1"
+  installed_sheppard="${install_directory}/sheppard"
+  installed_msgr="${install_directory}/msgr"
+  blocking_directory=""
+
+  resolved_sheppard="$(resolved_command sheppard)"
+  if [ -z "${resolved_sheppard}" ]; then
+    printf 'Add %s to PATH, then run: sheppard\n' "${install_directory}"
+  elif [ "$(physical_path "${resolved_sheppard}")" != "$(physical_path "${installed_sheppard}")" ]; then
+    printf 'The command sheppard runs %s.\n' "${resolved_sheppard}"
+    version_line="$("${resolved_sheppard}" --version 2>/dev/null || true)"
+    if [ -n "${version_line}" ]; then
+      printf 'That command reports %s.\n' "${version_line}"
+    fi
+    blocking_directory="$(dirname "${resolved_sheppard}")"
+  fi
+
+  resolved_msgr="$(resolved_command msgr)"
+  if [ -n "${resolved_msgr}" ] && [ "$(physical_path "${resolved_msgr}")" != "$(physical_path "${installed_msgr}")" ]; then
+    printf 'The command msgr runs %s.\n' "${resolved_msgr}"
+    if [ -z "${blocking_directory}" ]; then
+      blocking_directory="$(dirname "${resolved_msgr}")"
+    fi
+  fi
+
+  if [ -n "${blocking_directory}" ]; then
+    printf 'Run %s.\n' "${installed_sheppard}"
+    printf 'Put %s before %s on PATH.\n' "${install_directory}" "${blocking_directory}"
+  fi
+}
+
+if [ "${SHEPPARD_INSTALL_PATH_CHECK:-}" = "1" ]; then
+  report_install_commands "${INSTALL_DIRECTORY}"
+  exit 0
+fi
 
 case "$(uname -s)" in
   Darwin) operating_system="darwin" ;;
@@ -92,9 +160,4 @@ mv -f "${staged_sheppard}" "${INSTALL_DIRECTORY}/sheppard"
 mv -f "${staged_msgr}" "${INSTALL_DIRECTORY}/msgr"
 
 echo "Installed $("${INSTALL_DIRECTORY}/sheppard" --version) in ${INSTALL_DIRECTORY}."
-case ":${PATH}:" in
-  *":${INSTALL_DIRECTORY}:"*) ;;
-  *)
-    echo "Add ${INSTALL_DIRECTORY} to PATH, then run: sheppard"
-    ;;
-esac
+report_install_commands "${INSTALL_DIRECTORY}"
