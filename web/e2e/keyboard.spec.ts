@@ -291,7 +291,7 @@ test("@guard does not dispatch single-key actions from text inputs", async ({ pa
   await expectFocusedMessage(page, 1)
 
   await page.keyboard.press("Control+k")
-  await expect(page.getByRole("heading", { exact: true, name: "Switch channel" })).toBeVisible()
+  await expect(page.getByRole("dialog", { name: "Sheppard command menu" })).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(composer).toBeFocused()
 })
@@ -301,23 +301,24 @@ test("@guard keeps the message list unchanged while the picker owns arrow keys",
   await focused.focus()
   await expectFocusedMessage(page, 2)
   await page.keyboard.press("Control+k")
-  await expect(page.getByRole("heading", { exact: true, name: "Switch channel" })).toBeVisible()
+  await expect(page.getByRole("dialog", { name: "Sheppard command menu" })).toBeVisible()
 
+  const firstActive = await page.locator("#channel-picker-input").getAttribute("aria-activedescendant")
   await page.keyboard.press("ArrowDown")
-  await expect(page.getByRole("option", { name: "Attachments" })).toHaveAttribute("aria-selected", "true")
+  await expect(page.locator("#channel-picker-input")).not.toHaveAttribute("aria-activedescendant", firstActive ?? "")
   await expectFocusedMessage(page, 2)
   for (const key of PAGE_SCOPE_KEYS) await page.keyboard.press(key)
   await expectFocusedMessage(page, 2)
-  await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
+  await expect(page.locator("main h1")).toHaveText("ops")
 
   await page.keyboard.press("Escape")
-  await expect(page.getByRole("heading", { exact: true, name: "Switch channel" })).toHaveCount(0)
+  await expect(page.getByRole("dialog", { name: "Sheppard command menu" })).toBeHidden()
   await expect(focused).toBeFocused()
 
   await page.keyboard.press("Control+k")
   await expect(page.locator("#channel-picker-input")).toBeFocused()
-  await page.keyboard.type("research")
-  await expect(page.getByRole("option", { name: "research" })).toHaveCount(1)
+  await page.locator("#channel-picker-input").fill("research")
+  await expect(page.getByRole("option", { name: /^#research/u })).toHaveCount(1)
   await page.keyboard.press("Enter")
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "research" })).toBeVisible()
 })
@@ -325,7 +326,7 @@ test("@guard keeps the message list unchanged while the picker owns arrow keys",
 test("@guard blocks page-scope actions on modal layers and keeps globals alive in the viewer", async ({ page }) => {
   const layers = [
     {
-      heading: "Switch channel",
+      heading: "Sheppard command menu",
       open: () => page.keyboard.press("Control+k"),
     },
     {
@@ -349,10 +350,10 @@ test("@guard blocks page-scope actions on modal layers and keeps globals alive i
     await layer.open()
     await expect(page.getByRole("heading", { exact: true, name: layer.heading })).toBeVisible()
     for (const key of PAGE_SCOPE_KEYS) await page.keyboard.press(key)
-    await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
+    await expect(page.locator("main h1")).toHaveText("ops")
     await expectFocusedMessage(page, 2)
     await page.keyboard.press("Escape")
-    await expect(page.getByRole("heading", { exact: true, name: layer.heading })).toHaveCount(0)
+    await expect(page.getByRole("heading", { exact: true, name: layer.heading })).toBeHidden()
     await expect(underlying).toBeFocused()
   }
 

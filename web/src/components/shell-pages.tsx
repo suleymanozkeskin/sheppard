@@ -4,6 +4,7 @@ import { Bot, Hash, MessageCircle, Paperclip, Plus, Search, SquareTerminal } fro
 import { NOT_CONNECTED_REASON } from "@/api/auto-identify"
 import type { AppController } from "@/hooks/use-app-controller"
 import { AgentDetailPage, AgentsDirectoryPage } from "@/components/agent-pages"
+import { CommandMenuTrigger } from "@/components/commands/command-menu"
 import { WorkspaceDetailPage, WorkspacesDirectoryPage } from "@/components/workspace-pages"
 import { Button } from "@/components/ui/button"
 import { ShellBackLink } from "@/components/shell-back-link"
@@ -246,7 +247,7 @@ function routePageContent({ controller, copy, creation, navigate, route }: { con
     case "agents":
       return <AgentsDirectoryPage controller={controller} navigate={navigate} />
     case "agent":
-      return <AgentDetailPage controller={controller} handle={route.handle} navigate={navigate} />
+      return <AgentDetailPage controller={controller} handle={route.handle} key={route.handle} navigate={navigate} view={route.view} />
     case "attachments": {
       const availableChannels = [
         ...(controller.channelState.status === "ready" ? controller.channelState.channels.map((channel) => channel.name) : []),
@@ -378,8 +379,8 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
           }}
         />
         <div className="min-w-0">
-          <h1 className="truncate text-base font-semibold">{copy.title}</h1>
-          {route.kind !== "workspaces" && route.kind !== "channels" && route.kind !== "staffing" && <p className="truncate text-xs text-muted-foreground">{copy.description}</p>}
+          <h1 className="truncate text-base font-semibold">{route.kind === "agent" ? "Agents" : copy.title}</h1>
+          {route.kind !== "agent" && route.kind !== "workspaces" && route.kind !== "channels" && route.kind !== "staffing" && <p className="truncate text-xs text-muted-foreground">{copy.description}</p>}
         </div>
         {createRoute !== undefined && createLabel !== undefined && (
           <div className="ml-auto flex shrink-0 items-center gap-2" data-page-header-actions>
@@ -390,8 +391,9 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
             </Button>
           </div>
         )}
+        <div className={createRoute === undefined ? "ml-auto" : ""}><CommandMenuTrigger compact onOpen={() => controller.setChannelPickerOpen(true)} /></div>
       </header>
-      <section className="min-h-0 flex-1 overflow-y-auto" data-page-content={route.kind}>
+      <section className={route.kind === "agent" ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-y-auto"} data-page-content={route.kind}>
         {routePageContent({ controller, copy, creation, navigate, route })}
       </section>
     </main>

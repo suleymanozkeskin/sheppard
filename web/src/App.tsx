@@ -46,7 +46,8 @@ import type { StoredIdentity } from "@/api/identity"
 import { useLiveMessages } from "@/hooks/use-live-messages"
 import { useKeyboardLayer } from "@/hooks/use-keyboard-dispatcher"
 import { useSettledRouteStates, type RouteObservation } from "@/hooks/use-settled-route-state"
-import { quickSwitcherEntries, quickSwitcherMatches, type QuickSwitcherEntry } from "@/quick-switcher"
+import { CommandMenu, CommandMenuTrigger } from "@/components/commands/command-menu"
+import { CommandDraftProvider } from "@/components/commands/draft-provider"
 import { shellRoutePath, useShellRouter, type ShellRoute, type ShellRouter } from "@/shell-routing"
 import { isThemeMode, type ResolvedTheme, type ThemeMode } from "@/theme"
 import {
@@ -137,19 +138,23 @@ function App() {
 
 function WorkspaceLayout({ controller, router }: { controller: AppController; router: ShellRouter }) {
   return (
-    <div className="relative flex h-screen overflow-hidden bg-muted/30 text-foreground">
-      {controller.sidebarHidden ? (
-        <aside aria-label="Collapsed sidebar" className="hidden h-full w-10 shrink-0 flex-col items-center border-r bg-sidebar py-2 md:flex" data-sidebar-collapsed="true">
-          <Button aria-label="Show sidebar" onClick={controller.toggleSidebar} size="icon-sm" title="Show sidebar (⌘B)" type="button" variant="ghost">
-            <PanelLeftOpen aria-hidden="true" />
-          </Button>
-        </aside>
-      ) : (
-        <WorkspaceSidebar controller={controller} router={router} />
-      )}
-      <WorkspaceMain controller={controller} router={router} />
-      <WorkspaceOverlays controller={controller} router={router} />
-    </div>
+    <CommandDraftProvider>
+      <div className="relative flex h-screen overflow-hidden bg-muted/30 text-foreground">
+        {controller.sidebarHidden ? (
+          <aside aria-label="Collapsed sidebar" className="hidden h-full w-10 shrink-0 flex-col items-center border-r bg-sidebar py-2 md:flex" data-sidebar-collapsed="true">
+            <Button aria-label="Show sidebar" onClick={controller.toggleSidebar} size="icon-sm" title="Show sidebar (⌘B)" type="button" variant="ghost">
+              <PanelLeftOpen aria-hidden="true" />
+            </Button>
+            <CommandMenuTrigger compact onOpen={() => controller.setChannelPickerOpen(true)} />
+          </aside>
+        ) : (
+          <WorkspaceSidebar controller={controller} router={router} />
+        )}
+        <WorkspaceMain controller={controller} router={router} />
+        <CommandMenu controller={controller} router={router} />
+        <WorkspaceOverlays controller={controller} />
+      </div>
+    </CommandDraftProvider>
   )
 }
 
@@ -265,6 +270,7 @@ function SidebarFrame({ activeSection, children, controller, directManager = fal
           </Button>
         </div>
       </div>
+      <CommandMenuTrigger onOpen={() => controller.setChannelPickerOpen(true)} />
       <nav aria-label="Primary navigation" className="flex h-8 shrink-0 items-center justify-around gap-1 border-b px-3" data-quick-nav>
         {SIDEBAR_QUICK_NAV_ITEMS.map((item) => <SidebarPrimaryLink {...item} active={activeSection === item.route} key={item.route} router={router} />)}
       </nav>
@@ -1214,6 +1220,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
       <main className="flex min-h-0 min-w-0 flex-1 flex-col" data-shell-page={router.route.kind === "direct" ? "direct" : "current"} data-shell-route={shellRoutePath(router.route)}>
         <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur">
           <ShellBackLink destination={currentParent} label={transcriptParentLabel(currentParent)} navigate={router.navigate} />
+          <span className="md:hidden"><CommandMenuTrigger compact onOpen={() => controller.setChannelPickerOpen(true)} /></span>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             {activeWorkspace !== undefined ? (
               <SquareTerminal className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -1832,14 +1839,13 @@ function WorkspacePanel({ api, fallbackApi, identity, onBroadcast, onOpenAttachm
   )
 }
 
-function WorkspaceOverlays({ controller, router }: { controller: AppController; router: ShellRouter }) {
+function WorkspaceOverlays({ controller }: { controller: AppController }) {
   const {
     bindings,
     channelDeleteConfirm,
     channelDeleteName,
     channelDeleteOpen,
     channelDeleteState,
-    channelPickerOpen,
     channelState,
     clearStorageNotice,
     directConversations,
@@ -1859,7 +1865,6 @@ function WorkspaceOverlays({ controller, router }: { controller: AppController; 
     membersPanelMembers,
     membersPanelError,
     participantsState,
-    participants,
     saveKeyboardBindings,
     saveThemePreference,
     selectedChannel,
@@ -1871,11 +1876,8 @@ function WorkspaceOverlays({ controller, router }: { controller: AppController; 
     workspaceCloseState,
     handleWorkspaceBroadcastSubmit,
     handleWorkspaceCloseSubmit,
-    selectChannel,
-    setChannelPickerOpen,
     setChannelDeleteConfirm,
     setChannelDeleteOpen,
-    setFocusedMessageId,
     setHelpOpen,
     setInboxOpen,
     setMemberHandle,
@@ -1913,41 +1915,6 @@ function WorkspaceOverlays({ controller, router }: { controller: AppController; 
   )
   const workspaceCloseWorkspace = controller.workspaceData.workspaces.find((workspace) => workspace.id === controller.workspaceCloseId)
   const workspaceBroadcastWorkspace = controller.workspaceData.workspaces.find((workspace) => workspace.id === controller.workspaceBroadcastId)
-  const switcherEntries = useMemo(
-    () => quickSwitcherEntries({
-      channels: channelState.status === "ready" ? channelState.channels : [],
-      directConversations,
-      participants,
-      workspaces: controller.workspaceData.settledWorkspaces,
-    }),
-    [channelState, controller.workspaceData.settledWorkspaces, directConversations, participants],
-  )
-  const selectSwitcherEntry = useCallback((entry: QuickSwitcherEntry) => {
-    switch (entry.kind) {
-      case "chat":
-        selectChannel(entry.name, "chat")
-        setFocusedMessageId(undefined)
-        router.navigate({ channel: entry.name, kind: "channel" })
-        break
-      case "direct":
-        selectChannel(entry.name, "direct")
-        setFocusedMessageId(undefined)
-        router.navigate({ channel: entry.name, kind: "conversation" })
-        break
-      case "agent":
-        router.navigate({ handle: entry.name, kind: "agent" })
-        break
-      case "workspace":
-        router.navigate({ kind: "workspace", workspaceId: entry.name })
-        break
-      case "page":
-        router.navigate(entry.name === "search"
-          ? { kind: "search", query: "", scope: "all" }
-          : { attachmentKind: "all", kind: "attachments", scope: "all" })
-        break
-    }
-    setChannelPickerOpen(false)
-  }, [router, selectChannel, setFocusedMessageId, setChannelPickerOpen])
   return (
     <div>
 
@@ -2000,15 +1967,6 @@ function WorkspaceOverlays({ controller, router }: { controller: AppController; 
       )}
 
       <LifecycleOverlays controller={controller} />
-
-      {channelPickerOpen && (
-        <ChannelPicker
-          entries={switcherEntries}
-          onClose={() => setChannelPickerOpen(false)}
-          onSelect={selectSwitcherEntry}
-          selectedChannel={selectedChannel}
-        />
-      )}
 
       {membersOpen && (
         <MembersPanel
@@ -2574,89 +2532,6 @@ function broadcastRecipientSummary(workspaceLabel: string, recipients: Workspace
   return `${recipients.active.length} of ${recipients.all.length} chat routes are active. Inactive routes: ${recipients.stale.join(", ")}.`
 }
 
-interface ChannelPickerProps {
-  entries: QuickSwitcherEntry[]
-  onClose: () => void
-  onSelect: (entry: QuickSwitcherEntry) => void
-  selectedChannel: string | undefined
-}
-
-function ChannelPicker({ entries, onClose, onSelect, selectedChannel }: ChannelPickerProps) {
-  const [query, setQuery] = useState("")
-  const [activeIndex, setActiveIndex] = useState(0)
-  const matches = quickSwitcherMatches(entries, query)
-  const activeMatch = matches[activeIndex] ?? matches[0]
-  const handleLayerKeyDown = useCallback((event: KeyEventLike): boolean => {
-    if (event.key === "ArrowDown") {
-      if (matches.length > 0) setActiveIndex((current) => (current + 1) % matches.length)
-      return true
-    }
-    if (event.key === "ArrowUp") {
-      if (matches.length > 0) setActiveIndex((current) => (current - 1 + matches.length) % matches.length)
-      return true
-    }
-    if (event.key === "Enter") {
-      if (activeMatch !== undefined) onSelect(activeMatch)
-      return true
-    }
-    return false
-  }, [activeMatch, matches.length, onSelect])
-
-  return (
-    <KeyboardOverlay
-      className="max-w-md"
-      dataDialog="channel-picker"
-      labelledBy="channel-picker-title"
-      onClose={onClose}
-      onLayerKeyDown={handleLayerKeyDown}
-      scope="picker"
-    >
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold" id="channel-picker-title">Switch channel</h2>
-        <Button aria-label="Close channel picker" onClick={onClose} size="icon-xs" type="button" variant="ghost">
-          <X aria-hidden="true" />
-        </Button>
-      </div>
-      <label className="sr-only" htmlFor="channel-picker-input">Filter channels</label>
-      <input
-        data-autofocus
-        className="mt-4 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
-        id="channel-picker-input"
-        onChange={(event) => {
-          setQuery(event.target.value)
-          setActiveIndex(0)
-        }}
-        placeholder="Type a channel name"
-        value={query}
-      />
-      <ul aria-label="Matching channels" className="mt-3 max-h-64 overflow-y-auto" role="listbox">
-        {matches.map((entry, index) => (
-          <li data-picker-group={entry.kind} data-quick-switch-kind={entry.kind} key={entry.id}>
-            <button
-              aria-selected={index === activeIndex}
-              aria-current={entry.name === selectedChannel ? "true" : undefined}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted aria-[current=true]:bg-muted aria-[current=true]:font-medium data-[active=true]:bg-muted"
-              data-active={index === activeIndex ? "true" : undefined}
-              onClick={() => onSelect(entry)}
-              role="option"
-              type="button"
-            >
-              {entry.kind === "chat" && <Hash aria-hidden="true" className="size-4 text-muted-foreground" data-picker-glyph="hash" />}
-              {entry.kind === "direct" && <MessageCircle aria-hidden="true" className="size-4 text-muted-foreground" data-picker-glyph="message-circle" />}
-              {entry.kind === "agent" && <Bot aria-hidden="true" className="size-4 text-muted-foreground" data-picker-glyph="bot" />}
-              {entry.kind === "workspace" && <SquareTerminal aria-hidden="true" className="size-4 text-muted-foreground" data-picker-glyph="square-terminal" />}
-              {entry.kind === "page" && (entry.name === "search"
-                ? <Search aria-hidden="true" className="size-4 text-muted-foreground" data-picker-glyph="search" />
-                : <Paperclip aria-hidden="true" className="size-4 text-muted-foreground" data-picker-glyph="paperclip" />)}
-              {entry.label}
-            </button>
-          </li>
-        ))}
-        {matches.length === 0 && <li className="px-3 py-2 text-sm text-muted-foreground">No matching channels.</li>}
-      </ul>
-    </KeyboardOverlay>
-  )
-}
 
 interface MembersPanelProps {
   candidates: Participant[]

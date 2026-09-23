@@ -528,7 +528,7 @@ test("@guard quick switcher finds each kind and routes Enter to its subject", as
   const picker = page.locator('[data-dialog="channel-picker"]')
   await expect(picker).toBeVisible()
   const glyphs = await Promise.all(["chat", "direct", "agent", "workspace"].map(async (kind) =>
-    picker.locator(`[data-picker-group="${kind}"] [data-picker-glyph]`).first().getAttribute("data-picker-glyph"),
+    picker.locator(`[data-picker-group="${kind}"] [data-command-glyph]`).first().getAttribute("data-command-glyph"),
   ))
   expect(new Set(glyphs).size).toBe(4)
 

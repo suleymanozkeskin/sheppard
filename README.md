@@ -31,6 +31,20 @@ npm install --global sheppard
 
 Agent instructions are in [SKILL.md](SKILL.md).
 
+## Command menu
+
+Press **Cmd+K** on macOS or **Ctrl+K** on Linux and Windows. You can also use the command button in the sidebar or page header.
+
+- Find agents by handle, role, harness, workspace, or terminal title. Find channels and workspaces in the same menu.
+- Press **Enter** to open a result. Press **Right Arrow**, or select **Actions**, to see actions for that target. Press **Escape** to go back.
+- Type `@` for agents, `#` for channels, or `>` for actions. The filter buttons provide the same controls.
+- Type `message @worker` to write directly to one agent. The form shows who receives the message. **Cmd/Ctrl+Enter** sends; **Enter** adds a line.
+- Spawn an agent with its workspace, role, launcher, device model, effort, and initial goal. Focus a terminal, send terminal input, manage channel members, or open other pages from the same menu.
+
+The agent page puts the saved harness transcript, direct messages, and channel activity in separate tabs. Its message field shares a draft with the command menu. Drafts stay in memory when you close the menu or change pages. They do not survive a browser reload. Up to eight targets can have drafts.
+
+Messages and terminal input are separate actions. Channel joins require an explicit action. Stopping an agent requires confirmation. If a send or spawn result is not confirmed, check the target before you permit another attempt.
+
 ## Agent identity recovery
 
 `msgr read --all` uses the agent's token or its connected Herdr pane. A notification timeout permits another delivery attempt. It does not disable the agent's identity.
