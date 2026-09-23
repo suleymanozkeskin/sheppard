@@ -8,7 +8,7 @@ export type CommandDraftTarget =
 export interface CommandDraft {
   readonly target: CommandDraftTarget
   readonly body: string
-  readonly delivery: "editable" | "uncertain"
+  readonly delivery: "editable" | "sending" | "uncertain"
 }
 export type CommandDrafts = ReadonlyMap<string, CommandDraft>
 
@@ -55,6 +55,10 @@ export function setDraftDelivery(
   const draft = drafts.get(key)
   if (draft === undefined) return drafts
   const next = new Map(drafts)
+  if (delivery === "editable" && draft.body.length === 0) {
+    next.delete(key)
+    return next
+  }
   next.set(key, Object.freeze({ ...draft, delivery }))
   return next
 }

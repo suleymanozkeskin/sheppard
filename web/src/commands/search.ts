@@ -15,7 +15,12 @@ export interface CommandQuery {
 
 /** Parses user input once. Invalid input has no effects; shorten it to retry. */
 export function parseCommandQuery(input: string, filter: CommandFilter): Result<CommandQuery, CommandQueryTooLong> {
-  if (input.length > COMMAND_QUERY_LIMIT) return Result.err(new CommandQueryTooLong({ message: `Search is limited to ${COMMAND_QUERY_LIMIT} characters. Shorten your search.` }))
+  if (input.length > COMMAND_QUERY_LIMIT)
+    return Result.err(
+      new CommandQueryTooLong({
+        message: `Search is limited to ${COMMAND_QUERY_LIMIT} characters. Shorten your search.`,
+      }),
+    )
   const normalized = input.trim().toLocaleLowerCase()
   const message = /^(?:message|msg|send to)(?:\s+|$)/u.exec(normalized)
   const intent = message === null ? "open" : "message"
@@ -23,7 +28,9 @@ export function parseCommandQuery(input: string, filter: CommandFilter): Result<
   const prefix = body[0]
   const selectedFilter = prefix === "@" ? "agent" : prefix === "#" ? "chat" : prefix === ">" ? "action" : filter
   const text = prefix === "@" || prefix === "#" || prefix === ">" ? body.slice(1).trim() : body
-  return Result.ok(Object.freeze({ text, filter: selectedFilter, intent, tokens: Object.freeze(text.split(/\s+/u).filter(Boolean)) }))
+  return Result.ok(
+    Object.freeze({ text, filter: selectedFilter, intent, tokens: Object.freeze(text.split(/\s+/u).filter(Boolean)) }),
+  )
 }
 
 type MatchRank = Readonly<{ kind: "match"; rank: number }> | Readonly<{ kind: "miss" }>
@@ -40,11 +47,16 @@ function rankEntry(entry: CommandEntry, query: CommandQuery): MatchRank {
 
 function matchesFilter(entry: CommandEntry, filter: CommandFilter): boolean {
   switch (filter) {
-    case "all": return true
-    case "agent": return entry.group === "agent"
-    case "chat": return entry.group === "chat"
-    case "workspace": return entry.group === "workspace"
-    case "action": return entry.group === "action" || entry.group === "page" || entry.group === "context"
+    case "all":
+      return true
+    case "agent":
+      return entry.group === "agent"
+    case "chat":
+      return entry.group === "chat"
+    case "workspace":
+      return entry.group === "workspace"
+    case "action":
+      return entry.group === "action" || entry.group === "page" || entry.group === "context"
   }
 }
 
@@ -58,11 +70,13 @@ export interface CommandMatches {
  * Results are a bounded view; remaining reports entries that require refinement.
  */
 export function matchCommands(entries: readonly CommandEntry[], query: CommandQuery): CommandMatches {
-  const ranked = entries.flatMap((entry, index) => {
-    if (!matchesFilter(entry, query.filter)) return []
-    const match = rankEntry(entry, query)
-    return match.kind === "miss" ? [] : [{ entry, rank: match.rank, index }]
-  }).toSorted((left, right) => left.rank - right.rank || left.index - right.index)
+  const ranked = entries
+    .flatMap((entry, index) => {
+      if (!matchesFilter(entry, query.filter)) return []
+      const match = rankEntry(entry, query)
+      return match.kind === "miss" ? [] : [{ entry, rank: match.rank, index }]
+    })
+    .toSorted((left, right) => left.rank - right.rank || left.index - right.index)
   return Object.freeze({
     entries: Object.freeze(ranked.slice(0, COMMAND_RESULT_LIMIT).map(({ entry }) => entry)),
     total: ranked.length,
@@ -73,7 +87,14 @@ export function matchCommands(entries: readonly CommandEntry[], query: CommandQu
 /** Single-recipient commands never reuse a group conversation. */
 export type AgentConversation = Readonly<{ kind: "existing"; channel: string }> | Readonly<{ kind: "not-started" }>
 
-export function directChannelForAgent(conversations: readonly { readonly channel: string; readonly participants: readonly string[] }[], handle: string): AgentConversation {
-  const conversation = conversations.find((candidate) => candidate.participants.length === 1 && candidate.participants[0] === handle)
-  return Object.freeze(conversation === undefined ? { kind: "not-started" } : { kind: "existing", channel: conversation.channel })
+export function directChannelForAgent(
+  conversations: readonly { readonly channel: string; readonly participants: readonly string[] }[],
+  handle: string,
+): AgentConversation {
+  const conversation = conversations.find(
+    (candidate) => candidate.participants.length === 1 && candidate.participants[0] === handle,
+  )
+  return Object.freeze(
+    conversation === undefined ? { kind: "not-started" } : { kind: "existing", channel: conversation.channel },
+  )
 }

@@ -9,8 +9,26 @@ export const COMMAND_MESSAGE_LIMIT = 65_536
 export const COMMAND_SOURCE_LIMIT = 5_000
 
 export type CommandFilter = "all" | "agent" | "chat" | "workspace" | "action"
-export type CommandGroup = "context" | "recent" | "draft" | "action" | "agent" | "chat" | "direct" | "workspace" | "page"
-export type CommandGlyph = "agent" | "channel" | "message" | "workspace" | "spawn" | "search" | "file" | "settings" | "role" | "terminal" | "focus" | "stop" | "connect" | "inbox" | "theme" | "keyboard" | "plus"
+export type CommandGroup =
+  "context" | "recent" | "draft" | "action" | "agent" | "chat" | "direct" | "workspace" | "page"
+export type CommandGlyph =
+  | "agent"
+  | "channel"
+  | "message"
+  | "workspace"
+  | "spawn"
+  | "search"
+  | "file"
+  | "settings"
+  | "role"
+  | "terminal"
+  | "focus"
+  | "stop"
+  | "connect"
+  | "inbox"
+  | "theme"
+  | "keyboard"
+  | "plus"
 
 export type MessageTarget =
   | Readonly<{ kind: "agent"; handle: string; routeState: RouteState }>
@@ -30,6 +48,7 @@ export type CommandAction =
   | Readonly<{ kind: "stop-agent"; handle: string }>
   | Readonly<{ kind: "connect"; pane: HerdrPaneView; label: string }>
   | Readonly<{ kind: "join-channel"; channel: string }>
+  | Readonly<{ kind: "members"; channel: string }>
   | Readonly<{ kind: "shell"; name: "inbox" | "settings" | "help" | "create-channel" | "create-workspace" }>
   | Readonly<{ kind: "theme"; mode: ThemeMode }>
 
@@ -60,8 +79,27 @@ export type AgentLocation =
 export const AVAILABLE: CommandAvailability = Object.freeze({ kind: "available" })
 
 /** Constructs an immutable display choice. It does not execute its action. */
-export function commandChoice(id: string, title: string, description: string, glyph: CommandGlyph, action: CommandAction, group: CommandGroup = "action", keywords = "", availability: CommandAvailability = AVAILABLE): CommandChoice {
-  return Object.freeze({ id, title, description, glyph, action, group, keywords, availability, mark: Object.freeze({ kind: "symbol" }) })
+export function commandChoice(
+  id: string,
+  title: string,
+  description: string,
+  glyph: CommandGlyph,
+  action: CommandAction,
+  group: CommandGroup = "action",
+  keywords = "",
+  availability: CommandAvailability = AVAILABLE,
+): CommandChoice {
+  return Object.freeze({
+    id,
+    title,
+    description,
+    glyph,
+    action,
+    group,
+    keywords,
+    availability,
+    mark: Object.freeze({ kind: "symbol" }),
+  })
 }
 
 export function commandEntry(choice: CommandChoice, alternatives: readonly CommandChoice[] = []): CommandEntry {
@@ -70,18 +108,26 @@ export function commandEntry(choice: CommandChoice, alternatives: readonly Comma
 
 export function messageTargetLabel(target: MessageTarget): string {
   switch (target.kind) {
-    case "agent": return target.handle
-    case "channel": return `#${target.channel}`
-    case "direct": return target.label
-    case "broadcast": return target.label
+    case "agent":
+      return target.handle
+    case "channel":
+      return `#${target.channel}`
+    case "direct":
+      return target.label
+    case "broadcast":
+      return target.label
   }
 }
 
 export function messageTargetKey(target: MessageTarget): string {
   switch (target.kind) {
-    case "agent": return `agent:${target.handle}`
-    case "channel": return `channel:${target.channel}`
-    case "direct": return `direct:${target.channel}`
-    case "broadcast": return `broadcast:${target.workspaceId}`
+    case "agent":
+      return `agent:${target.handle}`
+    case "channel":
+      return `channel:${target.channel}`
+    case "direct":
+      return `direct:${target.channel}`
+    case "broadcast":
+      return `broadcast:${target.workspaceId}`
   }
 }
