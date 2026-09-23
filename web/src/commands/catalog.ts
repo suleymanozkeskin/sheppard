@@ -62,9 +62,10 @@ function agentEntries(corpus: CommandCorpus): readonly CommandEntry[] {
   }
   return [...participants.values()].toSorted((a, b) => a.handle.localeCompare(b.handle)).map((participant) => {
     const location = agentLocation(corpus.workspaces, participant.handle)
-    return commandEntry(commandChoice(`agent:${participant.handle}`, participant.handle, agentDescription(participant, location), "agent", {
+    const choice = commandChoice(`agent:${participant.handle}`, participant.handle, agentDescription(participant, location), "agent", {
       kind: "navigate", route: { kind: "agent", handle: participant.handle },
-    }, "agent", "agent worker"), agentCommands(participant, location))
+    }, "agent", `agent worker ${location.kind === "running" ? location.pane.title ?? "" : ""}`)
+    return commandEntry({ ...choice, mark: { kind: "harness", agentKind: participant.agentKind } }, agentCommands(participant, location))
   })
 }
 

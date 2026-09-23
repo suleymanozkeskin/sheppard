@@ -1,4 +1,4 @@
-import type { HerdrPaneView, HerdrWorkspaceView, RouteState } from "@/api/types"
+import type { AgentKind, HerdrPaneView, HerdrWorkspaceView, RouteState } from "@/api/types"
 import type { ShellRoute } from "@/shell-routing"
 import type { ThemeMode } from "@/theme"
 
@@ -9,7 +9,7 @@ export const COMMAND_MESSAGE_LIMIT = 65_536
 export const COMMAND_SOURCE_LIMIT = 5_000
 
 export type CommandFilter = "all" | "agent" | "chat" | "workspace" | "action"
-export type CommandGroup = "context" | "recent" | "action" | "agent" | "chat" | "direct" | "workspace" | "page"
+export type CommandGroup = "context" | "recent" | "draft" | "action" | "agent" | "chat" | "direct" | "workspace" | "page"
 export type CommandGlyph = "agent" | "channel" | "message" | "workspace" | "spawn" | "search" | "file" | "settings" | "role" | "terminal" | "focus" | "stop" | "connect" | "inbox" | "theme" | "keyboard" | "plus"
 
 export type MessageTarget =
@@ -34,6 +34,7 @@ export type CommandAction =
   | Readonly<{ kind: "theme"; mode: ThemeMode }>
 
 export type CommandAvailability = Readonly<{ kind: "available" }> | Readonly<{ kind: "unavailable"; reason: string }>
+export type CommandMark = Readonly<{ kind: "symbol" }> | Readonly<{ kind: "harness"; agentKind: AgentKind | null }>
 
 export interface CommandChoice {
   readonly id: string
@@ -44,6 +45,7 @@ export interface CommandChoice {
   readonly glyph: CommandGlyph
   readonly action: CommandAction
   readonly availability: CommandAvailability
+  readonly mark: CommandMark
 }
 
 export interface CommandEntry extends CommandChoice {
@@ -59,7 +61,7 @@ export const AVAILABLE: CommandAvailability = Object.freeze({ kind: "available" 
 
 /** Constructs an immutable display choice. It does not execute its action. */
 export function commandChoice(id: string, title: string, description: string, glyph: CommandGlyph, action: CommandAction, group: CommandGroup = "action", keywords = "", availability: CommandAvailability = AVAILABLE): CommandChoice {
-  return Object.freeze({ id, title, description, glyph, action, group, keywords, availability })
+  return Object.freeze({ id, title, description, glyph, action, group, keywords, availability, mark: Object.freeze({ kind: "symbol" }) })
 }
 
 export function commandEntry(choice: CommandChoice, alternatives: readonly CommandChoice[] = []): CommandEntry {
