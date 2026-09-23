@@ -1611,6 +1611,102 @@ describe("herdr control plane", () => {
 });
 
 describe("connecting an existing agent pane", () => {
+  test("restores the operator's named stale identity without losing membership", async () => {
+    const hub = testHub();
+    hub.hub.herdr = hostingHerdr();
+    const operator = await operatorAuth(hub);
+    const store = hub.hub.store;
+    const first = store.createAgent("first").unwrap().participant;
+    const second = store.createAgent("second").unwrap().participant;
+    store.createChannel("work", null).unwrap();
+    store.join(first.id, "work").unwrap();
+    const route = { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "codex" };
+    store.bindRoute(first.id, route);
+    store.bindRoute(second.id, route);
+    store.markRouteStale(second.id);
+
+    const response = await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "first" }, operator);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ handle: "first", paneId: "w1:p1" });
+    expect(store.findById(first.id)?.routeState).toBe("active");
+    expect(store.findById(second.id)?.routeState).toBe("stale");
+    expect(store.inbox(first.id)[0]?.channel).toBe("work");
+    expect(store.findByHandle("first-2")).toBeNull();
+  });
+
+  test("refuses an unspecified identity when stale routes are ambiguous", async () => {
+    const hub = testHub();
+    hub.hub.herdr = hostingHerdr();
+    const operator = await operatorAuth(hub);
+    const store = hub.hub.store;
+    const first = store.createAgent("first").unwrap().participant;
+    const second = store.createAgent("second").unwrap().participant;
+    const route = { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "codex" };
+    store.bindRoute(first.id, route);
+    store.bindRoute(second.id, route);
+    store.markRouteStale(second.id);
+
+    const response = await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "third" }, operator);
+
+    expect(response.status).toBe(400);
+    expect(store.findById(first.id)?.routeState).toBe("stale");
+    expect(store.findById(second.id)?.routeState).toBe("stale");
+    expect(store.findByHandle("third")).toBeNull();
+  });
+
+  test("does not suffix an existing handle or move it from an active terminal", async () => {
+    const hub = testHub();
+    hub.hub.herdr = hostingHerdr();
+    const operator = await operatorAuth(hub);
+    const worker = hub.hub.store.createAgent("worker").unwrap().participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "other", paneId: "w1:p2", occupantAgent: "codex" });
+
+    const response = await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "worker" }, operator);
+
+    expect(response.status).toBe(400);
+    expect(hub.hub.store.findById(worker.id)?.terminalId).toBe("other");
+    expect(hub.hub.store.findByHandle("worker-2")).toBeNull();
+  });
+
+  test("refuses to displace the active owner with a named stale identity", async () => {
+    const hub = testHub();
+    hub.hub.herdr = hostingHerdr();
+    const operator = await operatorAuth(hub);
+    const store = hub.hub.store;
+    const first = store.createAgent("first").unwrap().participant;
+    const second = store.createAgent("second").unwrap().participant;
+    const route = { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "codex" };
+    store.bindRoute(first.id, route);
+    store.bindRoute(second.id, route);
+
+    const response = await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "first" }, operator);
+
+    expect(response.status).toBe(400);
+    expect(store.findById(first.id)?.routeState).toBe("stale");
+    expect(store.findById(second.id)?.routeState).toBe("active");
+  });
+
+  test("refuses an owner change during connection and removes the unused identity", async () => {
+    const hub = testHub();
+    const herdr = hostingHerdr();
+    hub.hub.herdr = herdr;
+    const operator = await operatorAuth(hub);
+    const store = hub.hub.store;
+    const owner = store.createAgent("owner").unwrap().participant;
+    herdr.afterList = () => {
+      if (herdr.listCalls === 2) {
+        store.bindRoute(owner.id, { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "codex" });
+      }
+    };
+
+    const response = await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "new-agent" }, operator);
+
+    expect(response.status).toBe(400);
+    expect(store.findById(owner.id)?.routeState).toBe("active");
+    expect(store.findByHandle("new-agent")?.deactivated).toBe(true);
+  });
+
   function hostingHerdr(agent: string | null = "codex"): FakeHerdr {
     const herdr = new FakeHerdr();
     herdr.workspaces = [{ id: "w1", label: "Backend" }];

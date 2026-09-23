@@ -7,7 +7,7 @@
  * reading the local files it attached.
  */
 
-import { Result } from "better-result";
+import { Result, panic } from "better-result";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -29,6 +29,7 @@ import { openDatabase } from "./db";
 import {
   HerdrCallFailed,
   type ChannelNotFound,
+  type HandleTaken,
   type NotAMember,
   type ValidationFailed,
   channelNotFound,
@@ -1750,6 +1751,53 @@ function herdrAgentIdentity(hub: Hub, paneId: string, headers: Headers): Respons
   return jsonResponse({ handle: participant?.handle ?? null }, 200, headers);
 }
 
+type ConnectedIdentity =
+  | Readonly<{ kind: "existing"; participant: Readonly<Participant> }>
+  | Readonly<{ kind: "created"; participant: Readonly<Participant> }>;
+
+/**
+ * Selects the operator's named identity or creates an unused handle.
+ * An explicit existing handle can restore a stale or unbound identity. Active
+ * owners cannot be displaced. Ambiguity requires an existing handle, not a guess.
+ * Failure changes nothing. Success can create one unbound identity; the caller
+ * must bind it or deactivate it when pane verification fails.
+ */
+function connectedIdentity(
+  store: Store,
+  pane: PaneInfo,
+  handle: string,
+): Result<ConnectedIdentity, HandleTaken | ValidationFailed> {
+  const requested = store.findByHandle(handle);
+  const owner = store.findActiveAgentByTerminal(pane.terminalId);
+  if (requested !== null) {
+    if (requested.deactivated || requested.kind !== "agent") {
+      return Result.err(validationFailed("handle", "does not name an available agent"));
+    }
+    if (owner !== null && owner.id !== requested.id) {
+      return Result.err(validationFailed("handle", "another active identity owns this terminal"));
+    }
+    if (requested.routeState === "active" && requested.terminalId !== null && requested.terminalId !== pane.terminalId) {
+      return Result.err(validationFailed("handle", "already belongs to another active terminal"));
+    }
+    return Result.ok(Object.freeze({ kind: "existing", participant: Object.freeze(requested) }));
+  }
+  const identity = store.identityForRoute({
+    terminalId: pane.terminalId, paneId: pane.paneId, occupantAgent: pane.agent,
+  });
+  switch (identity.kind) {
+    case "matched":
+      return Result.ok(Object.freeze({ kind: "existing", participant: identity.participant }));
+    case "missing":
+      return store.createAgent(handle, true).map(({ participant }) =>
+        Object.freeze({ kind: "created", participant: Object.freeze(participant) }));
+    case "ambiguous":
+    case "mismatch":
+      return Result.err(validationFailed("handle", "must name the existing agent to reconnect to this terminal"));
+    default:
+      return panic(`Unexpected pane identity: ${JSON.stringify(identity satisfies never)}`);
+  }
+}
+
 async function connectHerdrAgent(
   hub: Hub,
   paneId: string,
@@ -1773,25 +1821,22 @@ async function connectHerdrAgent(
     return errorResponse(validationFailed("paneId", "has no agent occupant"), headers);
   }
 
-  const routed = hub.store.participantRouteForTerminal(pane.terminalId);
-  const reusable = routed?.kind === "agent" && routed.occupantAgent === pane.agent ? routed : null;
-  const created = reusable === null ? hub.store.createAgent(requestedHandle.value) : null;
-  if (created?.isErr()) return errorResponse(created.error, headers);
-  const participant = reusable ?? created?.value.participant;
-  if (participant === undefined) {
-    return errorResponse(herdrCallFailed("agent identity was not created", "pane connect"), headers);
-  }
+  const identity = connectedIdentity(hub.store, pane, requestedHandle.value);
+  if (identity.isErr()) return errorResponse(identity.error, headers);
+  const { participant } = identity.value;
 
   const relisted = await herdr.value.paneList();
   const current = relisted.isOk()
     ? relisted.value.find((candidate) => candidate.paneId === validPaneId.value)
     : undefined;
+  const currentOwner = hub.store.findActiveAgentByTerminal(pane.terminalId);
   if (
     current === undefined ||
     current.terminalId !== pane.terminalId ||
-    current.agent !== pane.agent
+    current.agent !== pane.agent ||
+    (currentOwner !== null && currentOwner.id !== participant.id)
   ) {
-    if (created?.isOk()) hub.store.deactivateParticipant(created.value.participant.handle);
+    if (identity.value.kind === "created") void hub.store.deactivateParticipant(participant.handle);
     return errorResponse(validationFailed("paneId", "changed while connecting"), headers);
   }
 
@@ -1804,7 +1849,7 @@ async function connectHerdrAgent(
   publishMetadata(hub, "participants");
   return jsonResponse(
     { handle: participant.handle, paneId: current.paneId },
-    reusable === null ? 201 : 200,
+    identity.value.kind === "created" ? 201 : 200,
     headers,
   );
 }

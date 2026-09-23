@@ -174,7 +174,7 @@ describe("delivery", () => {
     );
   });
 
-  test("rolls back an unconfirmed ping and retries after route healing", async () => {
+  test("retries an unconfirmed ping without disabling the identity", async () => {
     let now = 0;
     const { store, herdr, notifier, alice, bob } = twoAgents("idle", { now: () => now });
     send(store, alice, "backend", "one");
@@ -190,11 +190,25 @@ describe("delivery", () => {
 
     now = DELIVERY_CONFIRMATION_WINDOW_MS;
     await notifier.tick();
-    expect(store.findByHandle("bob")?.routeState).toBe("stale");
-
-    store.bindRoute(bob, { terminalId: "term_bob", paneId: "w1:p1", occupantAgent: "claude" });
-    await notifier.tick();
+    expect(store.findById(bob)?.routeState).toBe("active");
     expect(herdr.prompts).toHaveLength(2);
+  });
+
+  test.each([-1, 0, 1])("accepts a read at deadline offset %i ms before the next tick", async (offsetMs) => {
+    let now = 0;
+    const { store, herdr, notifier, alice, bob } = twoAgents("idle", { now: () => now });
+    send(store, alice, "backend", "one");
+    await notifier.tick();
+
+    now = DELIVERY_CONFIRMATION_WINDOW_MS + offsetMs;
+    store.markSeen(bob);
+    expectOk(store.ack(bob, "backend", 1));
+    now = DELIVERY_CONFIRMATION_WINDOW_MS + 1;
+    await notifier.tick();
+
+    expect(store.findById(bob)?.routeState).toBe("active");
+    expect(store.inbox(bob)[0]?.unread).toBe(0);
+    expect(herdr.prompts).toHaveLength(1);
   });
 
   test("drops a late reader's duplicate after it acknowledges the backlog", async () => {
@@ -358,6 +372,21 @@ describe("holds", () => {
 });
 
 describe("the read that lands mid-tick", () => {
+  test("does not send a saved batch after the terminal changes identity", async () => {
+    const { store, herdr, notifier, alice, bob } = twoAgents();
+    send(store, alice, "backend", "one");
+    const replacement = expectOk(store.createAgent("replacement")).participant;
+    herdr.afterList = () => {
+      store.bindRoute(replacement.id, { terminalId: "term_bob", paneId: "w1:p1", occupantAgent: "claude" });
+    };
+
+    const outcome = await notifier.tick();
+
+    expect(outcome.delivered).toEqual([]);
+    expect(herdr.prompts).toEqual([]);
+    expect(store.inbox(bob)[0]?.unread).toBe(1);
+  });
+
   test("cancels a ping whose messages were read after the snapshot", async () => {
     const { store, herdr, notifier, alice, bob } = twoAgents();
     send(store, alice, "backend", "one");
@@ -484,6 +513,23 @@ describe("definitive failures", () => {
 });
 
 describe("stale route escalation", () => {
+  test("does not ask a replacement identity to repair the old route", async () => {
+    const { store, herdr, notifier, alice, bob } = twoAgents();
+    send(store, alice, "backend", "one");
+    const replacement = expectOk(store.createAgent("replacement")).participant;
+    store.bindRoute(replacement.id, {
+      terminalId: "term_bob", paneId: "w1:p1", occupantAgent: "claude",
+    });
+
+    await notifier.tick();
+    const second = await notifier.tick();
+
+    expect(second.escalated).toEqual([]);
+    expect(herdr.prompts).toEqual([]);
+    expect(store.findById(bob)?.routeState).toBe("stale");
+    expect(store.inbox(bob)[0]?.unread).toBe(1);
+  });
+
   test("prompts an idle stale route once after two held ticks", async () => {
     const { store, herdr, notifier, alice, bob } = twoAgents();
     send(store, alice, "backend", "one");

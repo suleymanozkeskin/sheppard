@@ -7,7 +7,7 @@
  * though the API listens with no password on the loopback interface.
  */
 
-import { Result } from "better-result";
+import { Result, panic } from "better-result";
 import {
   type ChannelExists,
   type ChannelNotDeletable,
@@ -262,8 +262,10 @@ export function routeFromHeaders(request: Request): Result<Route | null, Validat
 
 /**
  * Authenticates and, for a caller running inside a pane, re-binds its route.
- * Doing it on every authenticated request is what lets one ordinary command
- * repair delivery after a restart, a pane move, or a reboot.
+ * A token or the local control credential with an exact route identifies the
+ * caller. Pane recovery requires one identity and does not transfer membership
+ * or cursors. Failed authentication changes nothing; retry requires valid
+ * credentials and a matching route.
  */
 export function authenticate(
   request: Request,
@@ -281,17 +283,21 @@ export function authenticate(
     if (herdrSocketPath === null || request.headers.get(HERDR_SOCKET_HEADER) !== herdrSocketPath) {
       return Result.err(herdrSessionMismatch());
     }
-    const participant = store.findActiveAgentByTerminal(route.value.terminalId);
-    if (
-      participant === null ||
-      participant.paneId !== route.value.paneId ||
-      participant.occupantAgent === null ||
-      participant.occupantAgent !== route.value.occupantAgent
-    ) {
-      return Result.err(unauthorized());
+    const identity = store.identityForRoute(route.value);
+    switch (identity.kind) {
+      case "missing":
+      case "ambiguous":
+      case "mismatch":
+        return Result.err(unauthorized());
+      case "matched": {
+        store.bindRoute(identity.participant.id, route.value);
+        const rebound = store.findById(identity.participant.id);
+        if (rebound === null) panic("Authenticated pane identity disappeared during route binding");
+        return Result.ok(rebound);
+      }
+      default:
+        return panic(`Unexpected pane identity: ${JSON.stringify(identity satisfies never)}`);
     }
-    store.markSeen(participant.id);
-    return Result.ok(participant);
   }
 
   const participant = store.findByToken(token.value);

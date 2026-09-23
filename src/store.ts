@@ -69,6 +69,14 @@ import type {
   StoredAttachment,
 } from "./types";
 
+export type PaneIdentity =
+  | Readonly<{ kind: "matched"; participant: Readonly<Participant> }>
+  | Readonly<{ kind: "missing" }>
+  | Readonly<{ kind: "ambiguous" }>
+  | Readonly<{ kind: "mismatch" }>;
+
+const PANE_IDENTITY_CANDIDATE_LIMIT = 2;
+
 /**
  * Column types narrower than TEXT are sound because the schema CHECK
  * constraints admit no other value.
@@ -741,6 +749,36 @@ export class Store {
       )
       .get({ terminalId });
     return row === null ? null : toParticipant(row);
+  }
+
+  /**
+   * Reads the identity for an exact terminal, pane, and occupant tuple.
+   * An active owner takes precedence. With no active owner, exactly one stored
+   * route is required. Missing, ambiguous, and mismatched routes remain distinct.
+   * Reads at most two rows and changes no route, membership, or cursor.
+   */
+  identityForRoute(route: Route): PaneIdentity {
+    const rows = this.db.query<ParticipantRow, { terminalId: string; limit: number }>(
+      `SELECT * FROM participants AS candidate
+        WHERE terminal_id = $terminalId AND deactivated = 0
+          AND (route_state = 'active' OR NOT EXISTS (
+            SELECT 1 FROM participants AS owner
+             WHERE owner.terminal_id = $terminalId AND owner.deactivated = 0
+               AND owner.route_state = 'active'
+          ))
+        LIMIT $limit`,
+    ).all({ terminalId: route.terminalId, limit: PANE_IDENTITY_CANDIDATE_LIMIT });
+    if (rows.length === 0) return Object.freeze({ kind: "missing" });
+    if (rows.length > 1) return Object.freeze({ kind: "ambiguous" });
+    const row = rows[0];
+    if (row === undefined) panic("Pane identity query returned one row without a participant");
+    if (
+      row.kind !== "agent" || row.pane_id !== route.paneId ||
+      row.occupant_agent === null || row.occupant_agent !== route.occupantAgent
+    ) {
+      return Object.freeze({ kind: "mismatch" });
+    }
+    return Object.freeze({ kind: "matched", participant: Object.freeze(toParticipant(row)) });
   }
 
   /** Returns the public roster without tokens or internal participant ids. */

@@ -45,24 +45,30 @@ export class IdentityMissing extends TaggedError("IdentityMissing")<{
   message: string;
 }> {}
 
+/** No identity was established. Retry after pane or connection recovery; no command ran. */
+export class IdentityUnavailable extends TaggedError("IdentityUnavailable")<{
+  message: string;
+}> {}
+
 export class LocalControlMissing extends TaggedError("LocalControlMissing")<{
   message: string;
 }> {}
 
-export type ClientError = HubUnreachable | HubRefused | IdentityMissing | LocalControlMissing;
+export type ClientError = HubUnreachable | HubRefused | IdentityMissing | IdentityUnavailable | LocalControlMissing;
 
 export function identityMissing(boundHandle: string | null = null): IdentityMissing {
   if (boundHandle !== null) {
     const handle = escapeForTerminal(boundHandle);
     return new IdentityMissing({
       message:
-        `This pane is connected as "${handle}", but pane authentication is unavailable. ` +
-        "Start Sheppard inside Herdr and confirm that this pane uses the same Herdr socket.",
+        `The identity "${handle}" is unavailable. ` +
+        "Restore its token or reconnect its pane in Sheppard, then retry.",
     });
   }
   return new IdentityMissing({
     message:
-      "No identity. Provision a handle first, then launch with MSGR_TOKEN set:\n" +
+      "No identity is available. For an existing agent, restore its token or reconnect its pane in Sheppard.\n" +
+      "To create a new agent, provision a handle and launch with MSGR_TOKEN set:\n" +
       "  msgr provision <handle>\n" +
       "  msgr spawn <handle> -- <command...>",
   });
@@ -260,7 +266,7 @@ export interface HubClientOptions {
   /** Present only when the caller is inside a herdr pane. */
   route: Route | null;
   herdrSocketPath: string | null;
-  /** Bound handle discovered from the open pane identity read, if any. */
+  /** Optional display label. The hub verifies identity from credentials and route. */
   boundHandle?: string | null;
 }
 
@@ -283,14 +289,13 @@ export class HubClient {
 
   get hasIdentity(): boolean {
     return this.token !== null || (
-      this.boundHandle !== null &&
       this.localControlToken !== null &&
       this.route !== null &&
       this.herdrSocketPath !== null
     );
   }
 
-  private headers(authenticated: boolean): Result<Headers, IdentityMissing> {
+  private headers(authenticated: boolean): Result<Headers, IdentityMissing | IdentityUnavailable> {
     const headers = new Headers({ accept: "application/json" });
     if (!authenticated) return Result.ok(headers);
 
@@ -298,11 +303,17 @@ export class HubClient {
       headers.set(TOKEN_HEADER, this.token);
     } else {
       if (
-        this.boundHandle === null ||
         this.localControlToken === null ||
         this.route === null ||
         this.herdrSocketPath === null
       ) {
+        if (this.route !== null) {
+          return Result.err(new IdentityUnavailable({
+            message: `Cannot verify the identity for pane "${escapeForTerminal(this.route.paneId)}": ` +
+              "the local control credential or Herdr socket is unavailable. " +
+              "Restore the Sheppard connection and retry with the existing identity.",
+          }));
+        }
         return Result.err(identityMissing(this.boundHandle));
       }
       headers.set(CONTROL_TOKEN_HEADER, this.localControlToken);
@@ -354,7 +365,17 @@ export class HubClient {
     if (responded.isErr()) return responded;
 
     const response = responded.value;
-    if (!response.ok) return Result.err(refusalFrom(response.status, await response.text(), operation));
+    if (!response.ok) {
+      const failure = refusalFrom(response.status, await response.text(), operation);
+      if (response.status === 401 && headers.has(PANE_HEADER) && this.route !== null && headers.has(CONTROL_TOKEN_HEADER)) {
+        return Result.err(new IdentityUnavailable({
+          message: `Cannot verify the identity for pane "${escapeForTerminal(this.route.paneId)}": ` +
+            "the stored route does not identify one matching agent. " +
+            "Reconnect the existing agent in Sheppard, then retry.",
+        }));
+      }
+      return Result.err(failure);
+    }
 
     // `json()` is untyped at the boundary; the caller names the contracted shape.
     return Result.tryPromise({

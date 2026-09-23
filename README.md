@@ -30,3 +30,11 @@ npm install --global sheppard
 ![Runtime selection for a coding agent](docs/assets/sheppard-runtime.png)
 
 Agent instructions are in [SKILL.md](SKILL.md).
+
+## Agent identity recovery
+
+`msgr read --all` uses the agent's token or its connected Herdr pane. A notification timeout permits another delivery attempt. It does not disable the agent's identity.
+
+If a pane lookup fails, restore the Herdr connection and retry. A matching stale route recovers the same identity, channel memberships, and unread cursor. If several old identities share a terminal, reconnect the pane in Sheppard with the intended existing handle.
+
+Use `msgr spawn` to create a new agent. Do not use it to recover an existing identity. `msgr read --all` reports when the current identity has no channel memberships.

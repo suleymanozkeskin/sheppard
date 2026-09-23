@@ -99,6 +99,22 @@ function staleRouted(store: Store, handle: string): number {
 }
 
 describe("stale route reconciliation", () => {
+  test("does not choose between two stale identities on the same terminal", async () => {
+    const { herdr, store } = fixture();
+    const first = staleRouted(store, "first");
+    const second = store.createAgent("second").unwrap().participant;
+    store.bindRoute(second.id, { terminalId: "term-first", paneId: "w1:p1", occupantAgent: "claude" });
+    store.markRouteStale(second.id);
+    herdr.withPane({ paneId: "w1:p7", terminalId: "term-first", workspaceId: "w1", agent: "claude" });
+    const topology = new HerdrTopology({ herdr, store, onChange: () => undefined });
+
+    expect(await topology.refresh()).toBe(true);
+
+    expect(store.findById(first)?.routeState).toBe("stale");
+    expect(store.findById(second.id)?.routeState).toBe("stale");
+    expect(store.findActiveAgentByTerminal("term-first")).toBeNull();
+  });
+
   test("reactivates a stale route whose pane is live, without the participant acting", async () => {
     const { herdr, store } = fixture();
     staleRouted(store, "scout");

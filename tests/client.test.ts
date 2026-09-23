@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { HubClient, HubRefused } from "../src/client";
+import { HubClient, HubRefused, IdentityUnavailable } from "../src/client";
 
 const servers: Bun.Server[] = [];
 
@@ -64,6 +64,25 @@ describe("hub client failures", () => {
 });
 
 describe("pane-scoped hub client identity", () => {
+  test.each(["localControlToken", "herdrSocketPath"] as const)("reports unavailable identity when %s is absent", async (field) => {
+    const paneClient = new HubClient({
+      baseUrl: "http://127.0.0.1:1",
+      token: null,
+      localControlToken: "local-control",
+      route: { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "codex" },
+      herdrSocketPath: "/tmp/herdr.sock",
+      [field]: null,
+    });
+
+    const result = await paneClient.get("inbox", "/api/inbox", true);
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(IdentityUnavailable.is(result.error)).toBe(true);
+      expect(result.error.message).not.toContain("msgr provision");
+    }
+  });
+
   test("uses the local control credential with the exact Herdr route", async () => {
     let received: Headers | null = null;
     const server = Bun.serve({
@@ -115,6 +134,6 @@ describe("pane-scoped hub client identity", () => {
     expect(new HubClient({ ...options, localControlToken: null }).hasIdentity).toBe(false);
     expect(new HubClient({ ...options, route: null }).hasIdentity).toBe(false);
     expect(new HubClient({ ...options, herdrSocketPath: null }).hasIdentity).toBe(false);
-    expect(new HubClient({ ...options, boundHandle: null }).hasIdentity).toBe(false);
+    expect(new HubClient({ ...options, boundHandle: null }).hasIdentity).toBe(true);
   });
 });

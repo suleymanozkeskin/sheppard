@@ -248,20 +248,20 @@ export class HerdrTopology {
   }
 
   /**
-   * Returns routes marked stale whose panes are in fact live.
-   *
-   * Only the participant acting clears a stale mark, so a route marked by an
-   * earlier defect stays marked until that participant happens to send
-   * something — the fix stops new marks and leaves the written ones. This runs
-   * on a successful pane list only: an empty or failed list is absence of
-   * evidence, and reactivating on it would clear every mark at once.
+   * Restores a unique stale identity when its terminal has a matching occupant.
+   * Active owners and ambiguous stale identities prevent recovery. A pane move
+   * updates the public pane ID. Memberships, cursors, and last seen stay unchanged.
    */
   private reconcileStaleRoutes(panes: readonly PaneInfo[]): void {
     for (const route of this.store.staleRoutedParticipants()) {
-      if (route.terminalId === null) continue;
+      if (route.terminalId === null || route.paneId === null) continue;
       const pane = panes.find((candidate) => candidate.terminalId === route.terminalId);
       if (pane === undefined || occupantChanged(route.occupantAgent, pane.agent)) continue;
-      this.store.reactivateRoute(route.id, route.terminalId, pane.paneId);
+      const identity = this.store.identityForRoute({
+        terminalId: route.terminalId, paneId: route.paneId, occupantAgent: pane.agent,
+      });
+      if (identity.kind !== "matched" || identity.participant.id !== route.id) continue;
+      void this.store.reactivateRoute(route.id, route.terminalId, pane.paneId);
     }
   }
 

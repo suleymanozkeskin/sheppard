@@ -1,10 +1,9 @@
 /**
  * The `msgr` command.
  *
- * Identity comes from `MSGR_TOKEN` in the environment and nowhere else: not a
- * file on disk, not an argument, not a prompt. A spawner provisions a handle and
- * launches the agent with the token already in its process environment, so the
- * secret never appears in command text, shell history, or the pane shell.
+ * Identity comes from `MSGR_TOKEN` or the local control credential with an
+ * exact Herdr route. The hub resolves the participant on each authenticated
+ * request. Delivery state does not determine whether the CLI can authenticate.
  *
  * `read` prints before it acknowledges. If printing succeeds and the
  * acknowledgement is lost, the messages are shown again next time, which wastes a
@@ -12,7 +11,7 @@
  */
 
 import { Result } from "better-result";
-import { type ClientError, HubClient, HubRefused, identityMissing } from "./client";
+import { type ClientError, HubClient, HubRefused, IdentityUnavailable, identityMissing } from "./client";
 import {
   DEFAULT_PORT,
   HOST,
@@ -390,6 +389,7 @@ function jsonError(error: ClientError): string {
     HubRefused: (failure) =>
       JSON.stringify({ error: failure.detail ?? failure.message, code: failure.cause }),
     IdentityMissing: (failure) => JSON.stringify({ error: failure.message, code: "IdentityMissing" }),
+    IdentityUnavailable: (failure) => JSON.stringify({ error: failure.message, code: "IdentityUnavailable" }),
     LocalControlMissing: (failure) =>
       JSON.stringify({ error: failure.message, code: "LocalControlMissing" }),
   });
@@ -420,6 +420,7 @@ function report(context: Context, error: ClientError, values: FailureValues = {}
         value: valueFor(failure, values),
       }, "cli"),
     IdentityMissing: (failure) => ({ title: failure.message, action: undefined }),
+    IdentityUnavailable: (failure) => ({ title: failure.message, action: undefined }),
     LocalControlMissing: (failure) => ({ title: failure.message, action: undefined }),
   });
   context.deps.fail(message.title);
@@ -432,45 +433,19 @@ function emit(context: Context, lines: readonly string[]): number {
   return EXIT_OK;
 }
 
-/**
- * Resolves the pane the caller is in. A failure here is not fatal: the command
- * still runs, only without refreshing where delivery should go.
- */
-async function resolveRoute(herdr: HerdrPort | null): Promise<Route | null> {
-  if (herdr === null) return null;
+type CliRoute = Readonly<{ kind: "outside" }> | Readonly<{ kind: "pane"; route: Route }>;
+
+/** Reads the caller's pane without changing it. Lookup failure permits a retry, not a new identity. */
+async function resolveRoute(herdr: HerdrPort | null): Promise<Result<CliRoute, IdentityUnavailable>> {
+  if (herdr === null) return Result.ok(Object.freeze({ kind: "outside" }));
   const current = await herdr.paneCurrent();
-  return current.match({
-    ok: (pane) => ({
-      terminalId: pane.terminalId,
-      paneId: pane.paneId,
-      occupantAgent: pane.agent,
-    }),
-    err: () => null,
-  });
-}
-
-interface BoundAgentResponse {
-  handle: string | null;
-}
-
-async function resolveBoundHandle(baseUrl: string, route: Route | null): Promise<string | null> {
-  if (route === null) return null;
-  const bootstrap = new HubClient({
-    baseUrl,
-    token: null,
-    localControlToken: null,
-    route: null,
-    herdrSocketPath: null,
-  });
-  const identity = await bootstrap.get<BoundAgentResponse>(
-    "listParticipants",
-    `/api/herdr/agents/${encodeURIComponent(route.paneId)}`,
-    false,
-  );
-  return identity.match({
-    ok: (response) => response.handle,
-    err: () => null,
-  });
+  return current.map((pane): CliRoute => Object.freeze({
+    kind: "pane",
+    route: Object.freeze({ terminalId: pane.terminalId, paneId: pane.paneId, occupantAgent: pane.agent }),
+  })).mapError((failure) => new IdentityUnavailable({
+    message: `Cannot resolve the caller's pane: ${failure.message}. ` +
+      "Restore the Herdr connection and retry with the existing identity.",
+  }));
 }
 
 // ------------------------------------------------------------------- commands
@@ -795,7 +770,10 @@ async function commandRead(context: Context): Promise<number> {
 
     const waiting = inbox.value.entries.filter((entry) => entry.unread > 0);
     if (waiting.length === 0) {
-      return emit(context, context.json ? [jsonOf({ channels: [] })] : ["Nothing new anywhere."]);
+      const message = inbox.value.entries.length === 0
+        ? "No channels joined. Run: msgr join <channel>"
+        : "Nothing new anywhere.";
+      return emit(context, context.json ? [jsonOf({ channels: [] })] : [message]);
     }
 
     let status = EXIT_OK;
@@ -1362,8 +1340,13 @@ export async function runCli(deps: CliDeps): Promise<number> {
 
   const baseUrl = baseUrlFrom(deps.env);
   const token = deps.env.MSGR_TOKEN ?? null;
-  const route = await resolveRoute(deps.herdr);
-  const boundHandle = token === null ? await resolveBoundHandle(baseUrl, route) : null;
+  const resolvedRoute = await resolveRoute(deps.herdr);
+  if (resolvedRoute.isErr()) {
+    if (args.flags.has("json")) deps.write(jsonError(resolvedRoute.error));
+    else deps.fail(resolvedRoute.error.message);
+    return EXIT_FAILED;
+  }
+  const route = resolvedRoute.value.kind === "pane" ? resolvedRoute.value.route : null;
   const context: Context = {
     deps,
     args,
@@ -1373,7 +1356,7 @@ export async function runCli(deps: CliDeps): Promise<number> {
       localControlToken: deps.localControlToken,
       route,
       herdrSocketPath: deps.env.HERDR_SOCKET_PATH ?? null,
-      boundHandle,
+      boundHandle: deps.env.MSGR_HANDLE ?? null,
     }),
     json: args.flags.has("json"),
     readBatchResults: null,

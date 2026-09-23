@@ -282,6 +282,14 @@ export class Notifier {
         continue;
       }
 
+      const identity = this.store.identityForRoute({
+        terminalId: pane.terminalId, paneId: pane.paneId, occupantAgent: pane.agent,
+      });
+      if (identity.kind !== "matched" || identity.participant.id !== participantId) {
+        outcome.held.push({ handle: first.handle, reason: "stale-route" });
+        continue;
+      }
+
       const disposition = injectionDisposition(pane, this.focusedHold);
       if (disposition.kind === "hold") {
         outcome.held.push({ handle: first.handle, reason: disposition.reason });
@@ -355,6 +363,15 @@ export class Notifier {
       if (occupantChanged(first.occupantAgent, pane.agent)) {
         this.staleIdleTicks.delete(participantId);
         outcome.held.push({ handle: first.handle, reason: "occupant-changed" });
+        continue;
+      }
+
+      const identity = this.store.identityForRoute({
+        terminalId: pane.terminalId, paneId: pane.paneId, occupantAgent: pane.agent,
+      });
+      if (identity.kind !== "matched" || identity.participant.id !== participantId) {
+        this.staleIdleTicks.delete(participantId);
+        outcome.held.push({ handle: first.handle, reason: "stale-route" });
         continue;
       }
 
@@ -437,24 +454,23 @@ export class Notifier {
   /**
    * A prompt is only delivery-confirmed by a later authenticated request from
    * the same participant. Until then, the optimistic watermark suppresses
-   * duplicate ticks. Expiry rolls it back to the current read cursor and
-   * disables the route so a healed pane receives the unread batch again.
+   * duplicate ticks. Expiry makes unread messages eligible for another ping.
+   * It does not change route state or membership. A request confirms delivery
+   * even when the next tick runs after the deadline.
    */
   private resolveConfirmations(): void {
     const now = this.now();
     for (const [participantId, confirmation] of this.pendingConfirmations) {
       const seenAt = this.store.lastSeenAt(participantId);
-      if (now < confirmation.expiresAt) {
-        if (sawAuthenticatedRequest(confirmation.baselineSeenAt, seenAt)) {
-          this.pendingConfirmations.delete(participantId);
-        }
+      if (sawAuthenticatedRequest(confirmation.baselineSeenAt, seenAt)) {
+        this.pendingConfirmations.delete(participantId);
         continue;
       }
+      if (now < confirmation.expiresAt) continue;
 
       for (const row of confirmation.rows) {
         this.store.rollbackNotifiedToCursor(participantId, row.channelId);
       }
-      this.store.markRouteStale(participantId);
       this.pendingConfirmations.delete(participantId);
     }
   }
