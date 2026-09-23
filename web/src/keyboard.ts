@@ -15,7 +15,7 @@ export const ACTION_REGISTRY = [
   { id: "page.agents", label: "Open agents page", defaultCombo: "Alt+4", aliases: NO_ALIASES },
   { id: "channel.next", label: "Next channel", defaultCombo: "]", aliases: NO_ALIASES },
   { id: "channel.prev", label: "Previous channel", defaultCombo: "[", aliases: NO_ALIASES },
-  { id: "channel.picker", label: "Channel quick-switcher", defaultCombo: "Ctrl+K", aliases: NO_ALIASES },
+  { id: "channel.picker", label: "Open command menu", defaultCombo: "Ctrl+K", aliases: ["Meta+K"] },
   { id: "channel.members", label: "Show channel members", defaultCombo: "m", aliases: NO_ALIASES },
   { id: "menu.open", label: "Open focused row menu", defaultCombo: ".", aliases: NO_ALIASES },
   { id: "channel.create", label: "Create channel", defaultCombo: "n", aliases: NO_ALIASES },
