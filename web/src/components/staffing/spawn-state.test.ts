@@ -43,6 +43,14 @@ describe("spawn state", () => {
     expect(resolveSpawnDefaults({ catalogue: catalogue([{ ...defaultModel, efforts: [effort("medium", true)] }]), effort: "", launcherSelected: true, model: "", role })).toMatchObject({ effort: "medium", modelName: "opus" })
   })
 
+  it("does not replace an explicit model or effort after catalogue refresh", () => {
+    const removedModel = resolveSpawnDefaults({ catalogue: catalogue([defaultModel]), effort: "high", launcherSelected: true, model: "removed-model", role: undefined })
+    expect(removedModel.model).toBeUndefined()
+    const removedEffort = resolveSpawnDefaults({ catalogue: catalogue([defaultModel]), effort: "removed-effort", launcherSelected: true, model: "opus", role: undefined })
+    expect(removedEffort.effort).toBe("")
+    expect(removedEffort.modelName).toBe("opus")
+  })
+
   it("submits a model named default without a sentinel", () => {
     const selection = { ...createSpawnSelectionState("worker", "w1"), handle: "worker-w1", harness: "claude", launcher: "claude-main" }
     const model = { ...defaultModel, efforts: [], name: "default" }
