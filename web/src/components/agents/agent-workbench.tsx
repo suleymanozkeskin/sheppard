@@ -427,14 +427,16 @@ function AgentSessionReader({
   const follow = useRef(true)
   const anchor = useRef<SessionScrollAnchor>({ kind: "none" })
   const source = session.state.status === "ready" ? session.state.session : undefined
+  const readState = session.readState.kind
+  const refresh = session.refresh
   useEffect(() => {
-    if (source?.source.state !== "ready" || session.readState.kind !== "idle") return
+    if (source?.source.state !== "ready" || readState !== "idle") return
     const timer = window.setInterval(() => {
       if (follow.current && document.visibilityState === "visible" && scrollRef.current?.getClientRects().length)
-        session.refresh()
+        refresh()
     }, SESSION_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [source?.source.state, session.readState.kind, session.refresh])
+  }, [source?.source.state, readState, refresh])
   useLayoutEffect(() => {
     const element = scrollRef.current
     if (element === null || source === undefined) return
