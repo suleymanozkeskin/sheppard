@@ -328,15 +328,18 @@ export function recipientCatalog(entries: readonly CommandEntry[]): readonly Com
       )
         return []
       return [
-        commandEntry({
-          ...choice,
-          id: entry.id,
-          title: entry.title,
-          description: entry.description,
-          group: entry.group,
-          keywords: entry.keywords,
-          glyph: entry.glyph,
-        }),
+        commandEntry(
+          {
+            ...choice,
+            id: entry.id,
+            title: entry.title,
+            description: entry.description,
+            group: entry.group,
+            keywords: entry.keywords,
+            glyph: entry.glyph,
+          },
+          entry.alternatives,
+        ),
       ]
     }),
   )

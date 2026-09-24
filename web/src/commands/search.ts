@@ -14,7 +14,11 @@ export interface CommandQuery {
 }
 
 /** Parses user input once. Invalid input has no effects; shorten it to retry. */
-export function parseCommandQuery(input: string, filter: CommandFilter): Result<CommandQuery, CommandQueryTooLong> {
+export function parseCommandQuery(
+  input: string,
+  filter: CommandFilter,
+  mode: "commands" | "actions" = "commands",
+): Result<CommandQuery, CommandQueryTooLong> {
   if (input.length > COMMAND_QUERY_LIMIT)
     return Result.err(
       new CommandQueryTooLong({
@@ -22,6 +26,15 @@ export function parseCommandQuery(input: string, filter: CommandFilter): Result<
       }),
     )
   const normalized = input.trim().toLocaleLowerCase()
+  if (mode === "actions")
+    return Result.ok(
+      Object.freeze({
+        text: normalized,
+        filter: "all",
+        intent: "open",
+        tokens: Object.freeze(normalized.split(/\s+/u).filter(Boolean)),
+      }),
+    )
   const message = /^(?:message|msg|send to)(?:\s+|$)/u.exec(normalized)
   const intent = message === null ? "open" : "message"
   const body = message === null ? normalized : normalized.slice(message[0].length).trim()
