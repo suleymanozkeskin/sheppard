@@ -431,6 +431,7 @@ test("keyboard-only back works from child searches, chrome, and empty results", 
   await expect(search).toHaveValue("codex-reviewer")
   await page.keyboard.press("ArrowRight")
   await page.keyboard.type("no-such-action")
+  await expect(menu.getByRole("button", { name: "Back in command menu" })).toHaveText("Back Esc")
   await expect(menu.getByText("No matching items")).toBeVisible()
   await page.keyboard.press("ArrowLeft")
   await expect(search).toHaveValue("no-such-action")

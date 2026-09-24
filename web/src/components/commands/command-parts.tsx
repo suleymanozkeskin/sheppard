@@ -80,11 +80,11 @@ export function CommandIcon({ glyph }: { glyph: CommandGlyph }) {
 
 export function CommandBreadcrumb({
   path,
-  mode,
+  leftBack,
   onBack,
 }: {
   path: readonly string[]
-  mode: "list" | "form"
+  leftBack: boolean
   onBack: () => void
 }) {
   return (
@@ -98,7 +98,7 @@ export function CommandBreadcrumb({
         variant="ghost"
       >
         <ArrowLeft aria-hidden="true" />
-        Back <kbd>{mode === "list" ? COMMAND_LIST_BACK_HINT : COMMAND_BACK_HINT}</kbd>
+        Back <kbd>{leftBack ? COMMAND_LIST_BACK_HINT : COMMAND_BACK_HINT}</kbd>
       </Button>
       <span aria-label="Command path" aria-live="polite" className="command-path" title={path.join(" › ")}>
         {path.slice(1).join(" › ")}

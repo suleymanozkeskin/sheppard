@@ -340,6 +340,7 @@ export function CommandMenu({ controller, router }: { controller: AppController;
           screen={nav.screen}
           warnings={data.warnings}
           path={nav.path}
+          query={nav.position.query}
         />
         <div data-command-screen="active">{content}</div>
         {nav.spawnSetup.kind === "saved" && (
@@ -372,6 +373,7 @@ function CommandMenuChrome({
   screen,
   warnings,
   path,
+  query,
 }: {
   controller: AppController
   onBack: () => void
@@ -379,6 +381,7 @@ function CommandMenuChrome({
   screen: CommandScreen
   warnings: readonly string[]
   path: readonly string[]
+  query: string
 }) {
   return (
     <>
@@ -386,7 +389,7 @@ function CommandMenuChrome({
         <CommandBreadcrumb
           onBack={onBack}
           path={path}
-          mode={screen.kind === "actions" || screen.kind === "recipients" ? "list" : "form"}
+          leftBack={(screen.kind === "actions" || screen.kind === "recipients") && query.length === 0}
         />
       )}
       {warnings.length > 0 && (
