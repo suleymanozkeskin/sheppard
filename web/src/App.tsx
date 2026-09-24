@@ -450,7 +450,8 @@ function WorkspaceSidebarPanel({ controller, router }: { controller: AppControll
   useEffect(() => {
     const handleMenuRequest = (event: Event): void => {
       if (!isWorkspaceOrPaneMenuRequest(event) || event.detail.kind !== "workspace") return
-      const row = globalThis.document.querySelector<HTMLElement>(`[data-workspace-id="${CSS.escape(event.detail.workspaceId)}"]`)
+      const row = globalThis.document.querySelector<HTMLElement>(`[data-sidebar-family="workspaces"] [data-workspace-id="${CSS.escape(event.detail.workspaceId)}"]`)
+      if (row === null || !row.contains(globalThis.document.activeElement)) return
       const trigger = row?.querySelector<HTMLButtonElement>('[data-menu-trigger="workspace"]')
       if (trigger === null || trigger === undefined) return
       const rect = trigger.getBoundingClientRect()
@@ -580,7 +581,8 @@ function AgentSidebarPanel({ controller, router }: { controller: AppController; 
       const paneId = event.detail.paneId
       const entry = allAgents.find((candidate) => candidate.pane.paneId === paneId)
       if (entry === undefined) return
-      const row = globalThis.document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(entry.pane.paneId)}"]`)
+      const row = globalThis.document.querySelector<HTMLElement>(`[data-sidebar-family="agents"] [data-pane-id="${CSS.escape(entry.pane.paneId)}"]`)
+      if (row === null || !row.contains(globalThis.document.activeElement)) return
       const trigger = row?.querySelector<HTMLButtonElement>('[data-menu-trigger="pane"]')
       if (trigger === null || trigger === undefined) return
       const rect = trigger.getBoundingClientRect()

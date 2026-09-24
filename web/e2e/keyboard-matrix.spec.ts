@@ -298,7 +298,8 @@ async function focusChannelRow(page: Page, channel = "research") {
 
 async function focusWorkspaceRow(page: Page) {
   await page.locator('[data-quick-nav-item="workspaces"]').click()
-  const row = page.locator('[data-workspace-id="ws-alpha"]')
+  await expect(page.locator('[data-workspace-card="ws-alpha"]')).toBeVisible()
+  const row = page.locator('[data-sidebar-family="workspaces"] [data-workspace-id="ws-alpha"]')
   await expect(row).toBeVisible()
   const opener = row.locator("a")
   await opener.focus()
@@ -424,7 +425,7 @@ test("@guard workspace close is menu-only and Esc pops the dialog then menu", as
   await page.keyboard.press(".")
   const menu = page.getByRole("menu")
   await expect(menu).toBeVisible()
-  await expect(page.locator('[data-menu-trigger="workspace"]')).toBeVisible()
+  await expect(page.locator('[data-sidebar-family="workspaces"] [data-menu-trigger="workspace"]')).toBeVisible()
   await expect(menu).toHaveAttribute("data-menu", "workspace")
   const closeItem = menu.locator('[data-menu-item="close-workspace"]')
   await expect(closeItem).toBeVisible()
@@ -440,6 +441,28 @@ test("@guard workspace close is menu-only and Esc pops the dialog then menu", as
   await expect(dialog).toHaveCount(0)
   await expect(menu).toHaveCount(0)
   await expect(opener).toBeFocused()
+})
+
+test("@guard a context-menu key opens only the focused copy of a workspace or agent", async ({ page }) => {
+  await openApp(page)
+  await page.locator('[data-quick-nav-item="workspaces"]').click()
+  const card = page.locator('[data-workspace-card="ws-alpha"]')
+  await expect(card).toBeVisible()
+  const openers = [
+    page.locator('[data-sidebar-family="workspaces"] [data-workspace-id="ws-alpha"] a'),
+    card.locator('[data-workspace-open="ws-alpha"]'),
+    card.locator('[data-agent-open="pane-alpha"]'),
+  ]
+  for (const opener of openers) {
+    await opener.focus()
+    await expect(opener).toBeFocused()
+    await page.keyboard.press(".")
+    await expect(page.getByRole("menu")).toHaveCount(1)
+    await expect(page.getByRole("menu")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("menu")).toHaveCount(0)
+    await expect(opener).toBeFocused()
+  }
 })
 
 test("@guard agent stop is menu-only and restores pane focus after confirmation cancel", async ({ page }) => {
