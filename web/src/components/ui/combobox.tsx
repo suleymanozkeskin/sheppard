@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { Check, ChevronsUpDown, X } from "lucide-react"
 import { Combobox as BaseCombobox } from "@base-ui/react/combobox"
 
@@ -113,6 +113,8 @@ export function Combobox({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [inputValue, setInputValue] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+  const retryRef = useRef<HTMLButtonElement>(null)
   const allOptions = useMemo(
     () => showAllOption
       ? [{ label: allOptionLabel ?? "All", value: allOptionValue }, ...options]
@@ -157,6 +159,7 @@ export function Combobox({
       itemToStringLabel={(option) => option.label}
       itemToStringValue={(option) => option.value}
       items={allOptions}
+      open={open}
       onInputValueChange={(next) => { setInputValue(next); setQuery(next) }}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
@@ -199,6 +202,7 @@ export function Combobox({
             </span>
           )}
           <BaseCombobox.Input
+            ref={inputRef}
             autoComplete={autoComplete}
             aria-describedby={describedBy}
             aria-invalid={error !== undefined || errorMessage !== null ? true : undefined}
@@ -212,6 +216,13 @@ export function Combobox({
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) {
                 event.preventBaseUIHandler()
+                return
+              }
+              if (open && errorMessage !== null && event.key === "ArrowDown" && retryRef.current !== null) {
+                event.preventDefault()
+                event.stopPropagation()
+                event.preventBaseUIHandler()
+                retryRef.current.focus()
                 return
               }
               // Enter opens or selects. A missing highlight never submits the enclosing form.
@@ -265,7 +276,14 @@ export function Combobox({
             {!loading && errorMessage !== null && (
               <div className="flex flex-col gap-3 px-3 py-4 text-sm" role="alert">
                 <span className="text-destructive">{errorMessage}</span>
-                {onRetry !== undefined && <button className="min-h-11 self-start rounded-lg border px-3 py-2 text-sm font-medium outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" onClick={onRetry} type="button">{retryLabel}</button>}
+                {onRetry !== undefined && <button ref={retryRef} className="min-h-11 self-start rounded-lg border px-3 py-2 text-sm font-medium outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => { inputRef.current?.focus(); onRetry() }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "ArrowUp") return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    inputRef.current?.focus()
+                  }} type="button">{retryLabel}</button>}
               </div>
             )}
             {!loading && errorMessage === null && (

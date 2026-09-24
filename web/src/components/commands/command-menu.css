@@ -393,6 +393,45 @@
   padding: 24px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: 12px;
+}
+[data-command-form-field] {
+  min-width: 0;
+  scroll-margin-block: 6px;
+}
+[data-command-field-mode="browsing"] .command-field :is(input, textarea) {
+  caret-color: transparent;
+}
+.command-form-help {
+  padding: 10px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.command-form-help > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.command-form-columns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.command-form-help .command-form-edit-help,
+.command-form-help .command-form-picker-help,
+.command-form-help .command-form-action-help,
+[data-command-form-mode="editing"] .command-form-browse-help,
+.command-spawn:has([data-command-form-field] :is(button, a):focus) .command-form-browse-help,
+.command-spawn:has([data-combobox-open="true"]) .command-form-browse-help {
+  display: none;
+}
+[data-command-form-mode="editing"] .command-form-edit-help,
+.command-spawn:has([data-command-form-field] :is(button, a):focus) .command-form-action-help,
+.command-spawn:has([data-combobox-open="true"]) .command-form-picker-help {
+  display: flex;
 }
 .command-compose-heading {
   display: flex;
@@ -604,6 +643,9 @@
   overflow-wrap: anywhere;
 }
 @media (max-width: 600px) {
+  .command-form-columns {
+    display: none;
+  }
   .command-window {
     top: 16px;
     max-height: calc(100dvh - 32px);

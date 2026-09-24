@@ -853,6 +853,12 @@ function CommandWindow({
             )
             switch (intent) {
               case "native":
+              case "field-up":
+              case "field-down":
+              case "field-left":
+              case "field-right":
+              case "edit-field":
+              case "finish-field":
                 return
               case "back":
                 onBack()

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 import { LoaderCircle, UserPlus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -11,9 +11,10 @@ import type { AppController } from "@/hooks/use-app-controller"
 import { commandWriteFailure, type CommandFailure, type CommandSuccess } from "@/commands/execute"
 import { COMMAND_MESSAGE_LIMIT, type SpawnLocation } from "@/commands/types"
 import { shellRoutePath } from "@/shell-routing"
+import { CommandForm, CommandFormField, CommandFormHelp } from "./command-form"
 
 type SpawnSubmitState =
-  Readonly<{ kind: "idle" }> | Readonly<{ kind: "starting" }> | Readonly<{ kind: "failed"; failure: CommandFailure }>
+  Readonly<{ kind: "idle" }> | Readonly<{ kind: "checking" }> | Readonly<{ kind: "starting" }> | Readonly<{ kind: "failed"; failure: CommandFailure }>
 const AGENT_HANDLE_LIMIT = 64
 type WorkspaceChoice =
   Readonly<{ kind: "unchosen" }> | Readonly<{ kind: "chosen"; requestedId: string; selectedId: string }>
@@ -43,7 +44,7 @@ function useCommandSpawn({ controller, location, requestedLocation, onPending, o
       workspaceChoice.requestedId === requestedId &&
       workspaceChoice.selectedId === model.selectedWorkspaceId
     )
-  const disabled = state.kind === "starting" || uncertain || controller.identity === null
+  const disabled = state.kind === "checking" || state.kind === "starting" || uncertain || controller.identity === null
   const chooseWorkspace = (id: string | null) => {
     if (id === null) return
     setWorkspaceChoice({ kind: "chosen", requestedId, selectedId: id })
@@ -58,13 +59,16 @@ function useCommandSpawn({ controller, location, requestedLocation, onPending, o
       })
       return
     }
-    const built = model.buildRequest()
+    pending.current = true
+    onPending(true)
+    setState({ kind: "checking" })
+    const built = await model.prepareRequest()
     if (!built.ok) {
+      pending.current = false
+      onPending(false)
       setState({ kind: "failed", failure: { kind: "not-completed", message: built.message } })
       return
     }
-    pending.current = true
-    onPending(true)
     setState({ kind: "starting" })
     const result = await controller.api.spawnAgent(built.request)
     pending.current = false
@@ -88,8 +92,7 @@ export function CommandSpawn(props: CommandSpawnProps) {
   const editor = useCommandSpawn(props)
   const { model, disabled, chooseWorkspace, spawn } = editor
   return (
-    <form
-      className="command-spawn"
+    <CommandForm
       onSubmit={(event) => {
         event.preventDefault()
         void spawn()
@@ -110,8 +113,9 @@ export function CommandSpawn(props: CommandSpawnProps) {
         </fieldset>
         <SpawnFeedback controller={controller} editor={editor} />
       </div>
+      <CommandFormHelp />
       <SpawnFooter editor={editor} />
-    </form>
+    </CommandForm>
   )
 }
 
@@ -136,7 +140,7 @@ function SpawnIntroduction({ controller, editor }: { controller: AppController; 
             stays unchanged.
           </p>
           <div className="flex flex-wrap gap-2 mt-2">
-            <Button
+            <CommandFormField name="use-workspace"><Button
               disabled={disabled}
               onClick={() => chooseWorkspace(requestedId)}
               size="sm"
@@ -146,8 +150,8 @@ function SpawnIntroduction({ controller, editor }: { controller: AppController; 
               Use{" "}
               {controller.workspaceData.workspaces.find((workspace) => workspace.id === requestedId)?.label ??
                 requestedId}
-            </Button>
-            <Button
+            </Button></CommandFormField>
+            <CommandFormField name="keep-workspace"><Button
               disabled={disabled}
               onClick={() => chooseWorkspace(model.selectedWorkspaceId)}
               size="sm"
@@ -155,7 +159,7 @@ function SpawnIntroduction({ controller, editor }: { controller: AppController; 
               variant="outline"
             >
               Keep {model.selectedWorkspace?.label ?? model.selectedWorkspaceId}
-            </Button>
+            </Button></CommandFormField>
           </div>
         </div>
       )}
@@ -177,7 +181,7 @@ function SpawnAssignment({
 }: SpawnFieldsProps & { controller: AppController; chooseWorkspace: SpawnEditor["chooseWorkspace"] }) {
   return (
     <>
-      <Combobox
+      <CommandFormField name="workspace"><Combobox
         disabled={disabled}
         showAllOption={false}
         label="Workspace"
@@ -188,8 +192,8 @@ function SpawnAssignment({
         placeholder="Choose a workspace…"
         required
         value={model.selectedWorkspaceId || null}
-      />
-      <Combobox
+      /></CommandFormField>
+      <CommandFormField name="role"><Combobox
         showAllOption={false}
         label="Role"
         id="command-role"
@@ -200,7 +204,7 @@ function SpawnAssignment({
         placeholder="Choose a role…"
         required
         value={model.selection.roleName || null}
-      />
+      /></CommandFormField>
     </>
   )
 }
@@ -208,7 +212,7 @@ function SpawnAssignment({
 function SpawnRuntime({ model, disabled }: SpawnFieldsProps) {
   return (
     <>
-      <Combobox
+      <CommandFormField name="harness"><Combobox
         showAllOption={false}
         label="Harness"
         id="command-harness"
@@ -219,8 +223,8 @@ function SpawnRuntime({ model, disabled }: SpawnFieldsProps) {
         placeholder="Choose a harness…"
         required
         value={model.selection.harness || null}
-      />
-      <Combobox
+      /></CommandFormField>
+      <CommandFormField name="launcher"><Combobox
         showAllOption={false}
         label="Launcher"
         id="command-launcher"
@@ -231,7 +235,7 @@ function SpawnRuntime({ model, disabled }: SpawnFieldsProps) {
         placeholder="Choose a launcher…"
         required
         value={model.selection.launcher || null}
-      />
+      /></CommandFormField>
     </>
   )
 }
@@ -239,7 +243,7 @@ function SpawnRuntime({ model, disabled }: SpawnFieldsProps) {
 function SpawnModel({ model, disabled }: SpawnFieldsProps) {
   return (
     <>
-      <Combobox
+      <CommandFormField name="model"><Combobox
         showAllOption={false}
         errorMessage={model.modelPickerError}
         label="Model"
@@ -253,8 +257,8 @@ function SpawnModel({ model, disabled }: SpawnFieldsProps) {
         placeholder="Choose a device model…"
         required
         value={model.selectedModelName || null}
-      />
-      <Combobox
+      /></CommandFormField>
+      <CommandFormField name="effort"><Combobox
         showAllOption={false}
         disabled={disabled || model.effortUnavailable}
         label="Effort"
@@ -265,7 +269,7 @@ function SpawnModel({ model, disabled }: SpawnFieldsProps) {
         placeholder={model.effortUnavailable ? "Not used by this model" : "Choose effort…"}
         required={!model.effortUnavailable}
         value={model.effort || null}
-      />
+      /></CommandFormField>
     </>
   )
 }
@@ -273,7 +277,7 @@ function SpawnModel({ model, disabled }: SpawnFieldsProps) {
 function SpawnGoal({ model }: { model: SpawnEditor["model"] }) {
   return (
     <>
-      <label className="command-field">
+      <CommandFormField name="handle"><label className="command-field">
         Handle
         <input
           autoComplete="off"
@@ -283,10 +287,10 @@ function SpawnGoal({ model }: { model: SpawnEditor["model"] }) {
           spellCheck={false}
           value={model.resolvedHandle}
         />
-      </label>
+      </label></CommandFormField>
       <p className="command-role-summary">{model.selectedRole?.summary ?? "Select a role to see its job."}</p>
       {model.roleBriefing.status === "present" && (
-        <label className="command-field command-goal">
+        <CommandFormField name="goal" className="command-goal"><label className="command-field">
           Initial goal
           <textarea
             autoComplete="off"
@@ -297,7 +301,7 @@ function SpawnGoal({ model }: { model: SpawnEditor["model"] }) {
             rows={3}
             value={model.selection.goal}
           />
-        </label>
+        </label></CommandFormField>
       )}
       {model.roleBriefing.status === "empty" && (
         <p className="command-audience">This role has no initial briefing. Send the agent a message after it starts.</p>
@@ -318,17 +322,17 @@ function SpawnFeedback({ controller, editor }: { controller: AppController; edit
       )}
       {uncertain && (
         <div className="flex flex-wrap gap-2">
-          <a
+          <CommandFormField name="check-workspace"><a
             className={buttonVariants({ size: "sm", variant: "outline" })}
             href={shellRoutePath({ kind: "workspace", workspaceId: model.selectedWorkspaceId })}
             target="_blank"
             rel="noreferrer"
           >
             Check workspace in a new tab
-          </a>
-          <Button onClick={() => setState({ kind: "idle" })} size="sm" type="button" variant="outline">
+          </a></CommandFormField>
+          <CommandFormField name="retry-start"><Button onClick={() => setState({ kind: "idle" })} size="sm" type="button" variant="outline">
             I checked; allow another start
-          </Button>
+          </Button></CommandFormField>
         </div>
       )}
       {controller.identity === null && (
@@ -342,20 +346,28 @@ function SpawnFeedback({ controller, editor }: { controller: AppController; edit
 
 function SpawnFooter({ editor }: { editor: SpawnEditor }) {
   const { model, state, disabled, workspaceMismatch } = editor
+  const submitRef = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    if (state.kind !== "failed") return
+    const target = state.failure.kind === "outcome-unknown"
+      ? submitRef.current?.form?.querySelector<HTMLElement>('[data-command-form-field="check-workspace"] a')
+      : submitRef.current
+    target?.focus()
+  }, [state])
   return (
     <div className="command-spawn-submit">
       <span>
         Starts in{" "}
         <strong>{model.selectedWorkspace?.label ?? (model.selectedWorkspaceId || "your selected workspace")}</strong>
       </span>
-      <Button disabled={disabled || workspaceMismatch} type="submit">
-        {state.kind === "starting" ? (
+      <CommandFormField name="submit"><Button ref={submitRef} disabled={disabled || workspaceMismatch} type="submit">
+        {state.kind === "starting" || state.kind === "checking" ? (
           <LoaderCircle aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
         ) : (
           <UserPlus aria-hidden="true" />
         )}
-        {state.kind === "starting" ? "Starting agent…" : "Spawn agent"}
-      </Button>
+        {state.kind === "checking" ? "Checking models…" : state.kind === "starting" ? "Starting agent…" : "Spawn agent"}
+      </Button></CommandFormField>
     </div>
   )
 }

@@ -51,12 +51,16 @@ Navigation uses the same rules at each level:
 - **Up/Down** selects results. **Up** from the first result moves to Categories, even when the search has no matches. Search text stays in place. Action lists without categories wrap at either end.
 - **Escape** returns one level. **Left Arrow** or **Backspace** also returns from an empty child search. At the root, Escape closes the menu.
 - Back restores the parent search, category, and selected result. Message drafts and spawn settings stay available.
-- **Tab/Shift+Tab** moves between controls. Text fields keep their normal editing keys. In a select field, **Up/Down** moves through options and **Enter** selects; it does not submit the form.
-- An open select closes on the first Escape. The next Escape returns from the form.
+- In the spawn form, **Up/Down** moves between field rows. **Left/Right** moves between columns. Disabled fields are skipped. **Enter** opens a picker or starts text editing. Typing also starts editing.
+- In an open picker, **Up/Down** moves through options and **Enter** selects. **Escape** closes the picker and returns to field navigation. Text editing keeps normal caret, selection, and newline keys. **Escape** ends editing and keeps the value.
+- **Down** from the last field reaches **Spawn agent**. **Up** returns to the fields. **Enter** starts the agent only when the Spawn button has focus. **Tab/Shift+Tab** remains available.
+- From field navigation, **Escape** returns from the form. The footer shows the keys for the active control.
 - Closing a dialog opened from a command, such as channel members or settings, returns to that command. Opening a page ends the menu flow.
 - **Cmd/Ctrl+K** closes the whole command flow. Reopening resumes the menu level. Use the Back control to see the current return path and shortcut.
 
 Messages and terminal input are separate actions. Channel joins require an explicit action. Stopping an agent requires confirmation. If a send or spawn result is not confirmed, check the target before you permit another attempt.
+
+Before starting an agent, Sheppard checks the selected launcher's model catalogue. It refreshes an expired or near-expiry catalogue once. The selected model and effort must still exist. A failed check keeps the form values and sends no spawn request. It does not select a replacement model or effort.
 
 ## Agent identity recovery
 

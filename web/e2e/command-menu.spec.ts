@@ -676,14 +676,14 @@ test("keyboard-only spawn pickers close one level at a time and keep selected va
   await page.keyboard.press("Enter")
   const role = menu.getByRole("combobox", { name: "Role", exact: true })
   await tabTo(page, role)
-  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("Enter")
   await expect(role).toHaveAttribute("aria-expanded", "true")
   await page.keyboard.press("Escape")
   await expect(role).toHaveAttribute("aria-expanded", "false")
   await expect(menu.getByRole("heading", { name: "Spawn an agent" })).toBeVisible()
   await expect(role).toBeFocused()
   await page.keyboard.press("ArrowLeft")
-  await expect(role).toBeFocused()
+  await expect(menu.getByRole("combobox", { name: "Workspace", exact: true })).toBeFocused()
   await page.keyboard.press("Escape")
   await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
   await page.keyboard.press("Enter")
@@ -699,6 +699,8 @@ test("keyboard-only spawn pickers close one level at a time and keep selected va
   const goal = menu.getByRole("textbox", { name: "Initial goal" })
   await tabTo(page, goal)
   await page.keyboard.type("Review with keyboard control.")
+  await page.keyboard.press("Escape")
+  await expect(goal).toBeFocused()
   await page.keyboard.press("Escape")
   await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
   await page.keyboard.press("Enter")
@@ -739,6 +741,166 @@ test("keyboard-only select with no match cannot submit a spawn", async ({ page }
 
 const SPAWN_PICKER_NAMES = ["Workspace", "Role", "Harness", "Launcher", "Model", "Effort"] as const
 
+test("spawn arrow navigation selects fields and edits values without Tab", async ({ page }) => {
+  const writes = await installCommandFixtures(page)
+  await page.goto("/agents/codex-reviewer")
+  await page.keyboard.press("Meta+k")
+  const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+  await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
+  await page.keyboard.type("spawn")
+  await page.keyboard.press("Enter")
+  const picker = (name: string) => menu.getByRole("combobox", { name, exact: true })
+  await expect(picker("Workspace")).toBeFocused()
+  await expect(picker("Workspace")).toHaveAttribute("aria-expanded", "false")
+  await page.keyboard.press("ArrowRight")
+  await expect(picker("Role")).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(picker("Role")).toHaveAttribute("aria-expanded", "true")
+  await page.keyboard.press("ArrowDown")
+  await expect(picker("Role")).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(picker("Role")).toHaveAttribute("aria-expanded", "false")
+  await page.keyboard.press("ArrowDown")
+  await expect(picker("Launcher")).toBeFocused()
+  await page.keyboard.press("ArrowLeft")
+  await expect(picker("Harness")).toBeFocused()
+  await page.keyboard.press("ArrowDown")
+  await expect(picker("Model")).toBeFocused()
+  await page.keyboard.type("gpt-5.6-sol")
+  await page.keyboard.press("Enter")
+  await page.keyboard.press("ArrowRight")
+  await expect(picker("Effort")).toBeFocused()
+  await page.keyboard.press("ArrowDown")
+  const handle = menu.getByRole("textbox", { name: "Handle", exact: true })
+  await expect(handle).toBeFocused()
+  await page.keyboard.press("Enter")
+  await page.keyboard.press("Meta+a")
+  await page.keyboard.type("keyboard-worker")
+  await page.keyboard.press("ArrowLeft")
+  await expect(handle).toBeFocused()
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("ArrowDown")
+  const goal = menu.getByRole("textbox", { name: "Initial goal" })
+  await expect(goal).toBeFocused()
+  await page.keyboard.press("Enter")
+  await page.keyboard.type("Review the change.")
+  await page.keyboard.press("Enter")
+  await page.keyboard.type("Keep the draft.")
+  await page.keyboard.press("Escape")
+  await expect(goal).toHaveValue("Review the change.\nKeep the draft.")
+  await page.keyboard.press("ArrowDown")
+  await expect(menu.getByRole("button", { name: "Spawn agent", exact: true })).toBeFocused()
+  expect(writes).toEqual([])
+  await page.keyboard.press("ArrowUp")
+  await expect(goal).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
+})
+
+test("spawn arrows follow a narrow layout and skip an unavailable effort", async ({ page }) => {
+  const writes = await installCommandFixtures(page)
+  await page.route("**/api/herdr/model-catalogue", (route) => route.fulfill({ json: {
+    catalogues: mockModelCatalogue.catalogues.map((catalogue) => ({ ...catalogue, models: catalogue.models.map((model) => ({ ...model, efforts: [] })) })),
+  } }))
+  await page.setViewportSize({ width: 390, height: 560 })
+  await page.goto("/agents/codex-reviewer")
+  await page.keyboard.press("Meta+k")
+  const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+  await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
+  await page.keyboard.type("spawn")
+  await page.keyboard.press("Enter")
+  for (const name of SPAWN_PICKER_NAMES.slice(0, -1)) {
+    await expect(menu.getByRole("combobox", { name, exact: true })).toBeFocused()
+    await page.keyboard.press("ArrowDown")
+  }
+  const handle = menu.getByRole("textbox", { name: "Handle", exact: true })
+  await expect(handle).toBeFocused()
+  await expect(handle).toBeInViewport()
+  await expect(menu.getByRole("combobox", { name: "Effort", exact: true })).toBeDisabled()
+  await page.keyboard.press("ArrowUp")
+  await expect(menu.getByRole("combobox", { name: "Model", exact: true })).toBeFocused()
+  await page.screenshot({ path: "/private/tmp/sheppard-form-arrows-mobile.png" })
+  expect(writes).toEqual([])
+})
+
+for (const refresh of ["ready", "failed", "model-removed", "effort-removed"] as const) {
+  test(`spawn checks an expired catalogue before writing: ${refresh}`, async ({ page }) => {
+    const writes = await installCommandFixtures(page)
+    let reads = 0
+    const refreshes: string[] = []
+    await page.route("**/api/herdr/model-catalogue", async (route) => {
+      if (route.request().method() === "GET") {
+        reads += 1
+        await route.fulfill({ json: { catalogues: mockModelCatalogue.catalogues.map((catalogue) => ({ ...catalogue, status: reads > 1 ? "stale" : catalogue.status })) } })
+        return
+      }
+      refreshes.push(route.request().postData() ?? "")
+      if (refresh === "failed") {
+        await route.fulfill({ status: 503, json: { code: "Unavailable", error: "Model discovery failed" } })
+        return
+      }
+      await route.fulfill({ json: { catalogues: mockModelCatalogue.catalogues.map((catalogue) => ({
+        ...catalogue,
+        models: catalogue.models.map((model) => ({ ...model,
+          name: refresh === "model-removed" ? "replacement-model" : model.name,
+          efforts: refresh === "effort-removed" ? [{ name: "replacement-effort", default: true, description: null }] : model.efforts,
+        })),
+      })) } })
+    })
+    await page.goto("/agents/codex-reviewer")
+    await page.keyboard.press("Meta+k")
+    const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+    await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
+    await page.keyboard.type("spawn")
+    await page.keyboard.press("Enter")
+    await menu.getByRole("textbox", { name: "Initial goal" }).fill("Keep this exact goal.")
+    await menu.getByRole("button", { name: "Spawn agent", exact: true }).click()
+    await expect.poll(() => refreshes).toEqual([JSON.stringify({ launcher: "codex" })])
+    if (refresh === "ready") {
+      await expect(menu).toBeHidden()
+      expect(writes).toHaveLength(1)
+      expect(JSON.parse(writes[0]?.body ?? "{}")).toMatchObject({ model: "gpt-5.6-sol", goal: "Keep this exact goal." })
+      return
+    }
+    await expect(menu.getByRole("alert")).toContainText("No agent was started.")
+    await expect(menu.getByRole("button", { name: "Spawn agent", exact: true })).toBeFocused()
+    await expect(menu.getByRole("textbox", { name: "Initial goal" })).toHaveValue("Keep this exact goal.")
+    expect(writes).toEqual([])
+    expect(refreshes).toHaveLength(1)
+  })
+}
+
+test("model catalogue recovery is reachable with arrows and returns to its picker", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.route("**/api/herdr/model-catalogue", (route) => route.fulfill({ json: {
+    catalogues: mockModelCatalogue.catalogues.map((catalogue) => ({ ...catalogue, status: "unavailable", error: "Model discovery failed.", models: [] })),
+  } }))
+  await page.goto("/agents/codex-reviewer")
+  await page.keyboard.press("Meta+k")
+  const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+  await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
+  await page.keyboard.type("spawn")
+  await page.keyboard.press("Enter")
+  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("ArrowDown")
+  const model = menu.getByRole("combobox", { name: "Model", exact: true })
+  await expect(model).toBeFocused()
+  await page.keyboard.press("Enter")
+  const retry = page.getByRole("button", { name: "Retry", exact: true })
+  await expect(retry).toBeVisible()
+  await page.keyboard.press("ArrowDown")
+  await expect(retry).toBeFocused()
+  await page.keyboard.press("ArrowUp")
+  await expect(model).toBeFocused()
+  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("Enter")
+  await expect(model).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(model).toHaveAttribute("aria-expanded", "false")
+  await page.keyboard.press("ArrowUp")
+  await expect(menu.getByRole("combobox", { name: "Harness", exact: true })).toBeFocused()
+})
+
 for (const colorScheme of ["light", "dark"] as const) {
   for (const width of [1280, 390] as const) {
     test(`spawn focus follows the complete field in ${colorScheme} at ${width}px`, async ({ page }) => {
@@ -766,7 +928,7 @@ for (const colorScheme of ["light", "dark"] as const) {
         expect(await control.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThan(0)
         const trigger = control.getByRole("button", { name: `Open ${name} options` })
         await expect(trigger).toHaveAttribute("tabindex", "-1")
-        await page.keyboard.press("ArrowDown")
+        await page.keyboard.press("Enter")
         await expect(input).toHaveAttribute("aria-expanded", "true")
         await expect(control).toHaveCSS("outline-width", "2px")
         await page.screenshot({ path: `/private/tmp/sheppard-focus-${colorScheme}-${width}-${name.toLowerCase()}.png` })
