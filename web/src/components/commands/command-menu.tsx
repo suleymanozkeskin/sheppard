@@ -798,16 +798,28 @@ function CommandWindow({
   suspended: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const dialogActions = useRef<Dialog.Root.Actions | null>(null)
   const wasOpen = useRef(false)
   useLayoutEffect(() => {
     const changedLevel = open && wasOpen.current
+    const closed = !open && wasOpen.current
     wasOpen.current = open
+    if (closed) {
+      dialogActions.current?.unmount()
+      // Release retained fields after the focus trap is removed, before the next keyboard event.
+      queueMicrotask(() => {
+        if (wasOpen.current) return
+        const focused = panelRef.current?.ownerDocument.activeElement
+        if (focused instanceof HTMLElement && panelRef.current?.contains(focused)) focused.blur()
+      })
+    }
     if (changedLevel) panelRef.current?.querySelector<HTMLElement>(COMMAND_FOCUS_SELECTOR)?.focus()
     if (changedLevel && !panelRef.current?.contains(document.activeElement))
       panelRef.current?.querySelector<HTMLElement>("[data-command-back]")?.focus()
   }, [open, screen])
   return (
     <Dialog.Root
+      actionsRef={dialogActions}
       open={open}
       onOpenChange={(next, details) => {
         if (next) return
@@ -824,7 +836,13 @@ function CommandWindow({
           data-dialog="channel-picker"
           data-command-menu
           finalFocus={() => (open || suspended ? false : true)}
-          initialFocus={() => panelRef.current?.querySelector<HTMLElement>(COMMAND_FOCUS_SELECTOR) ?? true}
+          initialFocus={() => {
+            const input = panelRef.current?.querySelector<HTMLElement>(COMMAND_FOCUS_SELECTOR)
+            if (input === null || input === undefined) return true
+            // Focus after the dialog becomes active, before another key or animation frame.
+            input.focus({ preventScroll: true })
+            return false
+          }}
           ref={panelRef}
           onKeyDown={(event) => {
             if (!open || event.defaultPrevented) return

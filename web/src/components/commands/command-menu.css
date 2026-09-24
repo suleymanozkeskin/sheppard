@@ -43,7 +43,6 @@
   opacity: 0;
   translate: 0 -5px;
   pointer-events: none;
-  visibility: hidden;
 }
 .command-window > [data-command-screen="active"] {
   display: flex;

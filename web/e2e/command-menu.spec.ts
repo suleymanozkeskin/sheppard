@@ -597,6 +597,39 @@ test("keyboard-only fast opening keeps the first search character", async ({ pag
   )
 })
 
+test("keyboard-only immediate typing and Tab work during repeated open transitions", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.goto("/agents")
+  const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+  const search = menu.getByRole("combobox")
+  const openingChecks = 12
+  for (let attempt = 0; attempt < openingChecks; attempt += 1) {
+    await page.keyboard.press("Meta+k")
+    await page.keyboard.type("reviewer")
+    await expect(search).toHaveValue("reviewer")
+    await page.keyboard.press("ControlOrMeta+a")
+    await page.keyboard.press("Backspace")
+    await page.keyboard.press("Escape")
+    await page.keyboard.press("Control+k")
+    await page.keyboard.press("Tab")
+    await expect(menu.getByRole("button", { name: "All", exact: true })).toBeFocused()
+    await page.keyboard.press("Escape")
+  }
+})
+
+test("keyboard-only close returns page control without an animation delay", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.goto("/agents/codex-reviewer")
+  await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible()
+  await page.keyboard.press("Meta+k")
+  await page.keyboard.type("reviewer")
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("c")
+  await expect(page.getByRole("textbox", { name: "Direct message to codex-reviewer" })).toBeFocused()
+  await page.keyboard.press("Meta+k")
+  await expect(page.getByRole("dialog", { name: "Sheppard command menu" }).getByRole("combobox")).toHaveValue("reviewer")
+})
+
 test("keyboard-only channel actions return from members without losing the selected action", async ({ page }) => {
   const writes = await installCommandFixtures(page)
   await page.route("**/api/channels/ops/members", (route) =>
