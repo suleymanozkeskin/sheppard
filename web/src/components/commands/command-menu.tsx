@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
 import { browserCommandModifier } from "@/commands/keyboard"
 import { Dialog } from "@base-ui/react/dialog"
 import { Command, LoaderCircle, X } from "lucide-react"
@@ -6,6 +6,7 @@ import { Command, LoaderCircle, X } from "lucide-react"
 import type { AppController } from "@/hooks/use-app-controller"
 import type { WorkspaceLoadState } from "@/hooks/use-herdr-workspaces"
 import { useKeyboardLayer } from "@/hooks/use-keyboard-dispatcher"
+import { useCommandReturn, type CommandDialog } from "@/hooks/use-command-return"
 import type { ShellRoute, ShellRouter } from "@/shell-routing"
 import { Button } from "@/components/ui/button"
 import { commandCatalog, contextCommands } from "@/commands/catalog"
@@ -28,29 +29,28 @@ import {
   type CommandAction,
   type CommandChoice,
   type CommandEntry,
-  type MessageTarget,
   type SpawnLocation,
 } from "@/commands/types"
 import { CommandBreadcrumb, CommandNotice } from "./command-parts"
 import { CommandBrowser } from "./command-browser"
-import { INITIAL_BROWSER_POSITION, type CommandBrowserPosition } from "@/commands/browser-state"
+import { type CommandBrowserPosition } from "@/commands/browser-state"
+import {
+  commandScreenLabel,
+  enterCommand,
+  leaveCommand,
+  replaceCommand,
+  ROOT_NAVIGATION,
+  type CommandScreen,
+  type CommandChildScreen,
+} from "@/commands/navigation"
+import { commandFocus, commandKeyIntent, type CommandListKeyboard } from "@/commands/navigation-keys"
 import { CommandComposer } from "./command-composer"
 import { CommandSpawn } from "./command-spawn"
 import "./command-menu.css"
 
-type CommandScreen =
-  | Readonly<{ kind: "browse" }>
-  | Readonly<{ kind: "recipients" }>
-  | Readonly<{ kind: "actions"; id: string; title: string }>
-  | Readonly<{ kind: "compose"; target: MessageTarget }>
-  | Readonly<{ kind: "spawn"; location: SpawnLocation }>
-  | Readonly<{ kind: "prompt"; handle: string }>
-  | Readonly<{ kind: "join"; channel: string }>
-
 type OperationState =
   Readonly<{ kind: "idle" }> | Readonly<{ kind: "working" }> | Readonly<{ kind: "failed"; failure: CommandFailure }>
 type Feedback = Readonly<{ kind: "none" }> | Readonly<{ kind: "success"; result: CommandSuccess }>
-const ROOT: CommandScreen = Object.freeze({ kind: "browse" })
 const COMMAND_LAYER = { mode: "modal", scope: "picker" } as const
 const HOME_GROUP_LIMIT = 4
 
@@ -138,23 +138,31 @@ function useCommandData(controller: AppController, route: ShellRoute, recent: re
 }
 
 type SpawnSetupState = Readonly<{ kind: "none" }> | Readonly<{ kind: "saved"; location: SpawnLocation }>
-const INITIAL_POSITIONS = Object.freeze({
-  browse: INITIAL_BROWSER_POSITION,
-  recipients: INITIAL_BROWSER_POSITION,
-  actions: INITIAL_BROWSER_POSITION,
-})
-
 function useCommandNavigation(controller: AppController, router: ShellRouter) {
-  const [screen, setScreen] = useState<CommandScreen>(ROOT)
+  const [navigation, setNavigation] = useState(ROOT_NAVIGATION)
+  const screen = navigation.current.screen
   const [recent, setRecent] = useState<readonly string[]>([])
-  const [positions, setPositions] = useState(INITIAL_POSITIONS)
   const [spawnSetup, setSpawnSetup] = useState<SpawnSetupState>({ kind: "none" })
   const [formPending, setFormPending] = useState(false)
   const pending = useRef(false)
   const close = () => controller.setChannelPickerOpen(false)
-  const home = () => {
-    setScreen(ROOT)
-    setPositions(INITIAL_POSITIONS)
+  const home = () => setNavigation(ROOT_NAVIGATION)
+  const enter = (next: CommandChildScreen) => {
+    const result = enterCommand(navigation, next)
+    if (result.isOk()) setNavigation(result.value)
+    return result
+  }
+  const replace = (next: CommandChildScreen) => setNavigation((current) => replaceCommand(current, next))
+  const back = () => {
+    const result = leaveCommand(navigation)
+    switch (result.kind) {
+      case "close":
+        close()
+        return
+      case "parent":
+        setNavigation(result.navigation)
+        return
+    }
   }
   const navigate = (route: ShellRoute) => {
     close()
@@ -166,16 +174,14 @@ function useCommandNavigation(controller: AppController, router: ShellRouter) {
   const rememberSpawn = (location: SpawnLocation) =>
     setSpawnSetup((current) => (current.kind === "none" ? { kind: "saved", location } : current))
   const clearSpawn = () => setSpawnSetup({ kind: "none" })
-  const browserKey = screen.kind === "recipients" || screen.kind === "actions" ? screen.kind : "browse"
   const onPosition = (position: CommandBrowserPosition) =>
-    setPositions((current) => ({ ...current, [browserKey]: position }))
-  const actions = (entry: CommandEntry) => {
-    setPositions((current) => ({ ...current, actions: INITIAL_BROWSER_POSITION }))
-    setScreen({ kind: "actions", id: entry.id, title: entry.title })
-  }
+    setNavigation((current) => ({ ...current, current: { ...current.current, position } }))
   return {
     screen,
-    setScreen,
+    enter,
+    replace,
+    back,
+    path: [...navigation.parents, navigation.current].map((frame) => commandScreenLabel(frame.screen)),
     recent,
     spawnSetup,
     rememberSpawn,
@@ -187,9 +193,8 @@ function useCommandNavigation(controller: AppController, router: ShellRouter) {
     home,
     navigate,
     remember,
-    position: positions[browserKey],
+    position: navigation.current.position,
     onPosition,
-    actions,
   }
 }
 
@@ -207,11 +212,8 @@ function useCommandFeedback(controller: AppController, nav: ReturnType<typeof us
   }
   const back = () => {
     if (nav.formPending || nav.pending.current) return
-    if (nav.screen.kind === "browse") nav.close()
-    else {
-      nav.setScreen(ROOT)
-      setOperation({ kind: "idle" })
-    }
+    nav.back()
+    setOperation({ kind: "idle" })
   }
   return { operation, setOperation, feedback, clear, fail, complete, back }
 }
@@ -253,6 +255,7 @@ function commandChoiceHandler(
   controller: AppController,
   nav: ReturnType<typeof useCommandNavigation>,
   feedback: ReturnType<typeof useCommandFeedback>,
+  suspend: (dialog: CommandDialog) => void,
 ) {
   return (choice: CommandChoice): void => {
     if (choice.availability.kind === "unavailable") {
@@ -278,13 +281,25 @@ function commandChoiceHandler(
       fail: feedback.fail,
       pending: nav.pending,
       setOperation: feedback.setOperation,
-      setScreen: nav.setScreen,
+      setScreen: (screen) => {
+        nav
+          .enter(screen)
+          .match({
+            ok: () => undefined,
+            err: (error) => feedback.fail({ kind: "not-completed", message: error.message }),
+          })
+      },
+      home: nav.home,
+      suspend,
     })
   }
 }
 
 export function CommandMenu({ controller, router }: { controller: AppController; router: ShellRouter }) {
   const nav = useCommandNavigation(controller, router)
+  const returnToMenu = useCommandReturn()
+  if (returnToMenu === null) throw new Error("CommandMenu requires CommandReturnProvider")
+  const listKeyboard = useRef<CommandListKeyboard | null>(null)
   const feedback = useCommandFeedback(controller, nav)
   const editor = useCommandDraftEditor(nav.screen, feedback)
   const data = useCommandData(controller, router.route, nav.recent)
@@ -293,8 +308,16 @@ export function CommandMenu({ controller, router }: { controller: AppController;
     screen: nav.screen,
     data: withDrafts,
     controller,
-    choose: commandChoiceHandler(controller, nav, feedback),
-    actions: nav.actions,
+    choose: commandChoiceHandler(controller, nav, feedback, (dialog) =>
+      returnToMenu.suspend(dialog, commandScreenLabel(nav.screen), nav.home),
+    ),
+    actions: (entry) =>
+      nav.enter({ kind: "actions", id: entry.id, title: entry.title }).match({
+        ok: () => undefined,
+        err: (error) => feedback.fail({ kind: "not-completed", message: error.message }),
+      }),
+    replace: nav.replace,
+    listKeyboard,
     ...editor,
     onPending: nav.setFormPending,
     position: nav.position,
@@ -302,13 +325,21 @@ export function CommandMenu({ controller, router }: { controller: AppController;
   })
   return (
     <>
-      <CommandWindow onBack={feedback.back} onClose={nav.close} open={controller.channelPickerOpen} screen={nav.screen}>
+      <CommandWindow
+        onBack={feedback.back}
+        onClose={nav.close}
+        open={controller.channelPickerOpen}
+        screen={nav.screen}
+        listKeyboard={listKeyboard}
+        suspended={returnToMenu.destination.kind === "menu"}
+      >
         <CommandMenuChrome
           controller={controller}
           onBack={feedback.back}
           operation={feedback.operation}
           screen={nav.screen}
           warnings={data.warnings}
+          path={nav.path}
         />
         <div data-command-screen="active">{content}</div>
         {nav.spawnSetup.kind === "saved" && (
@@ -334,41 +365,30 @@ export function CommandMenu({ controller, router }: { controller: AppController;
   )
 }
 
-function commandScreenLabel(screen: CommandScreen): string {
-  switch (screen.kind) {
-    case "browse":
-      return "Commands"
-    case "actions":
-      return screen.title
-    case "recipients":
-      return "Send a message"
-    case "spawn":
-      return "Spawn agent"
-    case "prompt":
-      return "Terminal input"
-    case "join":
-      return `#${screen.channel}`
-    case "compose":
-      return "Write a message"
-  }
-}
-
 function CommandMenuChrome({
   controller,
   onBack,
   operation,
   screen,
   warnings,
+  path,
 }: {
   controller: AppController
   onBack: () => void
   operation: OperationState
   screen: CommandScreen
   warnings: readonly string[]
+  path: readonly string[]
 }) {
   return (
     <>
-      {screen.kind !== "browse" && <CommandBreadcrumb onBack={onBack}>{commandScreenLabel(screen)}</CommandBreadcrumb>}
+      {screen.kind !== "browse" && (
+        <CommandBreadcrumb
+          onBack={onBack}
+          path={path}
+          mode={screen.kind === "actions" || screen.kind === "recipients" ? "list" : "form"}
+        />
+      )}
       {warnings.length > 0 && (
         <div className="command-data-warning" role="status">
           {warnings.join(" ")}{" "}
@@ -453,7 +473,9 @@ interface CommandDispatch {
   fail: (failure: CommandFailure) => void
   pending: { current: boolean }
   setOperation: (state: OperationState) => void
-  setScreen: (screen: CommandScreen) => void
+  setScreen: (screen: CommandChildScreen) => void
+  home: () => void
+  suspend: (dialog: CommandDialog) => void
 }
 
 async function dispatchCommand(
@@ -478,8 +500,7 @@ async function dispatchCommand(
       setScreen({ kind: "join", channel: action.channel })
       return
     case "members":
-      close()
-      setScreen(ROOT)
+      host.suspend("members")
       controller.openMembers(action.channel)
       return
     case "theme":
@@ -487,13 +508,22 @@ async function dispatchCommand(
       complete({ message: `Theme set to ${action.mode}.`, destination: { kind: "current" } })
       return
     case "connect":
-      close()
-      setScreen(ROOT)
+      host.suspend("connect")
       controller.openConnectPane(action.pane, action.label)
       return
     case "shell":
-      close()
-      setScreen(ROOT)
+      switch (action.name) {
+        case "inbox":
+        case "settings":
+        case "help":
+          host.suspend(action.name)
+          break
+        case "create-channel":
+        case "create-workspace":
+          close()
+          host.home()
+          break
+      }
       dispatchShellCommand(action.name, controller)
       return
     case "focus-agent": {
@@ -511,8 +541,7 @@ async function dispatchCommand(
       host.pending.current = false
       result.match({
         ok: (pane) => {
-          close()
-          setScreen(ROOT)
+          host.suspend("stop-agent")
           host.setOperation({ kind: "idle" })
           controller.openStopAgent(pane)
         },
@@ -560,6 +589,8 @@ interface CommandContentProps {
   onPending: (pending: boolean) => void
   position: CommandBrowserPosition
   onPosition: (position: CommandBrowserPosition) => void
+  listKeyboard: RefObject<CommandListKeyboard | null>
+  replace: (screen: CommandChildScreen) => void
 }
 
 function commandContent({
@@ -576,11 +607,14 @@ function commandContent({
   onPending,
   position,
   onPosition,
+  listKeyboard,
+  replace,
 }: CommandContentProps): ReactNode {
   switch (screen.kind) {
     case "browse":
       return (
         <CommandBrowser
+          listKeyboard={listKeyboard}
           position={position}
           onPosition={onPosition}
           entries={data.entries}
@@ -593,6 +627,7 @@ function commandContent({
     case "recipients":
       return (
         <CommandBrowser
+          listKeyboard={listKeyboard}
           position={position}
           onPosition={onPosition}
           entries={data.entities}
@@ -614,6 +649,7 @@ function commandContent({
       const entries = target.alternatives.map((choice) => commandEntry(choice))
       return (
         <CommandBrowser
+          listKeyboard={listKeyboard}
           position={position}
           onPosition={onPosition}
           entries={entries}
@@ -662,13 +698,9 @@ function commandContent({
         <CommandJoin
           channel={screen.channel}
           controller={controller}
+          onPending={onPending}
           onJoined={() =>
-            choose(
-              commandChoice("joined", screen.channel, "", "channel", {
-                kind: "compose",
-                target: { kind: "channel", channel: screen.channel, membership: "joined" },
-              }),
-            )
+            replace({ kind: "compose", target: { kind: "channel", channel: screen.channel, membership: "joined" } })
           }
         />
       )
@@ -679,10 +711,12 @@ function CommandJoin({
   channel,
   controller,
   onJoined,
+  onPending,
 }: {
   channel: string
   controller: AppController
   onJoined: () => void
+  onPending: (pending: boolean) => void
 }) {
   const [state, setState] = useState<OperationState>({ kind: "idle" })
   const pending = useRef(false)
@@ -694,9 +728,11 @@ function CommandJoin({
     )
       return
     pending.current = true
+    onPending(true)
     setState({ kind: "working" })
     const result = await controller.api.joinChannel(channel)
     pending.current = false
+    onPending(false)
     result.match({
       ok: () => {
         controller.reload()
@@ -717,6 +753,7 @@ function CommandJoin({
         </p>
       )}
       <Button
+        data-command-autofocus
         disabled={
           state.kind === "working" ||
           controller.identity === null ||
@@ -737,27 +774,34 @@ function CommandKeyboard({ onBack }: { onBack: () => void }) {
   return null
 }
 
+const COMMAND_FOCUS_SELECTOR =
+  "[data-command-screen=active] [data-command-autofocus]:not(:disabled), [data-command-screen=active] input:not([type=hidden]):not(:disabled)"
+
 function CommandWindow({
   children,
   open,
   onBack,
   onClose,
   screen,
+  listKeyboard,
+  suspended,
 }: {
   children: ReactNode
   open: boolean
   onBack: () => void
   onClose: () => void
   screen: CommandScreen
+  listKeyboard: RefObject<CommandListKeyboard | null>
+  suspended: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const wasOpen = useRef(false)
   useLayoutEffect(() => {
-    if (open)
-      panelRef.current
-        ?.querySelector<HTMLElement>(
-          "[data-command-screen=active] [data-command-autofocus], [data-command-screen=active] input:not([type=hidden])",
-        )
-        ?.focus()
+    const changedLevel = open && wasOpen.current
+    wasOpen.current = open
+    if (changedLevel) panelRef.current?.querySelector<HTMLElement>(COMMAND_FOCUS_SELECTOR)?.focus()
+    if (changedLevel && !panelRef.current?.contains(document.activeElement))
+      panelRef.current?.querySelector<HTMLElement>("[data-command-back]")?.focus()
   }, [open, screen])
   return (
     <Dialog.Root
@@ -766,7 +810,7 @@ function CommandWindow({
         if (next) return
         if (details.reason === "escape-key") {
           details.cancel()
-          onBack()
+          if (commandKeyIntent(details.event, commandFocus(details.event.target), screen.kind !== "browse") === "back") onBack()
         } else onClose()
       }}
     >
@@ -776,19 +820,30 @@ function CommandWindow({
           className="command-window"
           data-dialog="channel-picker"
           data-command-menu
-          initialFocus={() =>
-            panelRef.current?.querySelector<HTMLElement>(
-              "[data-command-autofocus], input:not([type=hidden]), textarea",
-            ) ?? true
-          }
+          finalFocus={() => (open || suspended ? false : true)}
+          initialFocus={() => panelRef.current?.querySelector<HTMLElement>(COMMAND_FOCUS_SELECTOR) ?? true}
           ref={panelRef}
           onKeyDown={(event) => {
-            if (!open || event.nativeEvent.isComposing) return
-            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-              event.preventDefault()
-              event.stopPropagation()
-              onClose()
+            if (!open || event.defaultPrevented) return
+            const intent = commandKeyIntent(
+              { ...event, isComposing: event.nativeEvent.isComposing || event.keyCode === 229 },
+              commandFocus(event.target),
+              screen.kind !== "browse",
+            )
+            switch (intent) {
+              case "native":
+                return
+              case "back":
+                onBack()
+                break
+              case "close":
+                onClose()
+                break
+              default:
+                if (listKeyboard.current?.(intent, event.key) !== true) return
             }
+            event.preventDefault()
+            event.stopPropagation()
           }}
         >
           {open && <CommandKeyboard onBack={onBack} />}

@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent } from "react"
+import { useLayoutEffect, useRef, type RefObject } from "react"
 
 import { matchCommands, parseCommandQuery } from "@/commands/search"
 import { recipientCatalog } from "@/commands/catalog"
@@ -12,6 +12,7 @@ import {
 } from "@/commands/types"
 import { CommandFilters, CommandFooter, CommandResults, CommandSearchInput } from "./command-parts"
 import { commandOptionId, type CommandBrowserPosition } from "@/commands/browser-state"
+import type { CommandListKeyboard } from "@/commands/navigation-keys"
 
 export interface CommandBrowserProps {
   entries: readonly CommandEntry[]
@@ -21,11 +22,12 @@ export interface CommandBrowserProps {
   onActions: (entry: CommandEntry) => void
   position: CommandBrowserPosition
   onPosition: (position: CommandBrowserPosition) => void
+  listKeyboard: RefObject<CommandListKeyboard | null>
 }
 
 export function CommandBrowser(props: CommandBrowserProps) {
   const { query, filter } = props.position
-  const parsed = parseCommandQuery(query, filter)
+  const parsed = parseCommandQuery(query, filter, props.mode === "actions" ? "actions" : "commands")
   if (parsed.isErr())
     return (
       <p className="command-error" role="alert">
@@ -84,59 +86,43 @@ function CommandBrowserView({
   position,
   query,
   remaining,
+  listKeyboard,
 }: CommandBrowserViewProps) {
   const browserRef = useRef<HTMLDivElement>(null)
   const active = position.active
   const setActive = (next: number) => onPosition({ ...position, active: next })
   const activeIndex = Math.max(0, Math.min(active, entries.length - 1))
   const selected = entries[activeIndex]
-  function handleKey(event: KeyboardEvent<HTMLDivElement>): void {
-    if (event.nativeEvent.isComposing || event.altKey || event.metaKey || event.ctrlKey) return
-    const input = browserRef.current?.querySelector<HTMLInputElement>("input[role=combobox]")
-    const inSearch = event.target === input
-    switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault()
-        event.stopPropagation()
-        setActive(entries.length === 0 ? 0 : (activeIndex + 1) % entries.length)
-        input?.focus()
-        break
-      case "ArrowUp":
-        event.preventDefault()
-        event.stopPropagation()
-        setActive(entries.length === 0 ? 0 : (activeIndex + entries.length - 1) % entries.length)
-        input?.focus()
-        break
-      case "Enter":
-        if (!inSearch) return
-        event.preventDefault()
-        event.stopPropagation()
-        if (selected !== undefined) onChoose(selected)
-        break
-      case "ArrowRight":
-        if (
-          selected === undefined ||
-          selected.alternatives.length === 0 ||
-          !inSearch ||
-          input?.selectionStart !== query.length ||
-          input.selectionEnd !== query.length
-        )
-          return
-        event.preventDefault()
-        event.stopPropagation()
-        onActions(selected)
-        break
-      default:
-        if (!inSearch && event.key.length === 1 && event.key !== " ") {
-          event.preventDefault()
-          if (query.length < COMMAND_QUERY_LIMIT) onPosition({ ...position, active: 0, query: query + event.key })
+  useLayoutEffect(() => {
+    listKeyboard.current = (intent, key) => {
+      const input = browserRef.current?.querySelector<HTMLInputElement>("[data-command-search]")
+      switch (intent) {
+        case "next":
+        case "previous": {
+          const step = intent === "next" ? 1 : entries.length - 1
+          onPosition({ ...position, active: entries.length === 0 ? 0 : (activeIndex + step) % entries.length })
           input?.focus()
+          return true
         }
-        break
+        case "choose":
+          if (selected !== undefined) onChoose(selected)
+          return true
+        case "actions":
+          if (selected === undefined || selected.alternatives.length === 0) return false
+          onActions(selected)
+          return true
+        case "type":
+          if (query.length < COMMAND_QUERY_LIMIT) onPosition({ ...position, active: 0, query: query + key })
+          input?.focus()
+          return true
+      }
     }
-  }
+    return () => {
+      listKeyboard.current = null
+    }
+  }, [activeIndex, entries.length, listKeyboard, onActions, onChoose, onPosition, position, query, selected])
   return (
-    <div className="command-browser" onKeyDown={handleKey} ref={browserRef}>
+    <div className="command-browser" ref={browserRef}>
       <CommandSearchInput
         activeId={selected === undefined ? undefined : commandOptionId(activeIndex)}
         onChange={(value) => onPosition({ ...position, active: 0, query: value })}

@@ -1,7 +1,7 @@
 import type { ComboboxOption } from "./combobox"
 
 function optionSearchText(option: ComboboxOption): string {
-  return [option.label, option.sublabel, ...(option.keywords ?? [])].filter((entry): entry is string => entry !== undefined).join(" ").toLocaleLowerCase()
+  return [option.value, option.label, option.sublabel, ...(option.keywords ?? [])].filter((entry): entry is string => entry !== undefined).join(" ").toLocaleLowerCase()
 }
 
 export function filterComboboxOptions(options: readonly ComboboxOption[], query: string, maxVisibleOptions?: number): ComboboxOption[] {

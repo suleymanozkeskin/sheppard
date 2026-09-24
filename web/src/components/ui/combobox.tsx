@@ -180,7 +180,14 @@ export function Combobox({
       required={required}
       value={selected}
     >
-      <div className={cn("flex min-w-0 flex-col gap-1.5", className)} data-combobox={resolvedId} data-combobox-open={open ? "true" : "false"}>
+      <div
+        className={cn("flex min-w-0 flex-col gap-1.5", className)}
+        data-combobox={resolvedId}
+        data-combobox-open={open ? "true" : "false"}
+        onKeyDown={(event) => {
+          if (!event.nativeEvent.isComposing && event.key === "Escape" && open) event.stopPropagation()
+        }}
+      >
         {label !== undefined && <label className="text-sm font-medium" htmlFor={resolvedId}>{label}</label>}
         <BaseCombobox.InputGroup className="relative flex min-h-11 items-center rounded-xl border bg-background pl-4 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
           <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
@@ -203,12 +210,25 @@ export function Combobox({
             placeholder={selected === null || selected.value === allOptionValue ? placeholder : undefined}
             spellCheck={spellCheck}
             onKeyDown={(event) => {
-              // Let the page close only after the popup has already closed.
+              if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                event.preventBaseUIHandler()
+                return
+              }
+              // Enter opens or selects. A missing highlight never submits the enclosing form.
+              if (event.key === "Enter" && (!open || !event.currentTarget.getAttribute("aria-activedescendant"))) {
+                event.preventDefault()
+                event.stopPropagation()
+                event.preventBaseUIHandler()
+                setOpen(true)
+                return
+              }
+              // Escape closes only the top level and never clears a saved selection.
               if (event.key !== "Escape") return
               if (shouldStopComboboxEscape(open)) {
                 event.stopPropagation()
                 return
               }
+              event.preventBaseUIHandler()
               if (onEscapeWhenClosed === undefined) return
               event.preventDefault()
               event.stopPropagation()

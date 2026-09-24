@@ -304,8 +304,18 @@
   color: var(--muted-foreground);
   flex-shrink: 0;
 }
-.command-breadcrumb > kbd {
+.command-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin-left: auto;
+}
+.command-breadcrumb > button {
+  flex-shrink: 0;
+  gap: 7px;
+}
+.command-breadcrumb kbd {
+  font-size: 10px;
 }
 .command-compose,
 .command-spawn {
@@ -549,7 +559,7 @@
     font-size: 16px;
   }
   .command-keycap,
-  .command-hint,
+  .command-brand,
   .command-compose-footer > span {
     display: none;
   }

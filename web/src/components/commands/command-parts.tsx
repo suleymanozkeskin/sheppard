@@ -33,6 +33,7 @@ import { shellRoutePath } from "@/shell-routing"
 import type { CommandChoice, CommandEntry, CommandFilter, CommandGlyph, CommandGroup } from "@/commands/types"
 import { COMMAND_QUERY_LIMIT } from "@/commands/types"
 import { commandOptionId } from "@/commands/browser-state"
+import { COMMAND_BACK_HINT, COMMAND_LIST_BACK_HINT } from "@/commands/navigation-keys"
 
 const GLYPHS = {
   agent: Bot,
@@ -77,14 +78,31 @@ export function CommandIcon({ glyph }: { glyph: CommandGlyph }) {
   return <Icon aria-hidden="true" className="size-[18px]" />
 }
 
-export function CommandBreadcrumb({ children, onBack }: { children: ReactNode; onBack: () => void }) {
+export function CommandBreadcrumb({
+  path,
+  mode,
+  onBack,
+}: {
+  path: readonly string[]
+  mode: "list" | "form"
+  onBack: () => void
+}) {
   return (
     <div className="command-breadcrumb">
-      <Button aria-label="Back in command menu" onClick={onBack} size="icon-xs" variant="ghost">
+      <Button
+        aria-label="Back in command menu"
+        data-command-back
+        title={`Back to ${path.at(-2) ?? "Commands"}. Escape from any field; Left Arrow or Backspace from an empty search.`}
+        onClick={onBack}
+        size="sm"
+        variant="ghost"
+      >
         <ArrowLeft aria-hidden="true" />
+        Back <kbd>{mode === "list" ? COMMAND_LIST_BACK_HINT : COMMAND_BACK_HINT}</kbd>
       </Button>
-      <span className="min-w-0 truncate">{children}</span>
-      <kbd>Esc</kbd>
+      <span aria-label="Command path" aria-live="polite" className="command-path" title={path.join(" › ")}>
+        {path.slice(1).join(" › ")}
+      </span>
     </div>
   )
 }
@@ -111,6 +129,7 @@ export function CommandSearchInput({
         aria-label="Search commands and places"
         autoComplete="off"
         data-command-autofocus
+        data-command-search
         id="channel-picker-input"
         maxLength={COMMAND_QUERY_LIMIT}
         name="command-search"
