@@ -666,7 +666,7 @@ async function openMarkdownViewer(page: Page): Promise<void> {
  * overlay reads as a success and the probe lies.
  */
 async function globalKeyWorks(page: Page): Promise<boolean> {
-  const dialog = page.locator('[role="dialog"]')
+  const dialog = page.locator('[role="dialog"]:visible')
   await expect(dialog).toHaveCount(0)
   await blurActiveElement(page)
   await page.keyboard.press("m")
@@ -1148,9 +1148,9 @@ test.describe("UX merge contract", () => {
     await blurActiveElement(page)
     const opener = page.getByRole("button", { name: /channel members/i }).first()
     await opener.click()
-    await expect(page.locator('[role="dialog"]')).toBeVisible()
+    await expect(page.locator('[role="dialog"]:visible')).toBeVisible()
     await page.keyboard.press("Escape")
-    await expect(page.locator('[role="dialog"]')).toBeHidden()
+    await expect(page.locator('[role="dialog"]:visible')).toHaveCount(0)
     const returned = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? "")
     expect(returned).toMatch(/members/i)
   })
@@ -1853,7 +1853,7 @@ test.describe("UX merge contract", () => {
 
     await page.getByRole("button", { name: "Create launcher", exact: true }).click()
     await expect(page.locator('[data-shell-page="create-launcher"]')).toBeVisible()
-    await expect(page.locator("[data-dialog]")).toHaveCount(0)
+    await expect(page.locator("[data-dialog]:visible")).toHaveCount(0)
     await page.locator("#launcher-name").fill("claude-custom")
     await chooseComboboxOption(page, "launcher-agent-kind", "claude")
     await page.locator("#launcher-executable").fill("claude")
@@ -3123,7 +3123,8 @@ test.describe("UX merge contract", () => {
 
     await page.goto("/agents")
     await page.getByRole("button", { name: "Open agent lead" }).click()
-    const recentMessage = page.locator('[data-agent-message-row="3"]')
+    await page.getByRole("link", { name: "Channel activity", exact: true }).click()
+    const recentMessage = page.locator('[data-agent-activity="3"] a')
     await expect(recentMessage).toContainText("Smoke checks passed in staging")
     expect(messageListRequests, "the detail page must load the channel containing the recent message").toBeGreaterThan(0)
 
@@ -3648,28 +3649,30 @@ test.describe("channels directory", () => {
 
     const detail = page.locator('[data-agent-view="lead"]')
     await expect(detail).toBeVisible()
-    await expect(detail.locator("[data-agent-identity] > h2")).toHaveText("lead")
+    await expect(detail.locator("h1[data-agent-identity]")).toHaveText("lead")
     await expect(detail.locator("[data-agent-identity-facts]").getByText("claude", { exact: true })).toHaveCount(1)
-    await expect(detail.locator("[data-agent-identity-facts]").getByText("Herdr: working", { exact: true })).toHaveCount(1)
+    await expect(detail.locator("[data-agent-identity-facts]").getByText("working", { exact: true })).toHaveCount(1)
     await expect(detail.locator("[data-agent-identity-facts]").getByText("Personal-Projects", { exact: true })).toHaveCount(1)
-    await expect(detail.locator("[data-agent-identity-facts]").getByText("pane w1H:p1", { exact: true })).toHaveCount(1)
-    await expect(detail.locator("[data-agent-identity-facts]").getByText("Chat route active", { exact: true })).toHaveCount(1)
-    await expect(detail.locator("[data-agent-identity-facts]").getByText("seen 1h ago", { exact: true })).toHaveCount(1)
+    await detail.getByRole("link", { name: "Details", exact: true }).click()
+    await expect(detail.locator(".agent-connection-details").getByText("w1H:p1", { exact: true })).toHaveCount(1)
+    await expect(detail.getByText("Chat connected", { exact: true })).toHaveCount(1)
+    await expect(detail.locator(".agent-connection-details").getByText("1h ago", { exact: true })).toHaveCount(1)
     await expect(detail.locator("[data-agent-identity-facts]")).toHaveCount(1)
     await expect(detail.locator("[data-pane-title]")).toHaveAttribute("data-pane-title", "verify item 7 gate")
     await expect(detail.locator(`[data-agent-conversation="${directChannel}"]`)).toContainText("The embedded detail thread is readable.")
     await expect(detail.locator('[data-agent-channel="ops"] [data-agent-unread="37"]')).toHaveText("37 unread")
+    await detail.getByRole("link", { name: "Channel activity", exact: true }).click()
     await expect(detail.locator('[data-agent-activity="3"]')).toContainText("Smoke checks passed in staging")
     await expect(detail.getByText("Agent details", { exact: true })).toHaveCount(0)
     await expect(detail.getByRole("button", { name: "Message", exact: true })).toHaveCount(1)
 
-    await detail.getByRole("button", { name: "Focus pane", exact: true }).click()
+    await detail.getByRole("button", { name: "Focus terminal", exact: true }).click()
     await expect.poll(() => focusPath).not.toBe("")
     expect(focusMethod).toBe("POST")
     expect(decodeURIComponent(focusPath)).toBe("/api/herdr/tabs/w1H:tab-agent/focus")
 
     await detail.getByRole("button", { name: "Message", exact: true }).click()
-    await expect(page).toHaveURL(new RegExp(`/direct/${directChannel}$`))
+    await expect(page).toHaveURL(/\/agents\/lead\?view=messages$/u)
   })
 
   test("@guard agent detail falls back to the pane label when no terminal title is reported", async ({ page }) => {
@@ -3730,7 +3733,8 @@ test.describe("channels directory", () => {
     await openWithTopology(page, { topology, withDirect: true })
     await page.route("**/api/direct", async (route) => {
       if (route.request().method() !== "GET") {
-        await route.fallback()
+        messagePosts.push(route.request().postData() ?? "")
+        await fulfillJson(route, { channel: directChannel, messageId: 402 })
         return
       }
       await fulfillJson(route, { conversations: [{ channel: directChannel, lastMessageAt: null, participants: ["lead"], unread: 0 }] })
@@ -3778,13 +3782,12 @@ test.describe("channels directory", () => {
     const { messagePosts, promptPosts } = await openAgentDetailForActions(page)
     const messagesBefore = messagePosts.length
 
-    await page.getByRole("button", { name: "Prompt pane" }).click()
-    const notice = page.locator("[data-agent-prompt-notice]")
-    await expect(notice, "the panel must state the difference before the operator acts").toHaveText(
-      "Types directly into pane w1H:p1. The agent sees it as terminal input, not as a message.",
-    )
-    await page.locator("#agent-prompt-input").fill("git status")
-    await page.getByRole("button", { name: "Send to pane" }).click()
+    await page.keyboard.press("Meta+k")
+    const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+    await menu.getByRole("option", { name: /Prompt terminal/ }).click()
+    await expect(menu.locator(".command-audience")).toHaveText("Types into this agent’s terminal and presses Enter. This is not a Sheppard message.")
+    await menu.getByRole("textbox", { name: "Terminal input" }).fill("git status")
+    await menu.getByRole("button", { name: /Send to terminal/ }).click()
 
     await expect.poll(() => promptPosts.length, { message: "the prompt must reach the pane endpoint" }).toBe(1)
     expect(JSON.parse(promptPosts[0] ?? "{}")).toEqual({ text: "git status" })
@@ -3823,8 +3826,9 @@ test.describe("channels directory", () => {
 
     await page.goto("/agents/lead-2")
     await page.getByRole("button", { name: "Message", exact: true }).click()
-    await expect(page).toHaveURL(/\/direct\/new$/)
-    await expect(page.locator("#direct-recipients")).toHaveValue("lead-2")
+    await expect(page).toHaveURL(/\/agents\/lead-2\?view=messages$/u)
+    await expect(page.locator("#agent-composer")).toBeFocused()
+    await expect(page.getByRole("heading", { name: "Start a direct conversation" })).toBeVisible()
   })
 
   /**
@@ -4048,7 +4052,7 @@ test.describe("staffing", () => {
     })
     await page.goto("/agents/new")
     await expect(page.locator('[data-shell-page="spawn-agent"]')).toBeVisible()
-    await expect(page.locator('[role="dialog"]')).toHaveCount(0)
+    await expect(page.locator('[role="dialog"]:visible')).toHaveCount(0)
     await page.keyboard.press("Escape")
     await expect(page).toHaveURL(/\/agents$/)
 

@@ -11,15 +11,18 @@ type ComposerTarget = () => HTMLTextAreaElement | null
 const mounted: ComposerTarget[] = []
 
 /** Registers a composer as the focus target for as long as it is mounted. */
-export function useComposerFocusTarget(ref: RefObject<HTMLTextAreaElement | null>): void {
+export function useComposerFocusTarget(ref: RefObject<HTMLTextAreaElement | null>, reveal?: () => void): void {
   useEffect(() => {
-    const target: ComposerTarget = () => ref.current
+    const target: ComposerTarget = () => {
+      if (ref.current !== null && ref.current.getClientRects().length === 0) reveal?.()
+      return ref.current
+    }
     mounted.push(target)
     return () => {
       const index = mounted.lastIndexOf(target)
       if (index !== -1) mounted.splice(index, 1)
     }
-  }, [ref])
+  }, [ref, reveal])
 }
 
 /**

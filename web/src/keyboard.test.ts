@@ -20,6 +20,7 @@ describe("keyboard bindings", () => {
     const bindings = defaultBindings()
     expect(actionForCombo(bindings, "/")).toBe("search.focus")
     expect(actionForCombo(bindings, "Ctrl+K")).toBe("channel.picker")
+    expect(actionForCombo(bindings, "Meta+K")).toBe("channel.picker")
     expect(actionForCombo(bindings, "Shift+G")).toBe("message.jumpLatest")
     expect(actionForCombo(bindings, "ArrowDown")).toBe("message.focusNext")
     expect(actionForCombo(bindings, "d")).toBe("message.dmAuthor")

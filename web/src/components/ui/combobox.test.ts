@@ -10,6 +10,9 @@ const options: ComboboxOption[] = [
 ]
 
 describe("Combobox option contract", () => {
+  it("finds exact values when display labels differ", () => {
+    expect(filterComboboxOptions(options, "shared-3").map((option) => option.value)).toEqual(["shared-3"])
+  })
   it("filters labels, sublabels, and keywords", () => {
     expect(filterComboboxOptions(options, "alpha").map((option) => option.value)).toEqual(["alpha-1"])
     expect(filterComboboxOptions(options, "second").map((option) => option.value)).toEqual(["shared-2"])

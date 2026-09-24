@@ -307,6 +307,7 @@ test("@guard Agents directory opens an agent detail page", async ({ page }) => {
 
   await page.getByRole("button", { name: "Open agent codex-reviewer" }).click()
   await expect(page).toHaveURL(/\/agents\/codex-reviewer$/)
+  await page.getByRole("link", { name: "Details", exact: true }).click()
   await expect(page.locator('[data-agent-view="codex-reviewer"]')).toContainText("pane-web")
 })
 
@@ -528,7 +529,7 @@ test("@guard quick switcher finds each kind and routes Enter to its subject", as
   const picker = page.locator('[data-dialog="channel-picker"]')
   await expect(picker).toBeVisible()
   const glyphs = await Promise.all(["chat", "direct", "agent", "workspace"].map(async (kind) =>
-    picker.locator(`[data-picker-group="${kind}"] [data-picker-glyph]`).first().getAttribute("data-picker-glyph"),
+    picker.locator(`[data-picker-group="${kind}"] [data-command-glyph]`).first().getAttribute("data-command-glyph"),
   ))
   expect(new Set(glyphs).size).toBe(4)
 

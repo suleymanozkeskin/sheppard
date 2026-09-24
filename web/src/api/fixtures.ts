@@ -164,6 +164,8 @@ export const mockModels: ModelEntry[] = [
   { harness: "codex", name: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
 ]
 
+const CATALOGUE_FIXTURE_TTL_MS = 60 * 60 * 1_000
+const catalogueFixtureFreshUntil = new Date(Date.now() + CATALOGUE_FIXTURE_TTL_MS).toISOString()
 export const mockModelCatalogue: ModelCatalogueSnapshot = {
   catalogues: [
     {
@@ -176,7 +178,7 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
       fetchedAt: "2026-08-23T08:00:00.000Z",
-      freshUntil: "2026-08-23T13:00:00.000Z",
+      freshUntil: catalogueFixtureFreshUntil,
     },
     {
       launcher: "claude-work",
@@ -188,7 +190,7 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
       fetchedAt: "2026-08-23T08:00:00.000Z",
-      freshUntil: "2026-08-23T13:00:00.000Z",
+      freshUntil: catalogueFixtureFreshUntil,
     },
     {
       launcher: "codex",
@@ -211,7 +213,7 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
       fetchedAt: "2026-08-23T08:00:00.000Z",
-      freshUntil: "2026-08-23T13:00:00.000Z",
+      freshUntil: catalogueFixtureFreshUntil,
     },
     {
       launcher: "grok",
@@ -238,7 +240,7 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
       fetchedAt: "2026-08-23T08:00:00.000Z",
-      freshUntil: "2026-08-23T13:00:00.000Z",
+      freshUntil: catalogueFixtureFreshUntil,
     },
     {
       launcher: "opencode",
@@ -257,7 +259,7 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
       fetchedAt: "2026-08-23T08:00:00.000Z",
-      freshUntil: "2026-08-23T13:00:00.000Z",
+      freshUntil: catalogueFixtureFreshUntil,
     },
     {
       launcher: "pi",
@@ -276,7 +278,7 @@ export const mockModelCatalogue: ModelCatalogueSnapshot = {
       executableAvailable: true,
       checkedAt: "2026-08-23T08:00:00.000Z",
       fetchedAt: "2026-08-23T08:00:00.000Z",
-      freshUntil: "2026-08-23T13:00:00.000Z",
+      freshUntil: catalogueFixtureFreshUntil,
     },
   ],
 }

@@ -40,7 +40,7 @@ export function SpawnAgentPage({ controller, mode, navigate, roleName, workspace
   const [assignedHandle, setAssignedHandle] = useState<string | undefined>()
   const [assignedPaneId, setAssignedPaneId] = useState<string | undefined>()
   const canWrite = controller.identity !== null
-  const awaiting = actionState.status === "working" && assignedHandle !== undefined
+  const awaiting = actionState.status === "working"
   const title = mode === "add-reporter" ? "Add reporter" : "Spawn agent"
   const selectedRoleName = state.selection.roleName
   const nativeLeadAlreadyActive = hasActiveNativeLead(state.selectedWorkspace, state.selectedRole)
@@ -114,8 +114,9 @@ export function SpawnAgentPage({ controller, mode, navigate, roleName, workspace
     clearActionState()
   }
 
-  function submit(event: FormEvent<HTMLFormElement>): void {
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
+    if (awaiting) return
     if (nativeLeadAlreadyActive) {
       setActionState({ message: "This workspace already has an active native lead. Stop it before you spawn another lead.", status: "error" })
       return
@@ -124,7 +125,8 @@ export function SpawnAgentPage({ controller, mode, navigate, roleName, workspace
       setActionState({ message: NOT_CONNECTED_REASON, status: "error" })
       return
     }
-    const built = state.buildRequest()
+    setActionState({ status: "working" })
+    const built = await state.prepareRequest()
     if (!built.ok) {
       setActionState({ message: built.message, status: "error" })
       return

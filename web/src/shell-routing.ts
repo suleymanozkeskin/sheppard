@@ -11,7 +11,7 @@ export type ShellRoute =
   | { kind: "direct"; query?: string; filter?: DirectFilter }
   | { kind: "conversation"; channel: string; messageId?: number; query?: string; filter?: DirectFilter }
   | { kind: "agents" }
-  | { kind: "agent"; handle: string }
+  | { kind: "agent"; handle: string; view?: AgentView }
   | { kind: "launchers" }
   | { kind: "create-launcher" }
   | { kind: "edit-launcher"; name: string }
@@ -25,6 +25,7 @@ export type ShellRoute =
   | { kind: "spawn-agent"; workspaceId?: string; role?: string; mode?: "add-reporter" }
 
 export type SearchRouteScope = "all" | `channel:${string}`
+export type AgentView = "session" | "messages" | "activity" | "details"
 export type AttachmentRouteScope = "all" | `channel:${string}`
 export type AttachmentRouteKind = "all" | "image" | "markdown" | "other"
 export type ChannelMembershipFilter = "all" | "joined" | "available"
@@ -128,6 +129,16 @@ function routeFromWorkspacePath(item: string | undefined, segments: readonly str
   }
 }
 
+function agentRouteFromSearch(handle: string, search: string): Extract<ShellRoute, { kind: "agent" }> {
+  const view = new URLSearchParams(search).get("view")
+  switch (view) {
+    case "messages":
+    case "activity":
+    case "details": return { kind: "agent", handle, view }
+    default: return { kind: "agent", handle }
+  }
+}
+
 function routeFromSegments(segments: readonly string[], search: string): ShellRoute {
   const section = segments[0]
   const item = segments[1]
@@ -193,7 +204,7 @@ function routeFromSegments(segments: readonly string[], search: string): ShellRo
           return spawnRouteFromSearch(workspaceId ?? undefined, search)
         }
         default:
-          return { kind: "agent", handle: decodeSegment(item) }
+          return agentRouteFromSearch(decodeSegment(item), search)
       }
     case "launchers":
       switch (item) {
@@ -282,7 +293,7 @@ export function shellRoutePath(route: ShellRoute): string {
     case "agents":
       return "/agents"
     case "agent":
-      return `/agents/${encodeURIComponent(route.handle)}`
+      return `/agents/${encodeURIComponent(route.handle)}${route.view === undefined || route.view === "session" ? "" : `?view=${route.view}`}`
     case "launchers":
       return "/launchers"
     case "create-launcher":

@@ -50,6 +50,7 @@ export function useKeyboardDispatcher({
 
   useEffect(() => {
     function dispatchKeyboardAction(event: KeyboardEvent): void {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
       const combo = comboFromKeyEvent(event)
       if (keyboardLayerStack.hasLayers()) {
         if (event.key === "Escape") {

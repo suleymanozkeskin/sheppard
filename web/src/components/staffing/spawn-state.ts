@@ -12,6 +12,7 @@ import type {
 } from "@/api/types"
 import type { AppController } from "@/hooks/use-app-controller"
 import { AgentAvatar } from "@/components/agent-avatar"
+import { checkSpawnSelection, currentSpawnCatalogue } from "./spawn-catalogue"
 
 export const NO_ROLE_VALUE = "__no_role__"
 
@@ -45,6 +46,7 @@ export interface SpawnSelectionState {
 }
 
 export type SpawnSelectionAction =
+  | { type: "pin-runtime"; model: string; effort: string }
   | { type: "apply-role-runtime"; harness: string; launcher: string }
   | { type: "briefing-loading"; roleName: string }
   | { type: "briefing-result"; roleName: string; present: boolean }
@@ -77,6 +79,8 @@ export function createSpawnSelectionState(roleName: string | undefined, workspac
 
 export function reduceSpawnSelection(state: SpawnSelectionState, action: SpawnSelectionAction): SpawnSelectionState {
   switch (action.type) {
+    case "pin-runtime":
+      return { ...state, model: action.model, effort: action.effort }
     case "apply-role-runtime": {
       const harness = state.harness.length === 0 ? action.harness : state.harness
       const launcher = state.launcher.length === 0 ? action.launcher : state.launcher
@@ -167,15 +171,16 @@ export function resolveSpawnDefaults({
   const catalogueDefault = current ? catalogue?.models.find((candidate) => candidate.default) : undefined
   const roleTargetsLauncher = role?.launcher?.trim() === catalogue?.launcher
   const roleDefault = current && roleTargetsLauncher ? findCatalogueModel(catalogue, role?.model) : undefined
-  const selectedModel = findCatalogueModel(catalogue, model)
-    ?? (launcherSelected ? roleDefault ?? catalogueDefault : undefined)
+  const selectedModel = model.length > 0
+    ? findCatalogueModel(catalogue, model)
+    : launcherSelected ? roleDefault ?? catalogueDefault : undefined
   const modelName = selectedModel?.name ?? ""
   const roleModelSelected = roleDefault !== undefined && selectedModel?.name === roleDefault.name
   const roleEffort = roleModelSelected && role?.effort !== null && role?.effort !== undefined
     ? selectedModel?.efforts.find((candidate) => candidate.name === role.effort)
     : undefined
-  const selectedEffort = selectedModel?.efforts.some((candidate) => candidate.name === effort)
-    ? effort
+  const selectedEffort = effort.length > 0
+    ? selectedModel?.efforts.some((candidate) => candidate.name === effort) ? effort : ""
     : roleEffort?.name ?? selectedModel?.efforts.find((candidate) => candidate.default)?.name ?? ""
   return { effort: selectedEffort, model: selectedModel, modelName }
 }
@@ -283,6 +288,7 @@ export interface SpawnAgentStateModel {
   setHandle: (value: string) => void
   catalogueRetry: () => void
   buildRequest: () => SpawnRequestBuildResult
+  prepareRequest: () => Promise<SpawnRequestBuildResult>
 }
 
 export function useSpawnAgentState({ controller, initialWorkspaceId, mode, roleName }: UseSpawnAgentStateProps): SpawnAgentStateModel {
@@ -452,7 +458,22 @@ export function useSpawnAgentState({ controller, initialWorkspaceId, mode, roleN
   const modelPickerLoading = selection.launcher.length > 0 && (catalogueState.status === "loading" || catalogueState.status === "refreshing" && catalogueState.launcher === selection.launcher)
   const modelPickerError = modelPickerLoading || !catalogueNeedsRetry ? null : catalogueStatusText ?? "The device model catalogue is unavailable."
 
+  async function prepareRequest(): Promise<SpawnRequestBuildResult> {
+    const built = buildSpawnAgentRequest({ currentCatalogue: true, effort: defaults.effort, modelName: defaults.modelName, resolvedHandle, roleBriefingPresent: selection.roleBriefing.status === "present", selectedCatalogue, selectedModel: defaults.model, selection, targetWorkspaceId: selectedWorkspaceId })
+    if (!built.ok) return built
+    dispatch({ type: "pin-runtime", model: built.request.model ?? "", effort: built.request.effort ?? "" })
+    const current = await currentSpawnCatalogue(controller.api, built.request.launcher)
+    if (!mounted.current) return { ok: false, message: "The spawn form was closed. No agent was started." }
+    if (current.isErr()) return { ok: false, message: current.error.message }
+    setCatalogueState({ status: "ready", catalogues: current.value.catalogues })
+    return checkSpawnSelection(current.value, built.request).match({
+      ok: (request): SpawnRequestBuildResult => ({ ok: true, request }),
+      err: (error): SpawnRequestBuildResult => ({ ok: false, message: error.message }),
+    })
+  }
+
   return {
+    prepareRequest,
     buildRequest: () => buildSpawnAgentRequest({ currentCatalogue: catalogueIsCurrent(selectedCatalogue), effort: defaults.effort, modelName: defaults.modelName, resolvedHandle, roleBriefingPresent: selection.roleBriefing.status === "present", selectedCatalogue, selectedModel: defaults.model, selection, targetWorkspaceId: selectedWorkspaceId }),
     catalogueNeedsRetry,
     catalogueRetry: () => refreshCatalogue(selection.launcher, true),

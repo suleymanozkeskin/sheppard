@@ -17,6 +17,9 @@ describe("shell routes", () => {
       { kind: "conversation", channel: "dm-abc123", messageId: 7 },
       { kind: "agents" },
       { kind: "agent", handle: "codex-reviewer" },
+      { kind: "agent", handle: "codex-reviewer", view: "messages" },
+      { kind: "agent", handle: "codex-reviewer", view: "activity" },
+      { kind: "agent", handle: "codex-reviewer", view: "details" },
       { kind: "launchers" },
       { kind: "create-launcher" },
       { kind: "edit-launcher", name: "claude-personal" },
@@ -48,6 +51,11 @@ describe("shell routes", () => {
 
   test("uses the current view for unknown paths", () => {
     expect(shellRouteFromLocation({ pathname: "/not-a-page", search: "" })).toEqual({ kind: "current" })
+  })
+
+  test("unknown agent views use the session", () => {
+    expect(shellRouteFromLocation({ pathname: "/agents/reviewer", search: "?view=unknown" })).toEqual({ kind: "agent", handle: "reviewer" })
+    expect(shellRoutePath({ kind: "agent", handle: "reviewer", view: "session" })).toBe("/agents/reviewer")
   })
 
   test("gives every nested page an explicit parent", () => {

@@ -3,6 +3,9 @@ import { useEffect, useMemo, useRef, type ReactNode, type KeyboardEvent as React
 import { useKeyboardLayer } from "@/hooks/use-keyboard-dispatcher"
 import type { KeyboardLayer, KeyboardLayerHandler, ModalKeyboardLayerName } from "@/keyboard"
 import { cn } from "@/lib/utils"
+import { useCommandReturn } from "@/hooks/use-command-return"
+import { commandFocus, commandKeyIntent, COMMAND_BACK_HINT } from "@/commands/navigation-keys"
+import { ArrowLeft } from "lucide-react"
 
 const FOCUSABLE_SELECTOR =
   "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])"
@@ -27,6 +30,8 @@ export function KeyboardOverlay({
   scope = "dialog",
 }: KeyboardOverlayProps) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const commandReturn = useCommandReturn()
+  const destination = commandReturn?.destination ?? { kind: "none" }
   const layer = useMemo<KeyboardLayer>(() => ({ mode: "modal", scope }), [scope])
 
   useKeyboardLayer(layer, onLayerKeyDown, onClose)
@@ -46,6 +51,16 @@ export function KeyboardOverlay({
   }, [])
 
   function trapFocus(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (destination.kind === "menu" && !event.defaultPrevented) {
+      const intent = commandKeyIntent({ ...event, isComposing: event.nativeEvent.isComposing || event.keyCode === 229 }, commandFocus(event.target), true)
+      if (intent === "back" || intent === "close") {
+        event.preventDefault()
+        event.stopPropagation()
+        if (intent === "close") commandReturn?.dismiss()
+        onClose()
+        return
+      }
+    }
     if (event.key !== "Tab") return
     const panel = panelRef.current
     if (panel === null) return
@@ -82,6 +97,11 @@ export function KeyboardOverlay({
         tabIndex={-1}
       >
         <div className="max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain p-4 [scrollbar-gutter:stable] sm:p-6" data-dialog-scroll>
+          {destination.kind === "menu" && (
+            <button className="mb-4 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose} type="button">
+              <ArrowLeft aria-hidden="true" className="size-4" /> Back to {destination.label} <kbd>{COMMAND_BACK_HINT}</kbd>
+            </button>
+          )}
           {children}
           <button aria-label="Close" className="sr-only" onClick={onClose} type="button">
             Close

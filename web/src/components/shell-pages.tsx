@@ -4,6 +4,7 @@ import { Bot, Hash, MessageCircle, Paperclip, Plus, Search, SquareTerminal } fro
 import { NOT_CONNECTED_REASON } from "@/api/auto-identify"
 import type { AppController } from "@/hooks/use-app-controller"
 import { AgentDetailPage, AgentsDirectoryPage } from "@/components/agent-pages"
+import { CommandMenuTrigger } from "@/components/commands/command-menu"
 import { WorkspaceDetailPage, WorkspacesDirectoryPage } from "@/components/workspace-pages"
 import { Button } from "@/components/ui/button"
 import { ShellBackLink } from "@/components/shell-back-link"
@@ -246,7 +247,7 @@ function routePageContent({ controller, copy, creation, navigate, route }: { con
     case "agents":
       return <AgentsDirectoryPage controller={controller} navigate={navigate} />
     case "agent":
-      return <AgentDetailPage controller={controller} handle={route.handle} navigate={navigate} />
+      return <AgentDetailPage controller={controller} handle={route.handle} key={route.handle} navigate={navigate} view={route.view} />
     case "attachments": {
       const availableChannels = [
         ...(controller.channelState.status === "ready" ? controller.channelState.channels.map((channel) => channel.name) : []),
@@ -368,7 +369,7 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
       data-shell-page={shellPageName(route)}
       data-shell-route={shellRoutePath(route)}
     >
-      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b px-4">
+      {route.kind !== "agent" && <header className="flex min-h-14 shrink-0 items-center gap-3 border-b px-4">
         <ShellBackLink
           destination={backDestination}
           label={backLabel}
@@ -390,8 +391,9 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
             </Button>
           </div>
         )}
-      </header>
-      <section className="min-h-0 flex-1 overflow-y-auto" data-page-content={route.kind}>
+        <div className={createRoute === undefined ? "ml-auto" : ""}><CommandMenuTrigger compact onOpen={() => controller.setChannelPickerOpen(true)} /></div>
+      </header>}
+      <section className={route.kind === "agent" ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-y-auto"} data-page-content={route.kind}>
         {routePageContent({ controller, copy, creation, navigate, route })}
       </section>
     </main>
