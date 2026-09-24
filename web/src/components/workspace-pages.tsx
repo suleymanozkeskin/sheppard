@@ -27,6 +27,7 @@ import { AgentStatusMark } from "@/components/agent-status-mark"
 import { Button } from "@/components/ui/button"
 import { KeyboardOverlay } from "@/components/ui/keyboard-overlay"
 import type { AppController } from "@/hooks/use-app-controller"
+import { useKeyboardLayer } from "@/hooks/use-keyboard-dispatcher"
 import { cn } from "@/lib/utils"
 import type { ShellRoute, ShellRouter, WorkspaceFilter } from "@/shell-routing"
 import {
@@ -427,9 +428,12 @@ const contextMenuRequestSchema = v.variant("kind", [
   v.object({ kind: v.literal("workspace"), workspaceId: v.string() }),
   v.object({ kind: v.literal("pane"), paneId: v.string() }),
 ])
+const DIRECTORY_MENU_LAYER = { mode: "modal", scope: "menu" } as const
 
 function isContextMenuRequest(event: Event, kind: "pane" | "workspace", id: string): boolean {
   if (!(event instanceof CustomEvent)) return false
+  const focused = globalThis.document.activeElement
+  if (!(focused instanceof HTMLElement) || focused.closest("[data-workspace-card]") === null) return false
   const parsed = v.safeParse(contextMenuRequestSchema, event.detail)
   if (!parsed.success) return false
   switch (parsed.output.kind) {
@@ -446,17 +450,7 @@ function WorkspaceDirectoryMenu({ controller, onClose, workspace }: { controller
   const canWrite = controller.identity !== null
   const reporterAvailable = controller.roles.some((role) => role.name === "reporter")
   const label = workspaceLabel(workspace)
-  useEffect(() => {
-    if (!globalThis.document || globalThis.document.activeElement === null) return
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    globalThis.addEventListener("keydown", handleKeyDown)
-    return () => globalThis.removeEventListener("keydown", handleKeyDown)
-  }, [onClose])
+  useKeyboardLayer(DIRECTORY_MENU_LAYER, undefined, onClose)
   return (
     <div aria-label={`${label} actions`} className="absolute right-2 top-10 z-20 min-w-48 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg" data-workspace-menu role="menu">
       {reporterAvailable && (
@@ -509,16 +503,7 @@ function WorkspaceDirectoryAgentMenu({ controller, identity, onClose, pane }: { 
   const canWrite = controller.identity !== null
   const participant = pane.participant
   const stopAvailable = pane.agentKind !== null && paneStopConfirmation(pane) !== null
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    globalThis.addEventListener("keydown", handleKeyDown)
-    return () => globalThis.removeEventListener("keydown", handleKeyDown)
-  }, [onClose])
+  useKeyboardLayer(DIRECTORY_MENU_LAYER, undefined, onClose)
   return (
     <div aria-label={`${identity} actions`} className="absolute right-2 top-7 z-20 min-w-48 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg" data-agent-menu role="menu">
       {participant === null
