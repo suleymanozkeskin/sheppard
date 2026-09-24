@@ -1,10 +1,11 @@
-import type { KeyboardEvent } from "react"
+import { useRef, type KeyboardEvent } from "react"
 
 import { matchCommands, parseCommandQuery } from "@/commands/search"
 import { recipientCatalog } from "@/commands/catalog"
 import {
   commandChoice,
   commandEntry,
+  COMMAND_QUERY_LIMIT,
   type CommandChoice,
   type CommandEntry,
   type CommandFilter,
@@ -84,24 +85,30 @@ function CommandBrowserView({
   query,
   remaining,
 }: CommandBrowserViewProps) {
+  const browserRef = useRef<HTMLDivElement>(null)
   const active = position.active
   const setActive = (next: number) => onPosition({ ...position, active: next })
   const activeIndex = Math.max(0, Math.min(active, entries.length - 1))
   const selected = entries[activeIndex]
-  function handleKey(event: KeyboardEvent<HTMLInputElement>): void {
+  function handleKey(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.nativeEvent.isComposing || event.altKey || event.metaKey || event.ctrlKey) return
+    const input = browserRef.current?.querySelector<HTMLInputElement>("input[role=combobox]")
+    const inSearch = event.target === input
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault()
         event.stopPropagation()
-        setActive(Math.max(0, Math.min(entries.length - 1, active + 1)))
+        setActive(entries.length === 0 ? 0 : (activeIndex + 1) % entries.length)
+        input?.focus()
         break
       case "ArrowUp":
         event.preventDefault()
         event.stopPropagation()
-        setActive(Math.max(0, active - 1))
+        setActive(entries.length === 0 ? 0 : (activeIndex + entries.length - 1) % entries.length)
+        input?.focus()
         break
       case "Enter":
+        if (!inSearch) return
         event.preventDefault()
         event.stopPropagation()
         if (selected !== undefined) onChoose(selected)
@@ -110,7 +117,9 @@ function CommandBrowserView({
         if (
           selected === undefined ||
           selected.alternatives.length === 0 ||
-          event.currentTarget.selectionStart !== query.length
+          !inSearch ||
+          input?.selectionStart !== query.length ||
+          input.selectionEnd !== query.length
         )
           return
         event.preventDefault()
@@ -118,15 +127,19 @@ function CommandBrowserView({
         onActions(selected)
         break
       default:
+        if (!inSearch && event.key.length === 1 && event.key !== " ") {
+          event.preventDefault()
+          if (query.length < COMMAND_QUERY_LIMIT) onPosition({ ...position, active: 0, query: query + event.key })
+          input?.focus()
+        }
         break
     }
   }
   return (
-    <>
+    <div className="command-browser" onKeyDown={handleKey} ref={browserRef}>
       <CommandSearchInput
         activeId={selected === undefined ? undefined : commandOptionId(activeIndex)}
         onChange={(value) => onPosition({ ...position, active: 0, query: value })}
-        onKeyDown={handleKey}
         placeholder={
           mode === "recipients"
             ? "Find a person or channel…"
@@ -137,7 +150,10 @@ function CommandBrowserView({
         query={query}
       />
       {mode !== "actions" && (
-        <CommandFilters filter={filter} onChange={(value) => onPosition({ query: filterQuery, active: 0, filter: value })} />
+        <CommandFilters
+          filter={filter}
+          onChange={(value) => onPosition({ query: filterQuery, active: 0, filter: value })}
+        />
       )}
       <CommandResults
         activeIndex={activeIndex}
@@ -147,6 +163,6 @@ function CommandBrowserView({
         remaining={remaining}
       />
       <CommandFooter onActions={onActions} selected={selected} />
-    </>
+    </div>
   )
 }

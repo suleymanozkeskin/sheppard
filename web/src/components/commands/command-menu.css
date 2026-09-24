@@ -50,6 +50,11 @@
   flex-direction: column;
   min-height: 0;
 }
+.command-browser {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .command-window :is(button, a, input, textarea):focus-visible {
   outline: 2px solid var(--command-accent);
   outline-offset: 2px;

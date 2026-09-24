@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { browserCommandModifier } from "@/commands/keyboard"
 import {
   ArrowDown,
@@ -92,13 +92,11 @@ export function CommandBreadcrumb({ children, onBack }: { children: ReactNode; o
 export function CommandSearchInput({
   query,
   onChange,
-  onKeyDown,
   activeId,
   placeholder,
 }: {
   query: string
   onChange: (value: string) => void
-  onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void
   activeId: string | undefined
   placeholder: string
 }) {
@@ -117,7 +115,6 @@ export function CommandSearchInput({
         maxLength={COMMAND_QUERY_LIMIT}
         name="command-search"
         onChange={(event) => onChange(event.target.value)}
-        onKeyDown={onKeyDown}
         placeholder={placeholder}
         role="combobox"
         spellCheck={false}
@@ -136,11 +133,43 @@ export function CommandFilters({
   onChange: (filter: CommandFilter) => void
 }) {
   return (
-    <div aria-label="Filter commands" className="command-filters">
+    <div
+      aria-label="Filter commands"
+      className="command-filters"
+      role="toolbar"
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.altKey || event.metaKey || event.ctrlKey) return
+        const index = FILTERS.findIndex((item) => item.value === filter)
+        let next: number
+        switch (event.key) {
+          case "ArrowRight":
+            next = (index + 1) % FILTERS.length
+            break
+          case "ArrowLeft":
+            next = (index + FILTERS.length - 1) % FILTERS.length
+            break
+          case "Home":
+            next = 0
+            break
+          case "End":
+            next = FILTERS.length - 1
+            break
+          default:
+            return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        const selected = FILTERS[next]
+        if (selected === undefined) throw new Error("Command filter index is outside its fixed catalogue")
+        onChange(selected.value)
+        event.currentTarget.querySelectorAll<HTMLButtonElement>("button")[next]?.focus()
+      }}
+    >
       {FILTERS.map((item) => (
         <button
           aria-pressed={filter === item.value}
           key={item.value}
+          tabIndex={filter === item.value ? 0 : -1}
           onClick={() => onChange(item.value)}
           type="button"
         >
