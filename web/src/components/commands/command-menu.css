@@ -126,13 +126,57 @@
   width: 11px;
   height: 11px;
 }
+.command-category-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 8px;
+  padding: 6px 19px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
 .command-filters {
   display: flex;
   gap: 4px;
-  padding: 0 19px 12px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.command-category-guide {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.command-category-enter,
+.command-category-move {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.command-category-move,
+.command-category-bar:focus-within .command-category-enter {
+  display: none;
+}
+.command-category-bar:focus-within .command-category-move {
+  display: flex;
+}
+.command-category-bar:focus-within .command-category-guide {
+  color: var(--command-accent);
+}
+.command-browser:has(.command-filters:focus-within) .command-option[data-active="true"] {
+  background: transparent;
+  border-color: transparent;
+}
+.command-browser:has(.command-filters:focus-within) .command-option[data-active="true"] .command-option-icon {
+  color: var(--muted-foreground);
+  background: var(--muted);
+}
+.command-category-footer-hint,
+.command-browser:has(.command-filters:focus-within) .command-footer > .command-hint,
+.command-browser:has(.command-filters:focus-within) .command-actions-button kbd {
+  display: none;
+}
+.command-browser:has(.command-filters:focus-within) .command-category-footer-hint {
+  display: inline;
 }
 .command-filters button {
   display: flex;
@@ -141,7 +185,7 @@
   white-space: nowrap;
   padding: 5px 9px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted-foreground);
   transition:
     background-color 100ms,
@@ -587,6 +631,22 @@
   }
   .command-filters button {
     min-height: 36px;
+    min-width: 30px;
+    padding-inline: 4px;
+    font-size: 11px;
+  }
+  .command-filters {
+    gap: 2px;
+  }
+  .command-category-bar {
+    padding-inline: 12px;
+  }
+  .command-category-guide {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .command-filters button span {
+    display: none;
   }
 }
 .command-window :is(button, a),

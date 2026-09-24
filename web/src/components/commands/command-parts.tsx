@@ -33,7 +33,13 @@ import { shellRoutePath } from "@/shell-routing"
 import type { CommandChoice, CommandEntry, CommandFilter, CommandGlyph, CommandGroup } from "@/commands/types"
 import { COMMAND_QUERY_LIMIT } from "@/commands/types"
 import { commandOptionId } from "@/commands/browser-state"
-import { COMMAND_BACK_HINT, COMMAND_LIST_BACK_HINT } from "@/commands/navigation-keys"
+import {
+  COMMAND_BACK_HINT,
+  COMMAND_LIST_BACK_HINT,
+  COMMAND_CATEGORIES_HINT,
+  COMMAND_CATEGORY_HELP,
+} from "@/commands/navigation-keys"
+import { COMMAND_CATEGORIES } from "@/commands/categories"
 
 const GLYPHS = {
   agent: Bot,
@@ -65,13 +71,6 @@ const GROUP_NAMES = {
   workspace: "Workspaces",
   page: "Explore",
 } satisfies Record<CommandGroup, string>
-const FILTERS: readonly { readonly value: CommandFilter; readonly label: string; readonly prefix: string }[] = [
-  { value: "all", label: "All", prefix: "" },
-  { value: "agent", label: "Agents", prefix: "@" },
-  { value: "chat", label: "Channels", prefix: "#" },
-  { value: "workspace", label: "Workspaces", prefix: "" },
-  { value: "action", label: "Actions", prefix: ">" },
-]
 
 export function CommandIcon({ glyph }: { glyph: CommandGlyph }) {
   const Icon = GLYPHS[glyph]
@@ -112,11 +111,13 @@ export function CommandSearchInput({
   onChange,
   activeId,
   placeholder,
+  categoryHelpId,
 }: {
   query: string
   onChange: (value: string) => void
   activeId: string | undefined
   placeholder: string
+  categoryHelpId: string | undefined
 }) {
   return (
     <div className="command-search">
@@ -125,6 +126,7 @@ export function CommandSearchInput({
         aria-activedescendant={activeId}
         aria-autocomplete="list"
         aria-controls="command-results"
+        aria-describedby={categoryHelpId}
         aria-expanded="true"
         aria-label="Search commands and places"
         autoComplete="off"
@@ -147,55 +149,52 @@ export function CommandSearchInput({
 export function CommandFilters({
   filter,
   onChange,
+  helpId,
+  entry,
 }: {
   filter: CommandFilter
   onChange: (filter: CommandFilter) => void
+  helpId: string
+  entry: "tab" | "tab-or-up"
 }) {
   return (
-    <div
-      aria-label="Filter commands"
-      className="command-filters"
-      role="toolbar"
-      onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing || event.altKey || event.metaKey || event.ctrlKey) return
-        const index = FILTERS.findIndex((item) => item.value === filter)
-        let next: number
-        switch (event.key) {
-          case "ArrowRight":
-            next = (index + 1) % FILTERS.length
-            break
-          case "ArrowLeft":
-            next = (index + FILTERS.length - 1) % FILTERS.length
-            break
-          case "Home":
-            next = 0
-            break
-          case "End":
-            next = FILTERS.length - 1
-            break
-          default:
-            return
-        }
-        event.preventDefault()
-        event.stopPropagation()
-        const selected = FILTERS[next]
-        if (selected === undefined) throw new Error("Command filter index is outside its fixed catalogue")
-        onChange(selected.value)
-        event.currentTarget.querySelectorAll<HTMLButtonElement>("button")[next]?.focus()
-      }}
-    >
-      {FILTERS.map((item) => (
-        <button
-          aria-pressed={filter === item.value}
-          key={item.value}
-          tabIndex={filter === item.value ? 0 : -1}
-          onClick={() => onChange(item.value)}
-          type="button"
-        >
-          {item.label}
-          {item.prefix.length > 0 && <span aria-hidden="true">{item.prefix}</span>}
-        </button>
-      ))}
+    <div className="command-category-bar">
+      <p className="sr-only" id={helpId}>
+        {COMMAND_CATEGORY_HELP}
+      </p>
+      <div aria-label="Filter commands" aria-describedby={helpId} className="command-filters" role="toolbar">
+        {COMMAND_CATEGORIES.map((item) => (
+          <button
+            aria-pressed={filter === item.value}
+            aria-controls="command-results"
+            data-command-category={item.value}
+            key={item.value}
+            tabIndex={filter === item.value ? 0 : -1}
+            onClick={() => onChange(item.value)}
+            type="button"
+          >
+            {item.label}
+            {item.prefix.length > 0 && <span aria-hidden="true">{item.prefix}</span>}
+          </button>
+        ))}
+      </div>
+      <span aria-hidden="true" className="command-category-guide">
+        <span className="command-category-enter">
+          <kbd>{COMMAND_CATEGORIES_HINT}</kbd>
+          {entry === "tab-or-up" && (
+            <>
+              <span>/</span>
+              <kbd>↑</kbd>
+            </>
+          )}
+          Categories
+        </span>
+        <span className="command-category-move">
+          <kbd>←</kbd>
+          <kbd>→</kbd> Switch <span>·</span> <kbd>↓</kbd>
+          <kbd>↵</kbd> Results
+        </span>
+      </span>
     </div>
   )
 }
@@ -335,6 +334,7 @@ export function CommandFooter({
       <span className="command-brand">
         <Command aria-hidden="true" className="size-3.5" /> Sheppard
       </span>
+      <span className="command-category-footer-hint">Type to search</span>
       <span className="command-hint">
         <kbd>
           <ArrowUp aria-label="Up" />

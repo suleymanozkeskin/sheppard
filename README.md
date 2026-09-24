@@ -43,10 +43,12 @@ Press **Cmd+K** on macOS or **Ctrl+K** on Linux and Windows. You can also use th
 
 The agent page shows the saved harness transcript and direct messages side by side. Each pane scrolls separately. Channel activity and details open in the left pane. Narrow windows use tabs. Its message field shares a draft with the command menu. Drafts stay in memory when you close the menu or change pages.
 
-Drafts do not survive a browser reload. Up to eight targets can have drafts. In the command menu, Up/Down selects results, including when a category has focus. Left/Right changes categories when the category toolbar has focus.
+Drafts do not survive a browser reload. Up to eight targets can have drafts.
 
 Navigation uses the same rules at each level:
 
+- From search, **Tab** moves to Categories. **Left/Right** changes the category. **Down** or **Enter** returns to the selected result without skipping it. The category row shows these keys.
+- **Up/Down** selects results. **Up** from the first result moves to Categories, even when the search has no matches. Search text stays in place. Action lists without categories wrap at either end.
 - **Escape** returns one level. **Left Arrow** or **Backspace** also returns from an empty child search. At the root, Escape closes the menu.
 - Back restores the parent search, category, and selected result. Message drafts and spawn settings stay available.
 - **Tab/Shift+Tab** moves between controls. Text fields keep their normal editing keys. In a select field, **Up/Down** moves through options and **Enter** selects; it does not submit the form.

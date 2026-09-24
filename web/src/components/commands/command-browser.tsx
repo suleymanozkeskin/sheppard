@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from "react"
+import { useId, useLayoutEffect, useRef, type RefObject } from "react"
 
 import { matchCommands, parseCommandQuery } from "@/commands/search"
 import { recipientCatalog } from "@/commands/catalog"
@@ -12,7 +12,8 @@ import {
 } from "@/commands/types"
 import { CommandFilters, CommandFooter, CommandResults, CommandSearchInput } from "./command-parts"
 import { commandOptionId, type CommandBrowserPosition } from "@/commands/browser-state"
-import type { CommandListKeyboard } from "@/commands/navigation-keys"
+import type { CommandListIntent, CommandListKeyboard } from "@/commands/navigation-keys"
+import { moveCommandCategory } from "@/commands/categories"
 
 export interface CommandBrowserProps {
   entries: readonly CommandEntry[]
@@ -89,42 +90,29 @@ function CommandBrowserView({
   listKeyboard,
 }: CommandBrowserViewProps) {
   const browserRef = useRef<HTMLDivElement>(null)
+  const categoryHelpId = useId()
   const active = position.active
   const setActive = (next: number) => onPosition({ ...position, active: next })
   const activeIndex = Math.max(0, Math.min(active, entries.length - 1))
   const selected = entries[activeIndex]
-  useLayoutEffect(() => {
-    listKeyboard.current = (intent, key) => {
-      const input = browserRef.current?.querySelector<HTMLInputElement>("[data-command-search]")
-      switch (intent) {
-        case "next":
-        case "previous": {
-          const step = intent === "next" ? 1 : entries.length - 1
-          onPosition({ ...position, active: entries.length === 0 ? 0 : (activeIndex + step) % entries.length })
-          input?.focus()
-          return true
-        }
-        case "choose":
-          if (selected !== undefined) onChoose(selected)
-          return true
-        case "actions":
-          if (selected === undefined || selected.alternatives.length === 0) return false
-          onActions(selected)
-          return true
-        case "type":
-          if (query.length < COMMAND_QUERY_LIMIT) onPosition({ ...position, active: 0, query: query + key })
-          input?.focus()
-          return true
-      }
-    }
-    return () => {
-      listKeyboard.current = null
-    }
-  }, [activeIndex, entries.length, listKeyboard, onActions, onChoose, onPosition, position, query, selected])
+  useCommandBrowserKeyboard({
+    browserRef,
+    listKeyboard,
+    entries,
+    activeIndex,
+    selected,
+    position,
+    filter,
+    filterQuery,
+    onPosition,
+    onChoose,
+    onActions,
+  })
   return (
     <div className="command-browser" ref={browserRef}>
       <CommandSearchInput
         activeId={selected === undefined ? undefined : commandOptionId(activeIndex)}
+        categoryHelpId={mode === "actions" ? undefined : categoryHelpId}
         onChange={(value) => onPosition({ ...position, active: 0, query: value })}
         placeholder={
           mode === "recipients"
@@ -138,6 +126,8 @@ function CommandBrowserView({
       {mode !== "actions" && (
         <CommandFilters
           filter={filter}
+          helpId={categoryHelpId}
+          entry={activeIndex === 0 ? "tab-or-up" : "tab"}
           onChange={(value) => onPosition({ query: filterQuery, active: 0, filter: value })}
         />
       )}
@@ -151,4 +141,75 @@ function CommandBrowserView({
       <CommandFooter onActions={onActions} selected={selected} />
     </div>
   )
+}
+
+interface CommandBrowserKeyboardProps extends Pick<
+  CommandBrowserViewProps,
+  "listKeyboard" | "entries" | "position" | "filter" | "filterQuery" | "onPosition" | "onChoose" | "onActions"
+> {
+  readonly browserRef: RefObject<HTMLDivElement | null>
+  readonly activeIndex: number
+  readonly selected: CommandEntry | undefined
+}
+
+/** Registers list navigation for the open menu. It changes local selection/focus, not API data. */
+function useCommandBrowserKeyboard(props: CommandBrowserKeyboardProps) {
+  const { listKeyboard } = props
+  useLayoutEffect(() => {
+    listKeyboard.current = (intent, key) => handleCommandBrowserKey(props, intent, key)
+    return () => {
+      listKeyboard.current = null
+    }
+  }, [listKeyboard, props])
+}
+
+/** Handles one list key. False leaves native behavior; true consumes the key. Choices use the host action handler. */
+function handleCommandBrowserKey(props: CommandBrowserKeyboardProps, intent: CommandListIntent, key: string): boolean {
+  const { browserRef, entries, activeIndex, selected, position, filter, filterQuery, onPosition, onChoose, onActions } =
+    props
+  const input = browserRef.current?.querySelector<HTMLInputElement>("[data-command-search]")
+  switch (intent) {
+    case "next-category":
+    case "previous-category":
+    case "first-category":
+    case "last-category": {
+      const next = moveCommandCategory(filter, intent)
+      onPosition({ query: filterQuery, active: 0, filter: next })
+      browserRef.current?.querySelector<HTMLButtonElement>(`[data-command-category="${next}"]`)?.focus()
+      return true
+    }
+    case "results":
+      input?.focus()
+      return true
+    case "next":
+    case "previous": {
+      const category = browserRef.current?.querySelector<HTMLButtonElement>(
+        "[data-command-category][aria-pressed=true]",
+      )
+      if (intent === "previous" && activeIndex === 0 && category !== null && category !== undefined) {
+        category.focus()
+        return true
+      }
+      const step = intent === "next" ? 1 : entries.length - 1
+      onPosition({ ...position, active: entries.length === 0 ? 0 : (activeIndex + step) % entries.length })
+      input?.focus()
+      return true
+    }
+    case "choose":
+      if (selected !== undefined) onChoose(selected)
+      return true
+    case "actions":
+      if (selected === undefined || selected.alternatives.length === 0) return false
+      onActions(selected)
+      return true
+    case "type":
+      if (position.query.length < COMMAND_QUERY_LIMIT)
+        onPosition({ ...position, active: 0, query: position.query + key })
+      input?.focus()
+      return true
+    default: {
+      const unhandled: never = intent
+      throw new Error(`Command browser has no handler for intent ${unhandled}`)
+    }
+  }
 }
