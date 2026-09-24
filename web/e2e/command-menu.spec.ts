@@ -737,6 +737,54 @@ test("keyboard-only select with no match cannot submit a spawn", async ({ page }
   await expect(search).toHaveValue("spawn")
 })
 
+const SPAWN_PICKER_NAMES = ["Workspace", "Role", "Harness", "Launcher", "Model", "Effort"] as const
+
+for (const colorScheme of ["light", "dark"] as const) {
+  for (const width of [1280, 390] as const) {
+    test(`spawn focus follows the complete field in ${colorScheme} at ${width}px`, async ({ page }) => {
+      const writes = await installCommandFixtures(page)
+      await page.setViewportSize({ width, height: 800 })
+      await page.emulateMedia({ colorScheme })
+      await page.addInitScript((mode) => {
+        localStorage.setItem("msgr.theme.v1", JSON.stringify({ version: 1, mode }))
+      }, colorScheme)
+      await page.goto("/agents/codex-reviewer")
+      await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme)
+      await page.keyboard.press("Meta+k")
+      const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+      await expect(menu.getByRole("combobox", { name: "Search commands and places" })).toBeFocused()
+      await page.keyboard.type("spawn")
+      await page.keyboard.press("Enter")
+      for (const name of SPAWN_PICKER_NAMES) {
+        const input = menu.getByRole("combobox", { name, exact: true })
+        const control = menu.locator(`[data-combobox="command-${name.toLowerCase()}"] [data-combobox-control]`)
+        await tabTo(page, input)
+        await expect(input).toHaveCSS("outline-style", "none")
+        await expect(control).toHaveCSS("outline-style", "solid")
+        await expect(control).toHaveCSS("outline-width", "2px")
+        await expect(control).toHaveCSS("box-shadow", "none")
+        expect(await control.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThan(0)
+        const trigger = control.getByRole("button", { name: `Open ${name} options` })
+        await expect(trigger).toHaveAttribute("tabindex", "-1")
+        await page.keyboard.press("ArrowDown")
+        await expect(input).toHaveAttribute("aria-expanded", "true")
+        await expect(control).toHaveCSS("outline-width", "2px")
+        await page.screenshot({ path: `/private/tmp/sheppard-focus-${colorScheme}-${width}-${name.toLowerCase()}.png` })
+        await page.keyboard.press("Escape")
+        await expect(input).toHaveAttribute("aria-expanded", "false")
+      }
+      const handle = menu.getByRole("textbox", { name: "Handle", exact: true })
+      await tabTo(page, handle)
+      await expect(handle).toHaveCSS("outline-width", "2px")
+      const submit = menu.getByRole("button", { name: "Spawn agent", exact: true })
+      await tabTo(page, submit)
+      await expect(submit).toHaveCSS("outline-width", "2px")
+      await expect(submit).toHaveCSS("box-shadow", "none")
+      expect(writes).toEqual([])
+    })
+  }
+}
+
 for (const command of ["Settings", "Keyboard shortcuts", "Open inbox"] as const) {
   test(`keyboard-only ${command} returns to its command`, async ({ page }) => {
     const writes = await installCommandFixtures(page)

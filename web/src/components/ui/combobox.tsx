@@ -189,7 +189,7 @@ export function Combobox({
         }}
       >
         {label !== undefined && <label className="text-sm font-medium" htmlFor={resolvedId}>{label}</label>}
-        <BaseCombobox.InputGroup className="relative flex min-h-11 items-center rounded-xl border bg-background pl-4 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+        <BaseCombobox.InputGroup data-combobox-control className="relative flex min-h-11 items-center rounded-xl border bg-background pl-4 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
           <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
             {startAdornment ?? (selected === null ? undefined : selected.leading)}
           </span>
