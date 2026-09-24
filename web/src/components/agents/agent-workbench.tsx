@@ -10,6 +10,7 @@ import {
   SquareTerminal,
   StopCircle,
   ArrowUpRight,
+  ArrowLeft,
 } from "lucide-react"
 import { Menu } from "@base-ui/react/menu"
 
@@ -37,6 +38,7 @@ import { agentLocation } from "@/commands/catalog"
 import { absoluteTimeLabel, paneStatusLabel, relativeAgeLabel, workspaceLabel } from "@/workspace-presentation"
 import { shellRoutePath, type AgentView, type ShellRoute, type ShellRouter } from "@/shell-routing"
 import { AgentSessionPanel } from "./agent-session-panel"
+import { CommandMenuTrigger } from "@/components/commands/command-menu"
 import "./agent-workbench.css"
 
 interface AgentWorkbenchProps {
@@ -81,12 +83,14 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     case "loading":
       return (
         <div className="agent-workbench-state" role="status">
+          <AgentBackLink />
           Loading agent…
         </div>
       )
     case "error":
       return (
         <div className="agent-workbench-state">
+          <AgentBackLink />
           <h2>Agent details are unavailable</h2>
           <p role="alert">{record.state.message}</p>
           <Button onClick={record.reload} variant="outline">
@@ -123,6 +127,9 @@ function ReadyAgentWorkbench({
   const conversation = useAgentConversation(controller, handle)
   const activity = useAgentActivity(controller.api, detail.recentMessageIds ?? NO_RECENT_MESSAGES, view === "activity")
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    if (view === "messages") inputRef.current?.focus()
+  }, [view])
   const [actionState, setActionState] = useState<PaneActionState>({ kind: "idle" })
   const selectView = (next: AgentView) => {
     if (next === "activity") onRefresh()
@@ -168,21 +175,29 @@ function ReadyAgentWorkbench({
           {actionState.failure.message}
         </p>
       )}
-      <div className="agent-workbench-grid">
-        <div className="agent-workbench-main">
-          <AgentViewTabs handle={handle} onSelect={selectView} view={view} />
+      <div className="agent-workbench-grid" data-active-view={view}>
+        <AgentViewTabs handle={handle} onSelect={selectView} view={view} mode="split" />
+        <AgentViewTabs handle={handle} onSelect={selectView} view={view} mode="single" />
+        <div className="agent-conversation-heading">
+          <MessageCircle aria-hidden="true" className="size-4" />
+          <h2>Messages</h2>
+          <span>Direct conversation</span>
+        </div>
+        <section aria-label="Agent session and details" className="agent-workbench-main" data-agent-session-pane>
           <AgentReadingArea
             paneState={paneState}
             activity={activity}
             controller={controller}
-            conversation={conversation}
             detail={detail}
             navigate={navigate}
             pane={pane}
             session={session}
-            view={view}
+            view={view === "messages" ? "session" : view}
             workspace={workspace}
           />
+        </section>
+        <section aria-label="Agent messages" className="agent-workbench-messages" data-agent-messages-pane>
+          <AgentConversation controller={controller} model={conversation} />
           <AgentMessageComposer
             controller={controller}
             handle={handle}
@@ -191,10 +206,7 @@ function ReadyAgentWorkbench({
             onViewConversation={() => selectView("messages")}
             routeState={detail.routeState}
           />
-        </div>
-        <aside className="agent-workbench-context">
-          <AgentContext controller={controller} detail={detail} navigate={navigate} pane={pane} workspace={workspace} />
-        </aside>
+        </section>
       </div>
     </div>
   )
@@ -316,17 +328,20 @@ function AgentViewTabs({
   handle,
   onSelect,
   view,
+  mode,
 }: {
   handle: string
   onSelect: (view: AgentView) => void
   view: AgentView
+  mode: "split" | "single"
 }) {
+  const selected = mode === "split" && view === "messages" ? "session" : view
+  const views = mode === "split" ? AGENT_VIEWS.filter((item) => item.view !== "messages") : AGENT_VIEWS
   return (
-    <nav aria-label="Agent views" className="agent-view-tabs">
-      {AGENT_VIEWS.map((item) => (
+    <nav aria-label="Agent views" className="agent-view-tabs" data-layout={mode}>
+      {views.map((item) => (
         <a
-          aria-current={view === item.view ? "page" : undefined}
-          className={item.view === "details" ? "agent-details-tab" : undefined}
+          aria-current={selected === item.view ? "page" : undefined}
           href={shellRoutePath({ kind: "agent", handle, view: item.view })}
           key={item.view}
           onClick={(event) => {
@@ -346,19 +361,17 @@ interface ReadingAreaProps {
   paneState: AgentPaneState
   activity: AgentActivityState
   controller: AppController
-  conversation: ReturnType<typeof useAgentConversation>
   detail: AgentDetail
   navigate: ShellRouter["navigate"]
   pane: HerdrPaneView | null
   session: ReturnType<typeof useAgentSession>
-  view: AgentView
+  view: Exclude<AgentView, "messages">
   workspace: HerdrWorkspaceView | undefined
 }
 
 function AgentReadingArea({
   activity,
   controller,
-  conversation,
   detail,
   navigate,
   pane,
@@ -386,8 +399,6 @@ function AgentReadingArea({
           </p>
         )
       return <AgentSessionReader canSelect={controller.identity !== null} pane={pane} session={session} />
-    case "messages":
-      return <AgentConversation controller={controller} model={conversation} />
     case "activity":
       return (
         <div className="agent-reading-scroll">
@@ -419,13 +430,18 @@ function AgentSessionReader({
   useEffect(() => {
     if (source?.source.state !== "ready" || session.readState.kind !== "idle") return
     const timer = window.setInterval(() => {
-      if (follow.current && document.visibilityState === "visible") session.refresh()
+      if (follow.current && document.visibilityState === "visible" && scrollRef.current?.getClientRects().length)
+        session.refresh()
     }, SESSION_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
   }, [source?.source.state, session.readState.kind, session.refresh])
   useLayoutEffect(() => {
     const element = scrollRef.current
     if (element === null || source === undefined) return
+    if (source.source.state !== "ready") {
+      element.scrollTop = 0
+      return
+    }
     if (anchor.current.kind === "preserve" && anchor.current.source !== source) {
       element.scrollTop = anchor.current.top + element.scrollHeight - anchor.current.height
       anchor.current = { kind: "none" }
@@ -538,7 +554,7 @@ function AgentMessageComposer({
   routeState: AgentDetail["routeState"]
 }) {
   useComposerAutosize(inputRef, model.draft)
-  useComposerFocusTarget(inputRef)
+  useComposerFocusTarget(inputRef, onViewConversation)
   const disabled = controller.identity === null || model.state.kind === "sending"
   return (
     <form
@@ -773,11 +789,12 @@ function AgentHeading({
   const handle = detail.participant.handle
   return (
     <div className="agent-workbench-heading">
+      <AgentBackLink />
       <span className="agent-workbench-avatar">
         <AgentAvatar agentKind={detail.participant.agentKind} />
       </span>
       <div>
-        <h2 data-agent-identity>{handle}</h2>
+        <h1 data-agent-identity>{handle}</h1>
         <div className="agent-workbench-facts" data-agent-identity-facts>
           <span>{detail.participant.agentKind ?? "Agent"}</span>
           {detail.participant.role != null && (
@@ -820,7 +837,16 @@ function AgentHeaderControls({
         Focus terminal
       </Button>
       <AgentMoreMenu controller={controller} handle={handle} pane={pane} />
+      <CommandMenuTrigger compact onOpen={() => controller.setChannelPickerOpen(true)} />
     </div>
+  )
+}
+
+function AgentBackLink() {
+  return (
+    <a aria-label="Back to Agents" className="agent-back-link" href={shellRoutePath({ kind: "agents" })}>
+      <ArrowLeft aria-hidden="true" className="size-4" />
+    </a>
   )
 }
 

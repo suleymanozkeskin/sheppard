@@ -220,6 +220,43 @@ test("category filters keep the search text and message intent", async ({ page }
   await expect(menu.getByRole("textbox", { name: "Message codex-reviewer" })).toBeVisible()
 })
 
+test("menu arrows work from categories and return to result navigation", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.goto("/agents/codex-reviewer")
+  await page.getByRole("button", { name: "Open command menu", exact: true }).last().click()
+  const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+  const input = menu.getByRole("combobox")
+  await expect(input).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(menu.getByRole("button", { name: "All", exact: true })).toBeFocused()
+  await page.keyboard.press("ArrowRight")
+  const agents = menu.getByRole("button", { name: "Agents", exact: true })
+  await expect(agents).toBeFocused()
+  await expect(agents).toHaveAttribute("aria-pressed", "true")
+  await page.keyboard.press("ArrowDown")
+  await expect(input).toBeFocused()
+  await expect(menu.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true")
+  await page.keyboard.press("ArrowUp")
+  await expect(menu.getByRole("option").first()).toHaveAttribute("aria-selected", "true")
+  await page.keyboard.press("Enter")
+  await expect(menu).toBeHidden()
+})
+
+test("typing and arrows still work after a category click", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.goto("/agents")
+  await page.keyboard.press("Meta+k")
+  const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
+  await menu.getByRole("button", { name: "Agents", exact: true }).click()
+  await page.keyboard.type("reviewer")
+  await expect(menu.getByRole("combobox")).toHaveValue("reviewer")
+  await expect(menu.getByRole("combobox")).toBeFocused()
+  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("ArrowUp")
+  await page.keyboard.press("Enter")
+  await expect(page).toHaveURL(/\/agents\/codex-reviewer$/u)
+})
+
 test("unconfirmed spawn keeps its setup and requires an explicit retry choice", async ({ page }) => {
   await installCommandFixtures(page)
   let attempts = 0
@@ -336,9 +373,62 @@ test("agent workbench puts the session and composer within reach", async ({ page
   await page.goBack()
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible()
   await page.setViewportSize({ width: 390, height: 844 })
+  await expect(composer).toBeHidden()
+  await page.keyboard.press("c")
   await expect(composer).toBeInViewport()
+  await expect(composer).toBeFocused()
   await page.screenshot({ path: "/private/tmp/sheppard-agent-workbench-mobile.png" })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test("agent session and chat share the full page height in a vertical split", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.setViewportSize({ width: 960, height: 700 })
+  await page.goto("/agents/codex-reviewer")
+  await page.getByRole("button", { name: "Hide sidebar", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible()
+  const session = page.locator("[data-agent-session-pane]")
+  const messages = page.locator("[data-agent-messages-pane]")
+  await expect(session).toBeVisible()
+  await expect(messages).toBeVisible()
+  const left = await session.boundingBox()
+  const right = await messages.boundingBox()
+  if (left === null || right === null) throw new Error("Both agent panes must have a layout box")
+  expect(left.x + left.width).toBeLessThanOrEqual(right.x + 1)
+  expect(Math.abs(left.y - right.y)).toBeLessThan(1)
+  expect(left.height).toBeGreaterThan(500)
+  expect(Math.abs(left.height - right.height)).toBeLessThan(1)
+  await page.screenshot({ path: "/private/tmp/sheppard-agent-vertical-split.png" })
+})
+
+test("ambiguous session choices open at the start instead of the last path", async ({ page }) => {
+  await installCommandFixtures(page)
+  await page.route("**/api/herdr/agents/*/session", (route) =>
+    route.fulfill({
+      json: {
+        ...reviewerSession,
+        turns: [],
+        source: { ...reviewerSession.source, state: "ambiguous", sessionPath: null, glance: null },
+        mapping: {
+          confidence: "ambiguous",
+          candidates: Array.from({ length: 5 }, (_, index) => ({
+            sessionId: `choice-${index}`,
+            path: `/sessions/review-${index}.jsonl`,
+            startedAt: "2026-09-24T12:00:00Z",
+            sizeBytes: 2048,
+            cwd: "/work/review",
+            firstUserText: `Review batch ${index}.`,
+          })),
+        },
+      },
+    }),
+  )
+  await page.goto("/agents/codex-reviewer")
+  await expect(page.getByText("Candidate sessions", { exact: true })).toBeInViewport()
+  await expect(page.getByRole("button", { name: "Select session choice-0", exact: true })).toBeInViewport()
+  expect(await page.locator("[data-agent-session-pane] .agent-reading-scroll").evaluate((node) => node.scrollTop)).toBe(
+    0,
+  )
 })
 
 test("an unconfirmed send stays blocked after Back and reopening", async ({ page }) => {

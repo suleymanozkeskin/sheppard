@@ -369,7 +369,7 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
       data-shell-page={shellPageName(route)}
       data-shell-route={shellRoutePath(route)}
     >
-      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b px-4">
+      {route.kind !== "agent" && <header className="flex min-h-14 shrink-0 items-center gap-3 border-b px-4">
         <ShellBackLink
           destination={backDestination}
           label={backLabel}
@@ -379,8 +379,8 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
           }}
         />
         <div className="min-w-0">
-          <h1 className="truncate text-base font-semibold">{route.kind === "agent" ? "Agents" : copy.title}</h1>
-          {route.kind !== "agent" && route.kind !== "workspaces" && route.kind !== "channels" && route.kind !== "staffing" && <p className="truncate text-xs text-muted-foreground">{copy.description}</p>}
+          <h1 className="truncate text-base font-semibold">{copy.title}</h1>
+          {route.kind !== "workspaces" && route.kind !== "channels" && route.kind !== "staffing" && <p className="truncate text-xs text-muted-foreground">{copy.description}</p>}
         </div>
         {createRoute !== undefined && createLabel !== undefined && (
           <div className="ml-auto flex shrink-0 items-center gap-2" data-page-header-actions>
@@ -392,7 +392,7 @@ export function ShellPageMain({ controller, creation, navigate, route }: { contr
           </div>
         )}
         <div className={createRoute === undefined ? "ml-auto" : ""}><CommandMenuTrigger compact onOpen={() => controller.setChannelPickerOpen(true)} /></div>
-      </header>
+      </header>}
       <section className={route.kind === "agent" ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-y-auto"} data-page-content={route.kind}>
         {routePageContent({ controller, copy, creation, navigate, route })}
       </section>

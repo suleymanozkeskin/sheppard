@@ -41,7 +41,9 @@ Press **Cmd+K** on macOS or **Ctrl+K** on Linux and Windows. You can also use th
 - Type `message @worker` to write directly to one agent. The form shows who receives the message. **Cmd/Ctrl+Enter** sends; **Enter** adds a line.
 - Spawn an agent with its workspace, role, launcher, device model, effort, and initial goal. Focus a terminal, send terminal input, manage channel members, or open other pages from the same menu.
 
-The agent page puts the saved harness transcript, direct messages, and channel activity in separate tabs. Its message field shares a draft with the command menu. Drafts stay in memory when you close the menu or change pages. They do not survive a browser reload. Up to eight targets can have drafts.
+The agent page shows the saved harness transcript and direct messages side by side. Each pane scrolls separately. Channel activity and details open in the left pane. Narrow windows use tabs. Its message field shares a draft with the command menu. Drafts stay in memory when you close the menu or change pages.
+
+Drafts do not survive a browser reload. Up to eight targets can have drafts. In the command menu, Up/Down selects results, including when a category has focus. Left/Right changes categories when the category toolbar has focus.
 
 Messages and terminal input are separate actions. Channel joins require an explicit action. Stopping an agent requires confirmation. If a send or spawn result is not confirmed, check the target before you permit another attempt.
 

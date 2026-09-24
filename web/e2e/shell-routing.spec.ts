@@ -307,6 +307,7 @@ test("@guard Agents directory opens an agent detail page", async ({ page }) => {
 
   await page.getByRole("button", { name: "Open agent codex-reviewer" }).click()
   await expect(page).toHaveURL(/\/agents\/codex-reviewer$/)
+  await page.getByRole("link", { name: "Details", exact: true }).click()
   await expect(page.locator('[data-agent-view="codex-reviewer"]')).toContainText("pane-web")
 })
 
