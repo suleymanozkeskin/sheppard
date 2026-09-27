@@ -133,6 +133,7 @@ function fallback404(operation: Operation): Cause {
       return "ChannelNotFound";
     case "createChannel":
     case "createDirect":
+    case "alertHuman":
     case "createHuman":
     case "createAgent":
     case "listChannels":
@@ -172,6 +173,7 @@ function fallbackCause(operation: Operation, status: number): Cause {
         case "closeWorkspace":
         case "context":
         case "createDirect":
+        case "alertHuman":
         case "createWorkspace":
         case "inbox":
         case "joinChannel":

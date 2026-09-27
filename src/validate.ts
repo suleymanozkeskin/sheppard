@@ -8,6 +8,8 @@
 
 import { Result } from "better-result";
 import { type ValidationFailed, validationFailed } from "./errors";
+import { type JsonObject, optionalInteger } from "./json";
+import type { KeepAwakeLimits, Minutes, WakeCount } from "./types";
 
 export const NAME_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 const SPACE = 0x20;
@@ -204,4 +206,60 @@ export function validAttachmentPaths(paths: string[]): Result<string[], Validati
 export function clampLimit(requested: number, fallback: number, ceiling: number): number {
   if (requested <= 0) return fallback;
   return Math.min(requested, ceiling);
+}
+
+export const DEFAULT_KEEP_AWAKE_IDLE_MINUTES = 20;
+export const DEFAULT_KEEP_AWAKE_BLOCKED_MINUTES = 30;
+export const DEFAULT_KEEP_AWAKE_MAX_WAKES = 3;
+export const MAX_KEEP_AWAKE_MINUTES = 1_440;
+export const MAX_KEEP_AWAKE_WAKES = 10;
+export const MAX_HUMAN_ALERT_LENGTH = 4_096;
+
+function boundedCount(
+  body: JsonObject,
+  field: string,
+  fallback: number,
+  ceiling: number,
+): Result<number, ValidationFailed> {
+  const value = optionalInteger(body, field, fallback);
+  if (value.isErr()) return value;
+  if (value.value < 1 || value.value > ceiling) {
+    return Result.err(validationFailed(field, `must be between 1 and ${ceiling}`));
+  }
+  return value;
+}
+
+/**
+ * The only constructor of `Minutes` and `WakeCount`. An absent field takes its
+ * default; a present field outside its bound is refused, never clamped, so the
+ * human sees the limit that was actually stored.
+ */
+export function validKeepAwakeLimits(body: JsonObject): Result<KeepAwakeLimits, ValidationFailed> {
+  return Result.gen(function* () {
+    const idle = yield* boundedCount(
+      body, "idleMinutes", DEFAULT_KEEP_AWAKE_IDLE_MINUTES, MAX_KEEP_AWAKE_MINUTES,
+    );
+    const blocked = yield* boundedCount(
+      body, "blockedMinutes", DEFAULT_KEEP_AWAKE_BLOCKED_MINUTES, MAX_KEEP_AWAKE_MINUTES,
+    );
+    const maxWakes = yield* boundedCount(
+      body, "maxWakes", DEFAULT_KEEP_AWAKE_MAX_WAKES, MAX_KEEP_AWAKE_WAKES,
+    );
+    // SAFETY: each value was checked against its unit's bound just above.
+    return Result.ok({
+      idleMinutes: idle as Minutes,
+      blockedMinutes: blocked as Minutes,
+      maxWakes: maxWakes as WakeCount,
+    });
+  });
+}
+
+export function validHumanAlert(value: string): Result<string, ValidationFailed> {
+  if (value.trim().length === 0) return Result.err(validationFailed("text", "must not be empty"));
+  if (value.length > MAX_HUMAN_ALERT_LENGTH) {
+    return Result.err(
+      validationFailed("text", `must be at most ${MAX_HUMAN_ALERT_LENGTH} characters`),
+    );
+  }
+  return validText(value, "text", true);
 }

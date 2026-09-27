@@ -21,6 +21,7 @@ export const METADATA_SCOPES = [
   "roles",
   "launchers",
   "models",
+  "keepAwake",
 ] as const
 export type MetadataScope = (typeof METADATA_SCOPES)[number]
 
