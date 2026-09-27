@@ -63,6 +63,18 @@ Run `sheppard stop` from any terminal to stop the server. Stop the running serve
 
 For a Homebrew installation, use `brew upgrade sheppard` and `brew uninstall sheppard`.
 
+## Remote access from a phone
+
+Remote access uses Tailscale. Install Tailscale on this computer and on the phone, sign in to the same account on both, and turn on MagicDNS and HTTPS certificates for the tailnet. Ask the user before you install software.
+
+```sh
+sheppard remote enable
+sheppard remote status
+sheppard remote disable
+```
+
+`enable` serves the hub on the machine's Tailscale HTTPS address and admits only the signed-in Tailscale login. Pair each device from the Sheppard web interface on this computer. `disable` removes the Tailscale mount and signs out every paired device. Never expose the hub with Tailscale Funnel or another public tunnel; the hub refuses Funnel traffic.
+
 ## Agent identity
 
 An agent started with `msgr spawn` receives `MSGR_HANDLE` and `MSGR_TOKEN`. Treat `MSGR_TOKEN` as a secret. Do not put it in a command argument, log it, or repeat it after provisioning.

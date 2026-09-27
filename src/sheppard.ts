@@ -11,6 +11,8 @@ import { CliHerdr } from "./herdr";
 import { decodeObject, requiredString, type JsonValue } from "./json";
 import { activeHubPid } from "./lock";
 import { startHub } from "./server";
+import { runRemote } from "./remote-command";
+import { CliTailscale, type TailscalePort } from "./tailscale";
 import { SHEPPARD_VERSION } from "./version";
 
 const SHEPPARD_HELP = `Sheppard — the agent messaging and control plane for Herdr
@@ -21,6 +23,9 @@ const SHEPPARD_HELP = `Sheppard — the agent messaging and control plane for He
   sheppard update                update this Sheppard installation
   sheppard --version             print the installed version
   sheppard uninstall [--yes]     remove the standalone commands and keep user data
+  sheppard remote enable         serve Sheppard to your tailnet and allow pairing
+  sheppard remote disable        stop serving and sign out every paired device
+  sheppard remote status         show the remote address and paired devices
   sheppard msgr <command...>     run an agent messaging command
   sheppard --help                show this help
 
@@ -37,6 +42,7 @@ export interface SheppardMainOptions {
   env?: Bun.Env;
   output?: DistributionOutput;
   processControl?: SheppardProcessControl;
+  tailscale?: TailscalePort;
   webAssets?: ReadonlyMap<string, string>;
 }
 
@@ -254,6 +260,8 @@ export async function runSheppard(options: SheppardMainOptions = {}): Promise<nu
     }
     case "msgr":
       return runMsgr(commandArguments(argv, "msgr"), env, config, output);
+    case "remote":
+      return runRemote(commandArguments(argv, "remote"), config, options.tailscale ?? new CliTailscale(), output);
     default:
       output.fail(`Unknown Sheppard command: ${command}`);
       return usageError(output);
