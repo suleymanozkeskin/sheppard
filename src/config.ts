@@ -174,6 +174,29 @@ export const DEFAULT_HARNESSES: readonly HarnessConfig[] = Object.freeze(
   ),
 );
 
+/**
+ * Claude Code permission rule that lets a started agent run `msgr` without an
+ * approval dialog. Without it, every `msgr` call from the default permission
+ * mode blocks the agent until a human answers. Claude Code checks each command
+ * of a compound shell line on its own, so the rule does not cover a second
+ * command chained after `msgr`.
+ */
+export const CLAUDE_MSGR_ALLOW_RULE = "Bash(msgr *)";
+
+/**
+ * Harness arguments that the hub adds to every agent it starts, after the
+ * launcher's own arguments. The `=` form keeps Claude's variadic
+ * `--allowedTools` from taking any argument that follows it.
+ */
+export function msgrAccessArgv(agentKind: string): readonly string[] {
+  switch (agentKind) {
+    case "claude":
+      return [`--allowedTools=${CLAUDE_MSGR_ALLOW_RULE}`];
+    default:
+      return [];
+  }
+}
+
 function parseHarnesses(raw: string | undefined): readonly HarnessConfig[] {
   if (raw === undefined || raw.trim().length === 0) return DEFAULT_HARNESSES;
 

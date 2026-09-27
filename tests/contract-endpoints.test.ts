@@ -495,7 +495,7 @@ describe("spawn presets", () => {
           paneId: "w1:spawned-3",
           name: "neutral-claude",
           kind: "claude",
-          argv: ["claude", "--model", "neutral-model", "--effort", "neutral-effort"],
+          argv: ["claude", "--allowedTools=Bash(msgr *)", "--model", "neutral-model", "--effort", "neutral-effort"],
         },
         {
           paneId: "w2:spawned-4",
@@ -570,7 +570,7 @@ describe("spawn presets", () => {
           paneId: "w1:spawned-2",
           name: "lead",
           kind: "claude",
-          argv: ["claude", "--model", "opus", "--effort", "high"],
+          argv: ["claude", "--allowedTools=Bash(msgr *)", "--model", "opus", "--effort", "high"],
         },
       ]);
     } finally {
@@ -590,7 +590,7 @@ describe("spawn presets", () => {
 
       expect(response.status).toBe(201);
       expect(herdr.agentStarts).toEqual([
-        { paneId: "w1:spawned-2", name: "claude-default", kind: "claude", argv: ["claude"] },
+        { paneId: "w1:spawned-2", name: "claude-default", kind: "claude", argv: ["claude", "--allowedTools=Bash(msgr *)"] },
       ]);
     } finally {
       cleanup();
@@ -630,7 +630,7 @@ describe("spawn presets", () => {
           paneId: "w1:spawned-2",
           name: "claude-effort",
           kind: "claude",
-          argv: ["claude", "--effort", "high"],
+          argv: ["claude", "--allowedTools=Bash(msgr *)", "--effort", "high"],
         },
       ]);
     } finally {
@@ -864,7 +864,7 @@ describe("spawn presets", () => {
           paneId: "w1:spawned-2",
           name: "scout",
           kind: "claude",
-          argv: ["claude", "--model", "opus", "--effort", "high"],
+          argv: ["claude", "--allowedTools=Bash(msgr *)", "--model", "opus", "--effort", "high"],
         },
       ]);
     } finally {

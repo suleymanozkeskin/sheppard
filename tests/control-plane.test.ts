@@ -521,7 +521,7 @@ describe("herdr control plane", () => {
         paneId: "w1:spawned-2",
         name: "worker",
         kind: "claude",
-        argv: ["/tmp/claude-wrapper", "--profile", "work"],
+        argv: ["/tmp/claude-wrapper", "--profile", "work", "--allowedTools=Bash(msgr *)"],
       },
     ]);
     expect(herdr.panes.find((pane) => pane.paneId === "w1:spawned-2")?.agent).toBe("claude");

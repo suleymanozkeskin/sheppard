@@ -23,6 +23,7 @@ import {
   type ServerConfig,
   HOST,
   loadConfig,
+  msgrAccessArgv,
 } from "./config";
 import { CONTROL_TOKEN_HEADER, ensureLocalControlToken } from "./control-token";
 import { openDatabase } from "./db";
@@ -2592,7 +2593,7 @@ async function spawnHerdrAgent(
         ...(curatedEffort?.argvSuffix ?? []),
       ];
     }
-    const spawnArgv = [...launcher.argv, ...optionArgv];
+    const spawnArgv = [...launcher.argv, ...msgrAccessArgv(launcher.agentKind), ...optionArgv];
 
     const operationRequest = {
       workspaceId: request.workspaceId,
