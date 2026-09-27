@@ -3884,6 +3884,10 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
     }
 
     switch (route) {
+      case "GET /api/me":
+        return requireAuth(hub, request, headers, (caller) =>
+          jsonResponse({ handle: caller.handle, kind: caller.kind }, 200, headers),
+        );
       case "GET /api/meta":
         return jsonResponse({ name: "sheppard", version: hub.config.applicationVersion ?? SHEPPARD_VERSION }, 200, headers);
       case "POST /api/agents":

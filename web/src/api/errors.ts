@@ -15,6 +15,7 @@ export type Operation =
   | "listModels" | "createModel" | "listModelCatalogue" | "refreshModelCatalogue"
   | "spawnAgent" | "connectAgent" | "stopAgent" | "promptAgent"
   | "listKeepAwake" | "getKeepAwake" | "setKeepAwake" | "clearKeepAwake"
+  | "getMe" | "getRemoteAccess" | "createPairingCode" | "redeemPairingCode" | "revokeRemoteSession"
 
 const responseBodySchema = v.object({
   code: v.optional(v.string()),
@@ -191,5 +192,16 @@ function parseResponseBody(body: string): v.InferOutput<typeof responseBodySchem
       return decoded.success ? decoded.output : undefined
     },
     err: () => undefined,
+  })
+}
+
+/** The hub's refusal code and message, when the error is a hub refusal. */
+export function hubRefusal(error: ApiError): { code: string | undefined; detail: string | undefined } {
+  return error.match({
+    ApiHttpError: (failure) => ({ code: responseCode(failure.body), detail: responseDetail(failure.body) }),
+    ApiNetworkError: () => ({ code: undefined, detail: undefined }),
+    ApiDecodeError: () => ({ code: undefined, detail: undefined }),
+    ApiNotFoundError: () => ({ code: undefined, detail: undefined }),
+    ApiConflictError: () => ({ code: undefined, detail: undefined }),
   })
 }

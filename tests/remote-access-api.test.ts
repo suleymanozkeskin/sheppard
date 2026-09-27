@@ -121,6 +121,13 @@ describe("pairing", () => {
     expect(await status.json()).toMatchObject({ sessions: [{ handle: "human" }] });
   });
 
+  test("a paired phone reads its own identity", async () => {
+    const { hub, phone } = await paired();
+    const me = await remote(hub, "GET", "/api/me", null, phone);
+    expect(await me.json()).toEqual({ handle: "human", kind: "human" });
+    expect((await remote(hub, "GET", "/api/me", null)).status).toBe(401);
+  });
+
   test("a code works once", async () => {
     const { hub, pairing } = await paired();
     const again = await remote(hub, "POST", "/api/pairing/redeem", { code: pairing.code });

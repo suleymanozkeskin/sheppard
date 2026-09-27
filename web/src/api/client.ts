@@ -36,6 +36,11 @@ import {
   harnessListSchema,
   keepAwakePolicyListSchema,
   keepAwakeSettingResultSchema,
+  pairedDeviceSchema,
+  pairingCodeSchema,
+  callerIdentitySchema,
+  remoteAccessStatusSchema,
+  revokedRemoteSessionSchema,
   launcherListSchema,
   launcherSchema,
   humanRegistrationSchema,
@@ -123,6 +128,12 @@ import type {
   RequestBody,
   KeepAwakePolicyList,
   KeepAwakeSettingResult,
+  PairedDevice,
+  PairingCode,
+  RedeemPairingRequest,
+  CallerIdentity,
+  RemoteAccessStatus,
+  RevokedRemoteSession,
   SetAgentKeepAwakeRequest,
   SetChannelKeepAwakeRequest,
   SearchList,
@@ -492,6 +503,26 @@ export class HttpMsgrApi implements MsgrApi {
     return this.request("DELETE", keepAwakePath("channels", name), keepAwakeSettingResultSchema)
   }
 
+  public getMe(): ApiResult<CallerIdentity> {
+    return this.request("GET", "/api/me", callerIdentitySchema)
+  }
+
+  public getRemoteAccess(): ApiResult<RemoteAccessStatus> {
+    return this.request("GET", "/api/remote-access", remoteAccessStatusSchema)
+  }
+
+  public createPairingCode(): ApiResult<PairingCode> {
+    return this.request("POST", "/api/pairing", pairingCodeSchema, {})
+  }
+
+  public redeemPairingCode(request: RedeemPairingRequest): ApiResult<PairedDevice> {
+    return this.request("POST", "/api/pairing/redeem", pairedDeviceSchema, request)
+  }
+
+  public revokeRemoteSession(id: number): ApiResult<RevokedRemoteSession> {
+    return this.request("DELETE", `/api/remote-access/sessions/${id}`, revokedRemoteSessionSchema)
+  }
+
   public listChannels(kind?: "chat" | "workspace"): ApiResult<ChannelList> {
     const suffix = kind === undefined ? "" : `?kind=${encodeURIComponent(kind)}`
     return this.request("GET", `/api/channels${suffix}`, channelListSchema)
@@ -772,6 +803,11 @@ function keepAwakePath(target: "agents" | "channels", name: string): string {
 }
 
 function operationForRequest(method: HttpMethod, path: string): Operation {
+  if (path === "/api/me") return "getMe"
+  if (path === "/api/remote-access") return "getRemoteAccess"
+  if (path.startsWith("/api/remote-access/sessions/")) return "revokeRemoteSession"
+  if (path === "/api/pairing") return "createPairingCode"
+  if (path === "/api/pairing/redeem") return "redeemPairingCode"
   if (path === "/api/keep-awake") return "listKeepAwake"
   if (path.startsWith("/api/keep-awake/")) {
     switch (method) {

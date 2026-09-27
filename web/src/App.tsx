@@ -27,8 +27,8 @@ import {
 import * as v from "valibot"
 
 import { formatApiError } from "@/api/errors"
-import { apiCall } from "@/api/runtime"
-import type { AgentStatus, Channel, DirectConversation, HerdrPaneView, HerdrWorkspaceView, InboxEntry, Member, Participant, SearchResult } from "@/api/types"
+import { apiCall, createBrowserApi } from "@/api/runtime"
+import type { AgentStatus, Channel, DirectConversation, HerdrPaneView, HerdrWorkspaceView, InboxEntry, Member, MsgrApi, Participant, SearchResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import { ShellBackLink } from "@/components/shell-back-link"
 import type { CreationPagesController } from "@/components/creation-pages"
@@ -54,6 +54,9 @@ import { CommandDraftProvider } from "@/components/commands/draft-provider"
 import { CommandReturnProvider } from "@/components/commands/command-return-provider"
 import { commandFocus, commandKeyIntent } from "@/commands/navigation-keys"
 import { shellRoutePath, useShellRouter, type ShellRoute, type ShellRouter } from "@/shell-routing"
+import { PAIR_PATH, pageSite } from "@/remote-access"
+import { DevicesPanel } from "@/components/remote/devices-panel"
+import { PairPage } from "@/components/remote/pair-page"
 import { isThemeMode, type ResolvedTheme, type ThemeMode } from "@/theme"
 import {
   agentPaneCount,
@@ -130,7 +133,17 @@ function creationPagesController(controller: AppController): CreationPagesContro
   }
 }
 
+/** The phone pairing page stands alone; every other path is the workspace shell. */
 function App() {
+  return globalThis.location.pathname === PAIR_PATH ? <PairApp /> : <ShellApp />
+}
+
+function PairApp() {
+  const api = useMemo(() => createBrowserApi(), [])
+  return <PairPage api={api} />
+}
+
+function ShellApp() {
   const router = useShellRouter()
   const contextRoute = messageContextRoute(router.route)
   const contextTarget: MessageContextTarget | undefined = contextRoute === undefined
@@ -2087,6 +2100,7 @@ function WorkspaceOverlays({ controller }: { controller: AppController }) {
 
       {settingsOpen && (
         <WorkspaceSettings
+          api={controller.api}
           bindings={bindings}
           onClose={() => setSettingsOpen(false)}
           onSaveBindings={saveKeyboardBindings}
@@ -2828,6 +2842,7 @@ function ParticipantMark({ participant }: { participant: Participant }) {
 }
 
 interface WorkspaceSettingsProps {
+  api: MsgrApi
   bindings: KeyboardBindings
   onClose: () => void
   onSaveBindings: (bindings: KeyboardBindings) => void
@@ -2838,6 +2853,7 @@ interface WorkspaceSettingsProps {
 }
 
 function WorkspaceSettings({
+  api,
   bindings,
   onClose,
   onSaveBindings,
@@ -2863,6 +2879,12 @@ function WorkspaceSettings({
           </p>
         </section>
       </div>
+      {/* Pairing and device control stay on this computer; a paired phone cannot pair more. */}
+      {pageSite(globalThis.location.protocol) === "local" && (
+        <div className="mt-5">
+          <DevicesPanel api={api} />
+        </div>
+      )}
       <div className="mt-5 grid gap-5 sm:grid-cols-2">
         <ThemeSettings mode={themeMode} onChange={onThemeChange} resolvedTheme={resolvedTheme} />
         <KeyboardSettings bindings={bindings} onSave={onSaveBindings} />

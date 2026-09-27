@@ -320,6 +320,40 @@ export const keepAwakeSettingResultSchema = v.object({
 })
 
 export const keepAwakePolicyListSchema = v.object({ policies: v.array(keepAwakePolicySchema) })
+
+const remoteAccessSchema = v.variant("kind", [
+  v.object({ kind: v.literal("off") }),
+  v.object({
+    kind: v.literal("on"),
+    host: v.string(),
+    origin: v.string(),
+    ownerLogin: v.string(),
+    enabledAt: v.string(),
+  }),
+])
+
+const remoteSessionSchema = v.object({
+  id: integer,
+  handle: v.string(),
+  createdAt: v.string(),
+  lastSeen: v.variant("kind", [
+    v.object({ kind: v.literal("seen"), at: v.string() }),
+    v.object({ kind: v.literal("not-seen") }),
+  ]),
+})
+
+export const callerIdentitySchema = v.object({
+  handle: v.string(),
+  kind: v.picklist(["agent", "human"]),
+})
+
+export const remoteAccessStatusSchema = v.object({
+  access: remoteAccessSchema,
+  sessions: v.array(remoteSessionSchema),
+})
+export const pairingCodeSchema = v.object({ code: v.string(), expiresAt: v.string(), url: v.string() })
+export const pairedDeviceSchema = v.object({ handle: v.string() })
+export const revokedRemoteSessionSchema = v.object({ revoked: integer })
 export const connectAgentResultSchema = v.object({ handle: v.string(), paneId: v.string() })
 export const closeTabResultSchema = v.object({ tabId: v.string() })
 
