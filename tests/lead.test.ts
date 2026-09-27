@@ -168,6 +168,9 @@ describe("native lead", () => {
       current.exec(`ALTER TABLE lifecycle_agents DROP COLUMN launch_env_json`);
       current.exec(`ALTER TABLE lifecycle_spawn_operations DROP COLUMN launch_env_json`);
       current.exec(`DROP TABLE keep_awake_policies`);
+      current.exec(`DROP TABLE remote_access`);
+      current.exec(`DROP TABLE remote_sessions`);
+      current.exec(`DROP TABLE pairing_codes`);
       current.exec(`PRAGMA user_version = 14`);
       current.close();
 

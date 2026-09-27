@@ -351,6 +351,24 @@ The hub listens on a controlled local interface. Participant tokens authorize
 actions as one handle. The browser uses an HttpOnly session cookie for the human
 participant.
 
+### Remote access
+
+The human can reach the hub from another device through `tailscale serve`.
+The hub still listens on the loopback interface only.
+
+- Remote access is off until the human turns it on from this machine. The
+  setting names one host and one Tailscale login.
+- A request that came through the Tailscale proxy is remote. It is admitted
+  only for the stored host, over HTTPS, from the stored login. Public Funnel
+  traffic is always refused.
+- A remote request authenticates only with a session created by pairing.
+  Agent tokens, loopback human sessions, the local-control credential, and
+  sign-in by handle do not work remotely.
+- Pairing uses a one-time code that a loopback human creates. The code
+  expires after 5 minutes. Five wrong codes in a row cancel every open code.
+- Turning remote access off, or changing its host or login, revokes every
+  remote session.
+
 A connected existing pane uses the protected local-control credential and its
 exact current Herdr route. This is a same-OS-user trust boundary. A process that
 can read the local-control credential and identify a connected pane can act as
