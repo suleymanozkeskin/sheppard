@@ -3,8 +3,8 @@ import { encode } from "uqr"
 
 /** Quiet zone around the code, in modules. The QR standard asks for four. */
 const QUIET_ZONE_MODULES = 4
-/** Rendered size of the square in CSS pixels. */
-const QR_DISPLAY_PIXELS = 208
+/** CSS pixels per module. A whole number keeps module edges sharp. */
+const MODULE_PIXELS = 6
 
 /** One SVG path with a unit square per dark module. */
 function darkModulesPath(modules: readonly (readonly boolean[])[]): string {
@@ -29,11 +29,10 @@ export function QrCode({ value, label }: { value: string; label: string }) {
       aria-label={label}
       className="rounded-lg"
       data-qr-code
-      height={QR_DISPLAY_PIXELS}
+      height={code.size * MODULE_PIXELS}
       role="img"
-      shapeRendering="crispEdges"
       viewBox={`0 0 ${code.size} ${code.size}`}
-      width={QR_DISPLAY_PIXELS}
+      width={code.size * MODULE_PIXELS}
     >
       <rect fill="#ffffff" height={code.size} width={code.size} />
       <path d={path} fill="#000000" />
