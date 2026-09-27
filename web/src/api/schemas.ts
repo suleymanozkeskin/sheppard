@@ -260,6 +260,66 @@ export const renameTabResultSchema = v.object({
 
 export const focusTabResultSchema = v.object({ tabId: v.string() })
 export const promptAgentResultSchema = v.object({ delivered: v.boolean() })
+
+const keepAwakeLimitsSchema = v.object({
+  idleMinutes: integer,
+  blockedMinutes: integer,
+  maxWakes: integer,
+})
+
+const keepAwakeTargetSchema = v.variant("kind", [
+  v.object({ kind: v.literal("agent"), participantId: integer, handle: v.string() }),
+  v.object({
+    kind: v.literal("channel"),
+    channelId: integer,
+    channel: v.string(),
+    coordinatorId: integer,
+    coordinator: v.string(),
+  }),
+])
+
+const needsHumanCauseSchema = v.variant("kind", [
+  v.object({ kind: v.literal("wakes-exhausted") }),
+  v.object({ kind: v.literal("agent-requested"), handle: v.string() }),
+  v.object({
+    kind: v.literal("dialog-unrecognized"),
+    handle: v.string(),
+    reason: v.picklist(["harness-unsupported", "folder-trust", "no-known-dialog"]),
+  }),
+  v.object({ kind: v.literal("dialog-stuck"), handle: v.string() }),
+])
+
+const lastWakeSchema = v.variant("kind", [
+  v.object({ kind: v.literal("woken"), at: v.string() }),
+  v.object({ kind: v.literal("not-woken") }),
+])
+
+const keepAwakeStateSchema = v.variant("kind", [
+  v.object({
+    kind: v.literal("watching"),
+    wakesUsed: integer,
+    lastWake: lastWakeSchema,
+    since: v.string(),
+  }),
+  v.object({ kind: v.literal("needs-human"), cause: needsHumanCauseSchema, since: v.string() }),
+])
+
+export const keepAwakePolicySchema = v.object({
+  id: integer,
+  target: keepAwakeTargetSchema,
+  limits: keepAwakeLimitsSchema,
+  state: keepAwakeStateSchema,
+  humanMarkId: integer,
+})
+
+export const keepAwakeSettingResultSchema = v.object({
+  setting: v.variant("kind", [
+    v.object({ kind: v.literal("off") }),
+    v.object({ kind: v.literal("on"), policy: keepAwakePolicySchema }),
+  ]),
+})
+
+export const keepAwakePolicyListSchema = v.object({ policies: v.array(keepAwakePolicySchema) })
 export const connectAgentResultSchema = v.object({ handle: v.string(), paneId: v.string() })
 export const closeTabResultSchema = v.object({ tabId: v.string() })
 

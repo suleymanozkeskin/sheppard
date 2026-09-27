@@ -14,6 +14,7 @@ export type Operation =
   | "listRoles" | "getRole" | "createRole" | "updateRole" | "updateRoleRuntime" | "deleteRole"
   | "listModels" | "createModel" | "listModelCatalogue" | "refreshModelCatalogue"
   | "spawnAgent" | "connectAgent" | "stopAgent" | "promptAgent"
+  | "listKeepAwake" | "getKeepAwake" | "setKeepAwake" | "clearKeepAwake"
 
 const responseBodySchema = v.object({
   code: v.optional(v.string()),

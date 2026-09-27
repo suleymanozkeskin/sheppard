@@ -1,6 +1,7 @@
 import { Result } from "better-result"
 
-import { ApiConflictError, ApiHttpError, ApiNotFoundError } from "./errors"
+import { draftFromLimits, parseLimitsDraft } from "../keep-awake"
+import { ApiConflictError, ApiHttpError, ApiNotFoundError, type Operation } from "./errors"
 import {
   lastSpokenText,
   mockAttachments,
@@ -59,6 +60,14 @@ import type {
   InboxList,
   JoinResult,
   Member,
+  KeepAwakeLimits,
+  KeepAwakePolicy,
+  KeepAwakePolicyList,
+  KeepAwakeSetting,
+  KeepAwakeSettingResult,
+  KeepAwakeTarget,
+  SetAgentKeepAwakeRequest,
+  SetChannelKeepAwakeRequest,
   MemberList,
   Message,
   MessageList,
@@ -178,6 +187,15 @@ function initialLauncherCatalogue(launcher: Launcher): DeviceCatalogue {
   }
 }
 
+function keepAwakeRefusal(
+  code: "NotFound" | "NotAMember" | "ValidationFailed",
+  error: string,
+  status: 400 | 404,
+  operation: Operation = "setKeepAwake",
+): ApiHttpError {
+  return new ApiHttpError({ body: JSON.stringify({ code, error }), message: error, status, operation })
+}
+
 export class MockMsgrApi implements MsgrApi {
   public readonly prompts: Array<{ paneId: string; text: string }> = []
   private readonly channels: Channel[] = mockChannels.map((channel) => ({ ...channel }))
@@ -230,6 +248,8 @@ export class MockMsgrApi implements MsgrApi {
   )
   private readonly uploadedAttachments = new Map<string, AttachmentMeta>()
   private readonly uploadedContents = new Map<number, string>()
+  private readonly keepAwakePolicies = new Map<string, KeepAwakePolicy>()
+  private nextKeepAwakeId = 1
 
   private findChannel(name: string): Result<Channel, ApiNotFoundError> {
     const channel = [...this.channels, ...this.directChannels, ...this.workspaceChannels].find((candidate) => candidate.name === name)
@@ -777,6 +797,106 @@ export class MockMsgrApi implements MsgrApi {
     }
     this.prompts.push({ paneId, text: request.text })
     return Result.ok({ delivered: true })
+  }
+
+  public async listKeepAwake(): ApiResult<KeepAwakePolicyList> {
+    return Result.ok({ policies: [...this.keepAwakePolicies.values()].sort((left, right) => left.id - right.id) })
+  }
+
+  public async getAgentKeepAwake(handle: string): ApiResult<KeepAwakeSettingResult> {
+    const agent = this.keepAwakeAgent(handle, "getKeepAwake")
+    if (agent.isErr()) return agent
+    return Result.ok({ setting: this.keepAwakeSetting(`agent:${handle}`) })
+  }
+
+  public async setAgentKeepAwake(handle: string, request: SetAgentKeepAwakeRequest): ApiResult<KeepAwakeSettingResult> {
+    const agent = this.keepAwakeAgent(handle, "setKeepAwake")
+    if (agent.isErr()) return agent
+    const limits = this.keepAwakeLimits(request)
+    if (limits.isErr()) return limits
+    const participantId = this.members.findIndex((member) => member.handle === handle) + 1
+    return Result.ok({
+      setting: this.storeKeepAwake(`agent:${handle}`, { kind: "agent", participantId, handle }, limits.value),
+    })
+  }
+
+  public async clearAgentKeepAwake(handle: string): ApiResult<KeepAwakeSettingResult> {
+    const agent = this.keepAwakeAgent(handle, "clearKeepAwake")
+    if (agent.isErr()) return agent
+    this.keepAwakePolicies.delete(`agent:${handle}`)
+    return Result.ok({ setting: { kind: "off" } })
+  }
+
+  public async getChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult> {
+    const channel = this.findChannel(name)
+    if (channel.isErr()) return channel
+    return Result.ok({ setting: this.keepAwakeSetting(`channel:${name}`) })
+  }
+
+  public async setChannelKeepAwake(name: string, request: SetChannelKeepAwakeRequest): ApiResult<KeepAwakeSettingResult> {
+    const channel = this.findChannel(name)
+    if (channel.isErr()) return channel
+    if (channel.value.kind === "direct") {
+      return Result.err(keepAwakeRefusal("ValidationFailed", "name must name a channel, not a direct conversation", 400))
+    }
+    const coordinator = this.keepAwakeAgent(request.coordinator, "setKeepAwake")
+    if (coordinator.isErr()) return coordinator
+    if (!(this.memberHandlesByChannel.get(name)?.has(request.coordinator) ?? false)) {
+      return Result.err(keepAwakeRefusal("NotAMember", `Not a member of "${name}"`, 400))
+    }
+    const limits = this.keepAwakeLimits(request)
+    if (limits.isErr()) return limits
+    const coordinatorId = this.members.findIndex((member) => member.handle === request.coordinator) + 1
+    return Result.ok({
+      setting: this.storeKeepAwake(
+        `channel:${name}`,
+        { kind: "channel", channelId: channel.value.id, channel: name, coordinatorId, coordinator: request.coordinator },
+        limits.value,
+      ),
+    })
+  }
+
+  public async clearChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult> {
+    const channel = this.findChannel(name)
+    if (channel.isErr()) return channel
+    this.keepAwakePolicies.delete(`channel:${name}`)
+    return Result.ok({ setting: { kind: "off" } })
+  }
+
+  private keepAwakeSetting(key: string): KeepAwakeSetting {
+    const policy = this.keepAwakePolicies.get(key)
+    return policy === undefined ? { kind: "off" } : { kind: "on", policy }
+  }
+
+  private keepAwakeAgent(handle: string, operation: Operation): Result<Member, ApiHttpError> {
+    const agent = this.members.find((member) => member.handle === handle && member.kind === "agent")
+    return agent === undefined
+      ? Result.err(keepAwakeRefusal("NotFound", `Agent "${handle}" not found`, 404, operation))
+      : Result.ok(agent)
+  }
+
+  private keepAwakeLimits(request: KeepAwakeLimits): Result<KeepAwakeLimits, ApiHttpError> {
+    const parsed = parseLimitsDraft(draftFromLimits(request))
+    switch (parsed.kind) {
+      case "valid":
+        return Result.ok(parsed.limits)
+      case "invalid":
+        return Result.err(keepAwakeRefusal("ValidationFailed", parsed.message, 400))
+    }
+  }
+
+  /** A replace starts a fresh watch, as on the hub. */
+  private storeKeepAwake(key: string, target: KeepAwakeTarget, limits: KeepAwakeLimits): KeepAwakeSetting {
+    const previous = this.keepAwakePolicies.get(key)
+    const policy: KeepAwakePolicy = {
+      id: previous?.id ?? this.nextKeepAwakeId++,
+      target,
+      limits,
+      state: { kind: "watching", wakesUsed: 0, lastWake: { kind: "not-woken" }, since: new Date().toISOString() },
+      humanMarkId: 0,
+    }
+    this.keepAwakePolicies.set(key, policy)
+    return { kind: "on", policy }
   }
 
   public async connectAgent(paneId: string, request: ConnectAgentRequest): ApiResult<ConnectAgentResult> {

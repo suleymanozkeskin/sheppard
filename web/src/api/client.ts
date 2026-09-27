@@ -34,6 +34,8 @@ import {
   focusTabResultSchema,
   promptAgentResultSchema,
   harnessListSchema,
+  keepAwakePolicyListSchema,
+  keepAwakeSettingResultSchema,
   launcherListSchema,
   launcherSchema,
   humanRegistrationSchema,
@@ -119,6 +121,10 @@ import type {
   ParticipantList,
   RemovedMember,
   RequestBody,
+  KeepAwakePolicyList,
+  KeepAwakeSettingResult,
+  SetAgentKeepAwakeRequest,
+  SetChannelKeepAwakeRequest,
   SearchList,
   SearchQuery,
   SendMessageRequest,
@@ -458,6 +464,34 @@ export class HttpMsgrApi implements MsgrApi {
     )
   }
 
+  public listKeepAwake(): ApiResult<KeepAwakePolicyList> {
+    return this.request("GET", "/api/keep-awake", keepAwakePolicyListSchema)
+  }
+
+  public getAgentKeepAwake(handle: string): ApiResult<KeepAwakeSettingResult> {
+    return this.request("GET", keepAwakePath("agents", handle), keepAwakeSettingResultSchema)
+  }
+
+  public setAgentKeepAwake(handle: string, request: SetAgentKeepAwakeRequest): ApiResult<KeepAwakeSettingResult> {
+    return this.request("PUT", keepAwakePath("agents", handle), keepAwakeSettingResultSchema, request)
+  }
+
+  public clearAgentKeepAwake(handle: string): ApiResult<KeepAwakeSettingResult> {
+    return this.request("DELETE", keepAwakePath("agents", handle), keepAwakeSettingResultSchema)
+  }
+
+  public getChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult> {
+    return this.request("GET", keepAwakePath("channels", name), keepAwakeSettingResultSchema)
+  }
+
+  public setChannelKeepAwake(name: string, request: SetChannelKeepAwakeRequest): ApiResult<KeepAwakeSettingResult> {
+    return this.request("PUT", keepAwakePath("channels", name), keepAwakeSettingResultSchema, request)
+  }
+
+  public clearChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult> {
+    return this.request("DELETE", keepAwakePath("channels", name), keepAwakeSettingResultSchema)
+  }
+
   public listChannels(kind?: "chat" | "workspace"): ApiResult<ChannelList> {
     const suffix = kind === undefined ? "" : `?kind=${encodeURIComponent(kind)}`
     return this.request("GET", `/api/channels${suffix}`, channelListSchema)
@@ -733,7 +767,24 @@ export class HttpMsgrApi implements MsgrApi {
   }
 }
 
+function keepAwakePath(target: "agents" | "channels", name: string): string {
+  return `/api/keep-awake/${target}/${encodeURIComponent(name)}`
+}
+
 function operationForRequest(method: HttpMethod, path: string): Operation {
+  if (path === "/api/keep-awake") return "listKeepAwake"
+  if (path.startsWith("/api/keep-awake/")) {
+    switch (method) {
+      case "GET":
+        return "getKeepAwake"
+      case "PUT":
+        return "setKeepAwake"
+      case "DELETE":
+        return "clearKeepAwake"
+      case "POST":
+        return "setKeepAwake"
+    }
+  }
   if (path === "/api/channels" && method === "POST") return "createChannel"
   if (path === "/api/channels" && method === "GET") return "listChannels"
   if (/^\/api\/channels\/[^/]+$/u.test(path) && method === "DELETE") return "deleteChannel"

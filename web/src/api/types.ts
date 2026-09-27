@@ -639,6 +639,8 @@ export type RequestBody =
   | StopAgentRequest
   | PromptAgentRequest
   | AgentSessionSelectionRequest
+  | SetAgentKeepAwakeRequest
+  | SetChannelKeepAwakeRequest
 
 export interface HistoryQuery {
   limit?: number
@@ -680,6 +682,55 @@ export interface PromptAgentResult {
   delivered: boolean
 }
 
+/** Why sheppard could not name a blocked dialog: the server's `UnrecognizedReason`. */
+export type UnrecognizedDialogReason = "harness-unsupported" | "folder-trust" | "no-known-dialog"
+
+export interface KeepAwakeLimits {
+  idleMinutes: number
+  blockedMinutes: number
+  maxWakes: number
+}
+
+export type KeepAwakeTarget =
+  | { kind: "agent"; participantId: number; handle: string }
+  | { kind: "channel"; channelId: number; channel: string; coordinatorId: number; coordinator: string }
+
+export type NeedsHumanCause =
+  | { kind: "wakes-exhausted" }
+  | { kind: "agent-requested"; handle: string }
+  | { kind: "dialog-unrecognized"; handle: string; reason: UnrecognizedDialogReason }
+  | { kind: "dialog-stuck"; handle: string }
+
+export type LastWake = { kind: "woken"; at: string } | { kind: "not-woken" }
+
+export type KeepAwakeState =
+  | { kind: "watching"; wakesUsed: number; lastWake: LastWake; since: string }
+  | { kind: "needs-human"; cause: NeedsHumanCause; since: string }
+
+export interface KeepAwakePolicy {
+  id: number
+  target: KeepAwakeTarget
+  limits: KeepAwakeLimits
+  state: KeepAwakeState
+  humanMarkId: number
+}
+
+export type KeepAwakeSetting = { kind: "off" } | { kind: "on"; policy: KeepAwakePolicy }
+
+export interface KeepAwakeSettingResult {
+  setting: KeepAwakeSetting
+}
+
+export interface KeepAwakePolicyList {
+  policies: KeepAwakePolicy[]
+}
+
+export type SetAgentKeepAwakeRequest = KeepAwakeLimits
+
+export interface SetChannelKeepAwakeRequest extends KeepAwakeLimits {
+  coordinator: string
+}
+
 export interface MsgrApi {
   createAgent(request: CreateAgentRequest): ApiResult<AgentProvision>
   createHuman(request: CreateHumanRequest): ApiResult<HumanRegistration>
@@ -714,6 +765,13 @@ export interface MsgrApi {
   connectAgent(paneId: string, request: ConnectAgentRequest): ApiResult<ConnectAgentResult>
   stopAgent(paneId: string, request: StopAgentRequest): ApiResult<StopAgentResult>
   promptAgent(paneId: string, request: PromptAgentRequest): ApiResult<PromptAgentResult>
+  listKeepAwake(): ApiResult<KeepAwakePolicyList>
+  getAgentKeepAwake(handle: string): ApiResult<KeepAwakeSettingResult>
+  setAgentKeepAwake(handle: string, request: SetAgentKeepAwakeRequest): ApiResult<KeepAwakeSettingResult>
+  clearAgentKeepAwake(handle: string): ApiResult<KeepAwakeSettingResult>
+  getChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult>
+  setChannelKeepAwake(name: string, request: SetChannelKeepAwakeRequest): ApiResult<KeepAwakeSettingResult>
+  clearChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult>
   listChannels(kind?: "chat" | "workspace"): ApiResult<ChannelList>
   listDirect(): ApiResult<DirectList>
   joinChannel(name: string): ApiResult<JoinResult>

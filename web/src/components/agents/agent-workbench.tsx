@@ -16,6 +16,8 @@ import { Menu } from "@base-ui/react/menu"
 
 import type { AgentDetail, AgentSession, HerdrPaneView, HerdrWorkspaceView, Message } from "@/api/types"
 import { Button } from "@/components/ui/button"
+import { KeepAwakeControl } from "@/components/keep-awake-control"
+import { NOT_CONNECTED_REASON } from "@/api/auto-identify"
 import { AgentAvatar } from "@/components/agent-avatar"
 import { AgentStatusMark } from "@/components/agent-status-mark"
 import { ChannelView } from "@/components/channel-view"
@@ -701,6 +703,12 @@ function AgentContext({
           )}
         </dl>
       </section>
+      <KeepAwakeControl
+        api={controller.api}
+        disabledReason={controller.identity === null ? NOT_CONNECTED_REASON : undefined}
+        revision={controller.metadataRevision("keepAwake")}
+        subject={{ kind: "agent", handle: detail.participant.handle }}
+      />
       <p className="agent-context-note">
         Messages are stored in Sheppard. Terminal input is a separate action in the command menu.
       </p>

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react"
 import {
+  AlarmClock,
   Bot,
   FolderOpen,
   Hash,
@@ -33,6 +34,8 @@ import { ShellBackLink } from "@/components/shell-back-link"
 import type { CreationPagesController } from "@/components/creation-pages"
 import { AgentAvatar } from "@/components/agent-avatar"
 import { ChannelView } from "@/components/channel-view"
+import { KeepAwakeControl } from "@/components/keep-awake-control"
+import { keepAwakeAlarms, workspaceLeadHandles, type KeepAwakeAlarm } from "@/keep-awake"
 import { AgentStatusOrb } from "@/components/agent-status-orb"
 import { DictationButton } from "@/components/dictation-button"
 import { KeyboardOverlay } from "@/components/ui/keyboard-overlay"
@@ -278,11 +281,72 @@ function SidebarFrame({ activeSection, children, controller, directManager = fal
       <nav aria-label="Primary navigation" className="flex h-8 shrink-0 items-center justify-around gap-1 border-b px-3" data-quick-nav>
         {SIDEBAR_QUICK_NAV_ITEMS.map((item) => <SidebarPrimaryLink {...item} active={activeSection === item.route} key={item.route} router={router} />)}
       </nav>
+      {controller.identity !== null && <KeepAwakeAlarmList controller={controller} router={router} />}
       <div className="flex min-h-0 flex-1 flex-col" data-sidebar-body>
         {children}
       </div>
     </aside>
   )
+}
+
+type KeepAwakeAlarmState =
+  | { status: "loading" }
+  | { status: "ready"; alarms: KeepAwakeAlarm[] }
+  | { status: "error"; message: string }
+
+/** Keep-awake policies that stopped and wait for the human. Alarms sit above every list. */
+function KeepAwakeAlarmList({ controller, router }: { controller: AppController; router: ShellRouter }) {
+  const [state, setState] = useState<KeepAwakeAlarmState>({ status: "loading" })
+  const revision = controller.metadataRevision("keepAwake")
+  useEffect(() => {
+    let active = true
+    void apiCall(controller.api, undefined, (client) => client.listKeepAwake()).then((result) => {
+      if (!active) return
+      setState(result.isOk()
+        ? { status: "ready", alarms: keepAwakeAlarms(result.value.policies) }
+        : { status: "error", message: formatApiError(result.error) })
+    })
+    return () => {
+      active = false
+    }
+  }, [controller.api, revision])
+
+  switch (state.status) {
+    case "loading":
+      return null
+    case "error":
+      return <SidebarMessageRow role="alert">Keep awake: {state.message}</SidebarMessageRow>
+    case "ready":
+      if (state.alarms.length === 0) return null
+  }
+  return (
+    <section aria-label="Keep awake alarms" className="shrink-0 border-b bg-amber-50 px-2 py-1.5 dark:bg-amber-950/30" data-keep-awake-alarms>
+      {state.alarms.map((alarm) => (
+        <button
+          className="flex w-full items-start gap-2 rounded-md px-1.5 py-1 text-left text-xs text-amber-900 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring dark:text-amber-200 dark:hover:bg-amber-900/40"
+          data-keep-awake-alarm={alarm.policyId}
+          key={alarm.policyId}
+          onClick={() => router.navigate(keepAwakeAlarmRoute(alarm))}
+          type="button"
+        >
+          <AlarmClock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0">
+            <span className="block truncate font-medium">{alarm.label} needs you</span>
+            <span className="block truncate text-amber-800/80 dark:text-amber-200/80">{alarm.detail}</span>
+          </span>
+        </button>
+      ))}
+    </section>
+  )
+}
+
+function keepAwakeAlarmRoute(alarm: KeepAwakeAlarm): ShellRoute {
+  switch (alarm.route.kind) {
+    case "agent":
+      return { kind: "agent", handle: alarm.route.handle }
+    case "channel":
+      return { kind: "channel", channel: alarm.route.name }
+  }
 }
 
 function SidebarPanelHeader({ count, title }: { count: string; title: string }) {
@@ -974,6 +1038,8 @@ function SidebarMessageRow({ children, role, surfaceKind }: { children: ReactNod
 
 function WorkspaceMain({ controller, router }: { controller: AppController; router: ShellRouter }) {
   const [channelMenu, setChannelMenu] = useState<{ x: number; y: number } | undefined>()
+  // The channel whose keep-awake panel is open. Another channel closes it.
+  const [keepAwakeChannel, setKeepAwakeChannel] = useState<string | undefined>()
   const {
     activeWorkspaceId,
     activeChannel,
@@ -1374,6 +1440,19 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
                   <MoreHorizontal aria-hidden="true" />
                   Manage
                 </Button>
+                <Button
+                  aria-expanded={keepAwakeChannel === activeChannel.name}
+                  aria-label={`Keep ${activeChannel.name} awake`}
+                  data-channel-keep-awake={activeChannel.name}
+                  onClick={() => setKeepAwakeChannel((current) => current === activeChannel.name ? undefined : activeChannel.name)}
+                  size="sm"
+                  title="Wake this channel's agents when they go quiet"
+                  type="button"
+                  variant="ghost"
+                >
+                  <AlarmClock aria-hidden="true" />
+                  <span className="hidden lg:inline">Keep awake</span>
+                </Button>
               </>
             )}
             {selectedChannelIsNonMember && (
@@ -1394,6 +1473,21 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             {identity !== null && selectedInbox?.pushEnabled && <span className="ml-2">· push enabled</span>}
           </span>
         </div>}
+        {activeWorkspace === undefined && activeDirect === undefined && activeChannel !== undefined && activeChannel.kind !== "direct" && keepAwakeChannel === activeChannel.name && (
+          <div className="shrink-0 border-b bg-background px-4 py-3">
+            <KeepAwakeControl
+              api={api}
+              disabledReason={identity === null ? NOT_CONNECTED_REASON : undefined}
+              revision={controller.metadataRevision("keepAwake")}
+              subject={{
+                kind: "channel",
+                name: activeChannel.name,
+                members: selectedMembers,
+                leadHandles: workspaceLeadHandles(controller.workspaceData.workspaces),
+              }}
+            />
+          </div>
+        )}
 
         <ChannelDropZone
           conversationSurface={activeWorkspace === undefined && activeDirect !== undefined}
