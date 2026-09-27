@@ -50,6 +50,16 @@ export const HERDR_CONFIRM_TIMEOUT_MS = 10_000;
 /** herdr reports this when a prompt target is not currently hosting an agent. */
 const AGENT_NOT_FOUND = "agent_not_found";
 
+/** herdr reports this when a pane read or key target does not exist. */
+const PANE_NOT_FOUND = "pane_not_found";
+
+/**
+ * The only key the hub may press in an agent's pane. Escape closes a question
+ * or permission dialog without choosing an option, so it never grants anything.
+ * A new key is a type change and a review decision, not a string argument.
+ */
+export type PaneKey = "esc";
+
 export interface PaneInfo {
   paneId: string;
   terminalId: string;
@@ -143,6 +153,15 @@ export interface HerdrPort {
   agentPrompt: (
     paneId: string,
     text: string,
+  ) => Promise<Result<void, NoAgentAtTarget | HerdrCallFailed>>;
+  /** Reads the visible screen of a pane as plain text, at most `lines` lines. */
+  paneRead: (
+    paneId: string,
+    lines: number,
+  ) => Promise<Result<string, NoAgentAtTarget | HerdrCallFailed>>;
+  paneSendKey: (
+    paneId: string,
+    key: PaneKey,
   ) => Promise<Result<void, NoAgentAtTarget | HerdrCallFailed>>;
 }
 
@@ -878,6 +897,63 @@ export class CliHerdr implements HerdrPort {
     const confirmed = resultIn(stdout, command);
     return confirmed.isErr() ? Result.err(confirmed.error) : Result.ok();
   }
+
+  /**
+   * `pane read` prints plain text on success and a JSON refusal with a
+   * non-zero exit on failure, so the exit status decides which stream is data.
+   * Screen text is never placed in an error: it can hold anything the agent saw.
+   */
+  async paneRead(
+    paneId: string,
+    lines: number,
+  ): Promise<Result<string, NoAgentAtTarget | HerdrCallFailed>> {
+    const invoked = await invoke(
+      [this.binary, "pane", "read", paneId, "--source", "visible", "--lines", String(lines)],
+      this.timeoutMs,
+      `pane read ${paneId}`,
+    );
+    if (invoked.isErr()) {
+      const error = invoked.error;
+      return Result.err(herdrCallFailed(error.detail, error.command, error.kind, paneId));
+    }
+
+    const { stdout, stderr, exitCode, command } = invoked.value;
+    if (exitCode === 0) return Result.ok(stdout);
+    const rejection = rejectionIn(stderr) ?? rejectionIn(stdout);
+    if (rejection === null) {
+      return Result.err(reported(command, `exited with status ${exitCode ?? "unknown"}`, paneId));
+    }
+    return rejection.code === PANE_NOT_FOUND
+      ? Result.err(noAgentAtTarget(paneId))
+      : Result.err(reported(command, rejection.message, paneId));
+  }
+
+  async paneSendKey(
+    paneId: string,
+    key: PaneKey,
+  ): Promise<Result<void, NoAgentAtTarget | HerdrCallFailed>> {
+    const invoked = await invoke(
+      [this.binary, "pane", "send-keys", paneId, key],
+      this.timeoutMs,
+      `pane send-keys ${paneId}`,
+    );
+    if (invoked.isErr()) {
+      const error = invoked.error;
+      return Result.err(herdrCallFailed(error.detail, error.command, error.kind, paneId));
+    }
+
+    const { stdout, stderr, exitCode, command } = invoked.value;
+    const rejection = rejectionIn(stderr) ?? rejectionIn(stdout);
+    if (rejection !== null) {
+      return rejection.code === PANE_NOT_FOUND
+        ? Result.err(noAgentAtTarget(paneId))
+        : Result.err(reported(command, rejection.message, paneId));
+    }
+    if (exitCode !== 0) {
+      return Result.err(reported(command, `exited with status ${exitCode ?? "unknown"}`, paneId));
+    }
+    return Result.ok();
+  }
 }
 
 /**
@@ -889,6 +965,13 @@ export class FakeHerdr implements HerdrPort {
   workspaces: HerdrWorkspace[] = [];
   tabs: HerdrTab[] = [];
   readonly prompts: Array<{ paneId: string; text: string }> = [];
+  readonly keys: Array<{ paneId: string; key: PaneKey }> = [];
+  /** The visible screen per pane id, returned by `paneRead`. */
+  readonly screens = new Map<string, string>();
+  readFailure: NoAgentAtTarget | HerdrCallFailed | null = null;
+  keyFailure: NoAgentAtTarget | HerdrCallFailed | null = null;
+  /** Runs after a key is recorded, so a test can model the pane's reaction. */
+  afterKey: (paneId: string, key: PaneKey) => void = () => undefined;
   readonly paneSplits: Array<{ workspaceRootPane: string; options: PaneSplitOptions }> = [];
   readonly paneCloses: string[] = [];
   readonly agentStarts: Array<{
@@ -1137,6 +1220,28 @@ export class FakeHerdr implements HerdrPort {
     const failure = this.promptFailure(paneId);
     if (failure !== null) return Promise.resolve(Result.err(failure));
     this.prompts.push({ paneId, text });
+    return Promise.resolve(Result.ok());
+  }
+
+  paneRead(
+    paneId: string,
+    lines: number,
+  ): Promise<Result<string, NoAgentAtTarget | HerdrCallFailed>> {
+    if (this.readFailure !== null) return Promise.resolve(Result.err(this.readFailure));
+    if (!this.panes.some((pane) => pane.paneId === paneId)) {
+      return Promise.resolve(Result.err(noAgentAtTarget(paneId)));
+    }
+    const screen = this.screens.get(paneId) ?? "";
+    return Promise.resolve(Result.ok(screen.split("\n").slice(-lines).join("\n")));
+  }
+
+  paneSendKey(
+    paneId: string,
+    key: PaneKey,
+  ): Promise<Result<void, NoAgentAtTarget | HerdrCallFailed>> {
+    if (this.keyFailure !== null) return Promise.resolve(Result.err(this.keyFailure));
+    this.keys.push({ paneId, key });
+    this.afterKey(paneId, key);
     return Promise.resolve(Result.ok());
   }
 }
