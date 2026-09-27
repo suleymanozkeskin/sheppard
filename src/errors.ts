@@ -141,9 +141,36 @@ export class DictationUnavailable extends TaggedError("DictationUnavailable")<{
   message: string;
 }> {}
 
+/** Remote access is off, so remote-only actions such as pairing cannot run. */
+export class RemoteAccessOff extends TaggedError("RemoteAccessOff")<{
+  message: string;
+}> {}
+
+export function remoteAccessOff(): RemoteAccessOff {
+  return new RemoteAccessOff({ message: "Remote access is off. Run `sheppard remote enable` first." });
+}
+
+/**
+ * The pairing code is unknown, used, or expired. `cancelled` is true when this
+ * failure hit the limit and every open code was cancelled.
+ */
+export class PairingRefused extends TaggedError("PairingRefused")<{
+  cancelled: boolean;
+  message: string;
+}> {}
+
+export function pairingRefused(cancelled: boolean): PairingRefused {
+  return new PairingRefused({
+    cancelled,
+    message: cancelled
+      ? "Too many wrong pairing codes. Every open code was cancelled; create a new one on the computer."
+      : "The pairing code is not valid or has expired",
+  });
+}
+
 /** A request rejected before any handler ran, by the checks that keep browsers out. */
 export class RequestRejected extends TaggedError("RequestRejected")<{
-  reason: "host" | "origin" | "content_type";
+  reason: "host" | "origin" | "content_type" | "remote";
   message: string;
 }> {}
 

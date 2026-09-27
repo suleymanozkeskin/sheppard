@@ -41,6 +41,7 @@ import {
   notAMember,
   notFound,
   operatorOnly,
+  remoteAccessOff,
   validationFailed,
 } from "./errors";
 import {
@@ -51,6 +52,7 @@ import {
   corsHeaders,
   errorResponse,
   jsonResponse,
+  setRemoteSessionCookie,
   setTokenCookie,
 } from "./http";
 import {
@@ -75,6 +77,15 @@ import {
 import { acquireHubLock } from "./lock";
 import { Notifier } from "./notifier";
 import { KeepAwakeWatcher } from "./keep-awake";
+import {
+  type RequestChannel,
+  classifyRequest,
+  displayPairingCode,
+  mintPairingCode,
+  normalizePairingCode,
+  validOwnerLogin,
+  validRemoteHost,
+} from "./remote";
 import { DeviceModelCatalogue, type DeviceLauncher } from "./model-catalogue";
 import { literalQuery } from "./search";
 import {
@@ -105,6 +116,7 @@ import type {
   Message,
   MetadataScope,
   ModelEntry,
+  PairingCode,
   Participant,
   RoleDetail,
   RolePreset,
@@ -245,6 +257,15 @@ function routedPath(pathname: string): Result<RoutedPath, ValidationFailed> {
       }),
       catch: () => validationFailed("path", "must use valid URL encoding"),
     });
+  }
+  if (
+    first === "api" &&
+    second === "remote-access" &&
+    third === "sessions" &&
+    segments.length === 4 &&
+    fourth !== undefined
+  ) {
+    return Result.ok({ key: "/api/remote-access/sessions/:id", param: fourth, extra: "" });
   }
   if (first === "api" && second === "agents" && segments.length === 3 && third !== undefined) {
     return Result.try({
@@ -3490,12 +3511,7 @@ async function eventStream(hub: Hub, request: Request, headers: Headers): Promis
   // Message frames keep their existing local stream semantics. Receipt frames
   // carry cursor state, so only an authenticated member of that channel can
   // receive them. An unauthenticated stream receives no receipt frames.
-  const receiptPermission = authenticate(
-    request,
-    hub.store,
-    hub.config.herdrSocketPath,
-    presentsLocalControl(hub, request),
-  ).match({
+  const receiptPermission = callerOf(hub, request).match({
     ok: (caller) => (channel: string) => hub.store.isMemberOfChannel(caller.id, channel),
     err: () => undefined,
   });
@@ -3603,6 +3619,143 @@ async function serveStatic(hub: Hub, url: URL, headers: Headers): Promise<Respon
   return jsonResponse({ error: "The web interface has not been built" }, 404, headers);
 }
 
+// ------------------------------------------------------------- remote access
+
+/** Paths a remote request may use before it has a paired session. */
+function remoteOpenRoute(url: URL, route: string): boolean {
+  if (route === "GET /api/meta" || route === "POST /api/pairing/redeem") return true;
+  return !url.pathname.startsWith("/api/") && url.pathname !== "/api";
+}
+
+/**
+ * Remote requests need a paired session for every API route except the
+ * pairing redeem itself. Sign-in by handle is loopback only, because it has
+ * no secret. Returns null when the request may continue.
+ */
+function remoteGate(
+  hub: Hub,
+  request: Request,
+  url: URL,
+  route: string,
+  channel: RequestChannel,
+  headers: Headers,
+): Response | null {
+  switch (channel.kind) {
+    case "local":
+    case "refused":
+      return null;
+    case "remote":
+      break;
+  }
+  if (route === "POST /api/humans") {
+    return errorResponse(operatorOnly("sign in by handle from another device; pair it instead"), headers);
+  }
+  if (remoteOpenRoute(url, route)) return null;
+  const caller = callerOf(hub, request);
+  return caller.isErr() ? errorResponse(caller.error, headers) : null;
+}
+
+/**
+ * Remote access settings change only from this machine: the local-control
+ * credential (the `sheppard remote` command) or a loopback human session.
+ */
+function requireLocalControl(
+  hub: Hub,
+  request: Request,
+  headers: Headers,
+  capability: string,
+  handler: () => Response,
+): Response {
+  if (requestChannel(hub, request).kind !== "local") {
+    return errorResponse(operatorOnly(`${capability} from another device`), headers);
+  }
+  return presentsLocalControl(hub, request)
+    ? handler()
+    : requireHuman(hub, request, headers, capability, handler);
+}
+
+function remoteAccessStatus(hub: Hub, headers: Headers): Response {
+  return jsonResponse(
+    { access: hub.store.remoteAccess(), sessions: hub.store.listRemoteSessions() },
+    200,
+    headers,
+  );
+}
+
+function enableRemoteAccess(hub: Hub, body: JsonValue, headers: Headers): Response {
+  return decodeObject(body)
+    .andThen((object) =>
+      Result.gen(function* () {
+        const host = yield* validRemoteHost(yield* requiredString(object, "host"));
+        const ownerLogin = yield* validOwnerLogin(yield* requiredString(object, "ownerLogin"));
+        return Result.ok(hub.store.enableRemoteAccess(host, ownerLogin));
+      }),
+    )
+    .match({
+      ok: (access) => jsonResponse({ access }, 200, headers),
+      err: (error) => errorResponse(error, headers),
+    });
+}
+
+function disableRemoteAccess(hub: Hub, headers: Headers): Response {
+  return jsonResponse(hub.store.disableRemoteAccess(), 200, headers);
+}
+
+function revokeRemoteSession(hub: Hub, rawId: string, headers: Headers): Response {
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return errorResponse(validationFailed("id", "must be a positive integer"), headers);
+  }
+  return hub.store.revokeRemoteSession(id)
+    ? jsonResponse({ revoked: id }, 200, headers)
+    : errorResponse(notFound("Remote session"), headers);
+}
+
+/** A loopback human creates a one-time code for a new device. */
+function createPairingCode(hub: Hub, caller: Participant, request: Request, headers: Headers): Response {
+  if (caller.kind !== "human" || requestChannel(hub, request).kind !== "local") {
+    return errorResponse(operatorOnly("pair a device"), headers);
+  }
+  const access = hub.store.remoteAccess();
+  switch (access.kind) {
+    case "off":
+      return errorResponse(remoteAccessOff(), headers);
+    case "on": {
+      const code = mintPairingCode();
+      const expiresAt = hub.store.createPairingCode(caller.id, code);
+      const pairing: PairingCode = {
+        code: displayPairingCode(code),
+        expiresAt,
+        url: `${access.origin}/pair#code=${code}`,
+      };
+      return jsonResponse(pairing, 201, headers);
+    }
+  }
+}
+
+/** A remote device exchanges a pairing code for its own session cookie. */
+function redeemPairingCode(
+  hub: Hub,
+  channel: RequestChannel,
+  body: JsonValue,
+  headers: Headers,
+): Response {
+  if (channel.kind !== "remote") {
+    return errorResponse(validationFailed("pairing", "is only for a device that uses remote access"), headers);
+  }
+  return decodeObject(body)
+    .andThen((object) => requiredString(object, "code"))
+    .andThen(normalizePairingCode)
+    .andThen((code) => hub.store.redeemPairingCode(code))
+    .match({
+      ok: ({ participant, token }) => {
+        setRemoteSessionCookie(headers, token);
+        return jsonResponse({ handle: participant.handle }, 201, headers);
+      },
+      err: (error) => errorResponse(error, headers),
+    });
+}
+
 // ------------------------------------------------------------------- routing
 
 function requireAuth(
@@ -3611,12 +3764,7 @@ function requireAuth(
   headers: Headers,
   handler: (caller: Participant) => Response,
 ): Response {
-  return authenticate(
-    request,
-    hub.store,
-    hub.config.herdrSocketPath,
-    presentsLocalControl(hub, request),
-  ).match({
+  return callerOf(hub, request).match({
     ok: handler,
     err: (error: ApiError) => errorResponse(error, headers),
   });
@@ -3629,12 +3777,7 @@ function requireHuman(
   capability: string,
   handler: () => Response,
 ): Response {
-  return authenticate(
-    request,
-    hub.store,
-    hub.config.herdrSocketPath,
-    presentsLocalControl(hub, request),
-  ).match({
+  return callerOf(hub, request).match({
     ok: (caller) =>
       caller.kind === "human"
         ? handler()
@@ -3643,7 +3786,24 @@ function requireHuman(
   });
 }
 
+/** Where the request came from, under the current remote access setting. */
+function requestChannel(hub: Hub, request: Request): RequestChannel {
+  return classifyRequest(request.headers, hub.store.remoteAccess());
+}
+
+function callerOf(hub: Hub, request: Request): ReturnType<typeof authenticate> {
+  return authenticate(
+    request,
+    hub.store,
+    hub.config.herdrSocketPath,
+    presentsLocalControl(hub, request),
+    requestChannel(hub, request),
+  );
+}
+
+/** The local-control credential is a loopback capability; a remote request never presents it. */
 function presentsLocalControl(hub: Hub, request: Request): boolean {
+  if (requestChannel(hub, request).kind !== "local") return false;
   const token = request.headers.get(CONTROL_TOKEN_HEADER);
   if (token === null) return false;
   const expected = Buffer.from(hub.localControlTokenHash, "hex");
@@ -3669,12 +3829,7 @@ async function requireHumanAsync(
   capability: string,
   handler: () => Promise<Response>,
 ): Promise<Response> {
-  const authenticated = authenticate(
-    request,
-    hub.store,
-    hub.config.herdrSocketPath,
-    presentsLocalControl(hub, request),
-  );
+  const authenticated = callerOf(hub, request);
   if (authenticated.isErr()) return errorResponse(authenticated.error, headers);
   if (authenticated.value.kind !== "human") {
     return errorResponse(operatorOnly(capability), headers);
@@ -3688,12 +3843,7 @@ async function requireAuthAsync(
   headers: Headers,
   handler: (caller: Participant) => Promise<Response>,
 ): Promise<Response> {
-  return authenticate(
-    request,
-    hub.store,
-    hub.config.herdrSocketPath,
-    presentsLocalControl(hub, request),
-  ).match({
+  return callerOf(hub, request).match({
     ok: handler,
     err: (error: ApiError) => errorResponse(error, headers),
   });
@@ -3706,7 +3856,8 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
 
     const headers = corsHeaders(request, hub.config);
 
-    const admitted = admit(request, hub.config);
+    const channel = requestChannel(hub, request);
+    const admitted = admit(request, hub.config, channel);
     if (admitted.isErr()) return errorResponse(admitted.error, headers);
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -3716,6 +3867,8 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
     if (routed.isErr()) return errorResponse(routed.error, headers);
     const { key, param, extra } = routed.value;
     const route = `${request.method} ${key}`;
+    const gated = remoteGate(hub, request, url, route, channel, headers);
+    if (gated !== null) return gated;
 
     // Read once, before routing, so malformed JSON is reported as such rather
     // than as whichever field the handler happened to look for first.
@@ -3950,6 +4103,28 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
         return requireAuth(hub, request, headers, (caller) =>
           alertHuman(hub, caller, body, headers),
         );
+      case "GET /api/remote-access":
+        return requireLocalControl(hub, request, headers, "read remote access", () =>
+          remoteAccessStatus(hub, headers),
+        );
+      case "PUT /api/remote-access":
+        return requireLocalControl(hub, request, headers, "change remote access", () =>
+          enableRemoteAccess(hub, body, headers),
+        );
+      case "DELETE /api/remote-access":
+        return requireLocalControl(hub, request, headers, "change remote access", () =>
+          disableRemoteAccess(hub, headers),
+        );
+      case "DELETE /api/remote-access/sessions/:id":
+        return requireLocalControl(hub, request, headers, "revoke remote sessions", () =>
+          revokeRemoteSession(hub, param, headers),
+        );
+      case "POST /api/pairing":
+        return requireAuth(hub, request, headers, (caller) =>
+          createPairingCode(hub, caller, request, headers),
+        );
+      case "POST /api/pairing/redeem":
+        return redeemPairingCode(hub, channel, body, headers);
       case "GET /api/attachments/:id/content":
         return requireAuth(hub, request, headers, () => serveAttachment(hub, param, headers));
       case "GET /api/messages/:id/markdown":

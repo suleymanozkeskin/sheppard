@@ -24,6 +24,8 @@ import {
   type ModelExists,
   type NotAMember,
   type NotFound,
+  type PairingRefused,
+  type RemoteAccessOff,
   type ValidationFailed,
   channelExists,
   channelNotDeletable,
@@ -36,8 +38,11 @@ import {
   membershipExists,
   notAMember,
   notFound,
+  pairingRefused,
+  remoteAccessOff,
   validationFailed,
 } from "./errors";
+import { MAX_PAIRING_FAILURES, PAIRING_TTL_MS, remoteOrigin } from "./remote";
 import { hashToken, mintToken } from "./tokens";
 import type { UnrecognizedReason } from "./blocked-dialog";
 import { isObject, isString, type JsonValue } from "./json";
@@ -63,6 +68,8 @@ import type {
   KeepAwakeTarget,
   Minutes,
   NeedsHumanCause,
+  RemoteAccess,
+  RemoteSession,
   WakeCount,
   Kind,
   LauncherDefinition,
@@ -3313,6 +3320,178 @@ export class Store {
     });
   }
 
+  // --------------------------------------------------------------- remote access
+
+  remoteAccess(): RemoteAccess {
+    const row = this.db
+      .query<RemoteAccessRow, []>(`SELECT * FROM remote_access WHERE id = 1`)
+      .get();
+    if (row === null) return { kind: "off" };
+    return {
+      kind: "on",
+      host: row.host,
+      origin: remoteOrigin(row.host),
+      ownerLogin: row.owner_login,
+      enabledAt: row.enabled_at,
+    };
+  }
+
+  /**
+   * Turns remote access on, or changes its host or owner. A change of either
+   * revokes every remote session and open pairing code, because they were
+   * issued for the old host and owner.
+   */
+  enableRemoteAccess(host: string, ownerLogin: string): RemoteAccess {
+    return this.tx(() => {
+      const current = this.remoteAccess();
+      const unchanged =
+        current.kind === "on" && current.host === host && current.ownerLogin === ownerLogin;
+      if (!unchanged) {
+        this.revokeRemoteCredentials();
+        this.db
+          .query<never, { host: string; ownerLogin: string; now: string }>(
+            `INSERT INTO remote_access (id, host, owner_login, enabled_at)
+             VALUES (1, $host, $ownerLogin, $now)
+             ON CONFLICT(id) DO UPDATE
+               SET host = excluded.host, owner_login = excluded.owner_login,
+                   failed_redeems = 0, enabled_at = excluded.enabled_at`,
+          )
+          .run({ host, ownerLogin, now: this.now() });
+      }
+      return this.remoteAccess();
+    });
+  }
+
+  /** Turns remote access off and revokes every remote session and pairing code. */
+  disableRemoteAccess(): { revokedSessions: number } {
+    return this.tx(() => {
+      const revokedSessions = this.revokeRemoteCredentials();
+      this.db.query<never, []>(`DELETE FROM remote_access`).run();
+      return { revokedSessions };
+    });
+  }
+
+  private revokeRemoteCredentials(): number {
+    this.db.query<never, []>(`DELETE FROM pairing_codes`).run();
+    return this.db.query<never, []>(`DELETE FROM remote_sessions`).run().changes;
+  }
+
+  /**
+   * Stores the hash of a new pairing code for a human and drops expired codes.
+   * Returns the expiry time. The caller shows the code once; it is never stored.
+   */
+  createPairingCode(participantId: number, code: string): string {
+    return this.tx(() => {
+      const now = this.now();
+      const expiresAt = new Date(Date.parse(now) + PAIRING_TTL_MS).toISOString();
+      this.db
+        .query<never, { now: string }>(`DELETE FROM pairing_codes WHERE expires_at <= $now`)
+        .run({ now });
+      this.db
+        .query<never, { participantId: number; codeHash: string; now: string; expiresAt: string }>(
+          `INSERT INTO pairing_codes (participant_id, code_hash, created_at, expires_at)
+           VALUES ($participantId, $codeHash, $now, $expiresAt)`,
+        )
+        .run({ participantId, codeHash: hashToken(code), now, expiresAt });
+      return expiresAt;
+    });
+  }
+
+  /**
+   * Exchanges an open pairing code for a new remote session. The code works
+   * once. A wrong, used, or expired code counts as a failure; the failure that
+   * reaches MAX_PAIRING_FAILURES cancels every open code. A success resets the
+   * count. The session token is returned once and only its hash is stored.
+   */
+  redeemPairingCode(
+    code: string,
+  ): Result<{ participant: Participant; token: string }, RemoteAccessOff | PairingRefused> {
+    return this.tx(() => {
+      if (this.remoteAccess().kind === "off") return Result.err(remoteAccessOff());
+      const now = this.now();
+      const row = this.db
+        .query<{ id: number; participant_id: number }, { codeHash: string; now: string }>(
+          `DELETE FROM pairing_codes
+            WHERE code_hash = $codeHash AND expires_at > $now
+          RETURNING id, participant_id`,
+        )
+        .get({ codeHash: hashToken(code), now });
+      const participant = row === null ? null : this.findById(row.participant_id);
+      if (participant === null || participant.deactivated || participant.kind !== "human") {
+        return Result.err(pairingRefused(this.recordPairingFailure()));
+      }
+
+      const token = mintToken();
+      this.db
+        .query<never, { participantId: number; tokenHash: string; now: string }>(
+          `INSERT INTO remote_sessions (participant_id, token_hash, created_at)
+           VALUES ($participantId, $tokenHash, $now)`,
+        )
+        .run({ participantId: participant.id, tokenHash: hashToken(token), now });
+      this.db.query<never, []>(`UPDATE remote_access SET failed_redeems = 0 WHERE id = 1`).run();
+      return Result.ok({ participant, token });
+    });
+  }
+
+  /** Returns true when this failure cancelled every open code. */
+  private recordPairingFailure(): boolean {
+    const row = this.db
+      .query<{ failed_redeems: number }, []>(
+        `UPDATE remote_access SET failed_redeems = failed_redeems + 1
+          WHERE id = 1 RETURNING failed_redeems`,
+      )
+      .get();
+    if (row === null || row.failed_redeems < MAX_PAIRING_FAILURES) return false;
+    this.db.query<never, []>(`DELETE FROM pairing_codes`).run();
+    this.db.query<never, []>(`UPDATE remote_access SET failed_redeems = 0 WHERE id = 1`).run();
+    return true;
+  }
+
+  /** The active human behind a remote session token, and records the visit. */
+  findByRemoteSession(token: string): Participant | null {
+    const tokenHash = hashToken(token);
+    const row = this.db
+      .query<ParticipantRow, { tokenHash: string }>(
+        `SELECT p.* FROM remote_sessions rs
+           JOIN participants p ON p.id = rs.participant_id
+          WHERE rs.token_hash = $tokenHash AND p.deactivated = 0 AND p.kind = 'human'`,
+      )
+      .get({ tokenHash });
+    if (row === null) return null;
+    this.db
+      .query<never, { tokenHash: string; now: string }>(
+        `UPDATE remote_sessions SET last_seen_at = $now WHERE token_hash = $tokenHash`,
+      )
+      .run({ tokenHash, now: this.now() });
+    return toParticipant(row);
+  }
+
+  listRemoteSessions(): RemoteSession[] {
+    return this.db
+      .query<{ id: number; handle: string; created_at: string; last_seen_at: string | null }, []>(
+        `SELECT rs.id, p.handle, rs.created_at, rs.last_seen_at
+           FROM remote_sessions rs
+           JOIN participants p ON p.id = rs.participant_id
+          ORDER BY rs.id`,
+      )
+      .all()
+      .map((row) => ({
+        id: row.id,
+        handle: row.handle,
+        createdAt: row.created_at,
+        lastSeen: row.last_seen_at === null
+          ? { kind: "not-seen" }
+          : { kind: "seen", at: row.last_seen_at },
+      }));
+  }
+
+  /** Returns false when no session had that id. */
+  revokeRemoteSession(id: number): boolean {
+    return this.db
+      .query<never, { id: number }>(`DELETE FROM remote_sessions WHERE id = $id`)
+      .run({ id }).changes > 0;
+  }
+
   // --------------------------------------------------------------------- helpers
 
   private channelRow(name: string): ChannelRow | null {
@@ -3367,6 +3546,14 @@ export class Store {
       createdAt: row.created_at,
     }));
   }
+}
+
+interface RemoteAccessRow {
+  id: number;
+  host: string;
+  owner_login: string;
+  failed_redeems: number;
+  enabled_at: string;
 }
 
 const KEEP_AWAKE_SELECT = `

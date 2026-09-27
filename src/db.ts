@@ -472,6 +472,41 @@ const MIGRATIONS: readonly Migration[] = [
                  ON keep_awake_policies(channel_id) WHERE target_kind = 'channel'`);
     },
   },
+  {
+    version: 18,
+    up: (db) => {
+      // One row while remote access is on. Its absence is the off state.
+      db.exec(`
+        CREATE TABLE remote_access (
+          id              INTEGER PRIMARY KEY CHECK (id = 1),
+          host            TEXT NOT NULL,
+          owner_login     TEXT NOT NULL,
+          failed_redeems  INTEGER NOT NULL DEFAULT 0 CHECK (failed_redeems >= 0),
+          enabled_at      TEXT NOT NULL
+        )
+      `);
+      // Remote sessions are separate from human_sessions, so a loopback
+      // cookie never authenticates a remote request and the reverse.
+      db.exec(`
+        CREATE TABLE remote_sessions (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+          token_hash     TEXT NOT NULL UNIQUE,
+          created_at     TEXT NOT NULL,
+          last_seen_at   TEXT NULL
+        )
+      `);
+      db.exec(`
+        CREATE TABLE pairing_codes (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+          code_hash      TEXT NOT NULL UNIQUE,
+          created_at     TEXT NOT NULL,
+          expires_at     TEXT NOT NULL
+        )
+      `);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1]!.version;

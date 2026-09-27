@@ -25,6 +25,8 @@ import {
   type NotFound,
   type NotPreviewable,
   type OperatorOnly,
+  type PairingRefused,
+  type RemoteAccessOff,
   type RequestRejected,
   type HerdrSessionMismatch,
   type Unauthorized,
@@ -48,6 +50,7 @@ import {
 import type { Store } from "./store";
 import type { Participant, Route } from "./types";
 import { validStoredText } from "./validate";
+import { type RequestChannel, remoteRefusalMessage } from "./remote";
 
 export type ApiError =
   | ChannelExists
@@ -65,6 +68,8 @@ export type ApiError =
   | NotFound
   | NotPreviewable
   | OperatorOnly
+  | PairingRefused
+  | RemoteAccessOff
   | RequestRejected
   | HerdrSessionMismatch
   | HerdrNotConfigured
@@ -86,6 +91,8 @@ export function statusFor(error: ApiError): number {
     RequestRejected: () => 403,
     NotFound: () => 404,
     OperatorOnly: () => 403,
+    PairingRefused: () => 401,
+    RemoteAccessOff: () => 409,
     ChannelNotFound: () => 404,
     HandleTaken: () => 409,
     LauncherExists: () => 409,
@@ -161,9 +168,9 @@ export function canonicalHostRedirect(request: Request, config: ServerConfig): R
 }
 
 /** Requests without an Origin are not from a page; the CLI is the usual source. */
-function originAllowed(request: Request, config: ServerConfig): boolean {
+function originAllowed(request: Request, allowedOrigin: string): boolean {
   const origin = request.headers.get("origin");
-  return origin === null || origin === config.allowedOrigin;
+  return origin === null || origin === allowedOrigin;
 }
 
 function contentTypeAllowed(request: Request): boolean {
@@ -184,16 +191,43 @@ function contentTypeAllowed(request: Request): boolean {
   return essence === "application/json";
 }
 
-export function admit(request: Request, config: ServerConfig): Result<Request, RequestRejected> {
-  if (!hostAllowed(request, config)) {
-    return Result.err(
-      new RequestRejectedError({ reason: "host", message: "Unrecognised Host header" }),
-    );
-  }
-  if (!originAllowed(request, config)) {
-    return Result.err(
-      new RequestRejectedError({ reason: "origin", message: "Origin is not allowed" }),
-    );
+export function admit(
+  request: Request,
+  config: ServerConfig,
+  channel: RequestChannel,
+): Result<Request, RequestRejected> {
+  switch (channel.kind) {
+    case "refused":
+      return Result.err(
+        new RequestRejectedError({ reason: "remote", message: remoteRefusalMessage(channel.reason) }),
+      );
+    case "local":
+      if (!hostAllowed(request, config)) {
+        return Result.err(
+          new RequestRejectedError({ reason: "host", message: "Unrecognised Host header" }),
+        );
+      }
+      if (!originAllowed(request, config.allowedOrigin)) {
+        return Result.err(
+          new RequestRejectedError({ reason: "origin", message: "Origin is not allowed" }),
+        );
+      }
+      break;
+    case "remote": {
+      // The proxy copies the client's Host, so it must name the remote host too.
+      const claimed = request.headers.get("host") ?? new URL(request.url).host;
+      if (claimed !== channel.host) {
+        return Result.err(
+          new RequestRejectedError({ reason: "host", message: "Unrecognised Host header" }),
+        );
+      }
+      if (!originAllowed(request, channel.origin)) {
+        return Result.err(
+          new RequestRejectedError({ reason: "origin", message: "Origin is not allowed" }),
+        );
+      }
+      break;
+    }
   }
   if (!contentTypeAllowed(request)) {
     return Result.err(
@@ -271,8 +305,17 @@ export function authenticate(
   request: Request,
   store: Store,
   herdrSocketPath: string | null,
-  allowPaneIdentity = false,
+  allowPaneIdentity: boolean,
+  channel: RequestChannel,
 ): Result<Participant, Unauthorized | HerdrSessionMismatch | ValidationFailed> {
+  switch (channel.kind) {
+    case "refused":
+      return Result.err(unauthorized());
+    case "remote":
+      return authenticateRemote(request, store);
+    case "local":
+      break;
+  }
   const token = presentedToken(request);
   if (token.isErr()) return Result.err(token.error);
   if (token.value === null) {
@@ -317,9 +360,33 @@ export function authenticate(
   return Result.ok(participant);
 }
 
+/** The remote session cookie is sent over HTTPS only. */
+export function setRemoteSessionCookie(headers: Headers, token: string): void {
+  headers.append(
+    "set-cookie",
+    `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`,
+  );
+}
+
 export function setTokenCookie(headers: Headers, token: string): void {
   headers.append(
     "set-cookie",
     `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
   );
+}
+
+/**
+ * A remote request authenticates only with a session created by pairing. Agent
+ * tokens, loopback human sessions, and pane identities are not accepted, so a
+ * credential that leaves the machine is not enough on its own.
+ */
+function authenticateRemote(
+  request: Request,
+  store: Store,
+): Result<Participant, Unauthorized | ValidationFailed> {
+  const token = cookieValue(request, TOKEN_COOKIE);
+  if (token.isErr()) return Result.err(token.error);
+  if (token.value === null) return Result.err(unauthorized());
+  const participant = store.findByRemoteSession(token.value);
+  return participant === null ? Result.err(unauthorized()) : Result.ok(participant);
 }

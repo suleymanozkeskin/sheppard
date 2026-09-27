@@ -432,3 +432,28 @@ export interface HumanAlertResult {
   /** How many keep-awake policies stopped waking because of this alert. */
   pausedPolicies: number;
 }
+
+/**
+ * Remote access through `tailscale serve`. `host` is the exact MagicDNS name
+ * the browser uses; `ownerLogin` is the only Tailscale login admitted.
+ */
+export type RemoteAccess =
+  | { kind: "off" }
+  | { kind: "on"; host: string; origin: string; ownerLogin: string; enabledAt: string };
+
+/** A phone or other device that paired with the hub. */
+export interface RemoteSession {
+  id: number;
+  handle: string;
+  createdAt: string;
+  lastSeen: { kind: "seen"; at: string } | { kind: "not-seen" };
+}
+
+/** A one-time pairing code, shown once to the human who created it. */
+export interface PairingCode {
+  /** Eight characters, shown as two groups of four. */
+  code: string;
+  expiresAt: string;
+  /** Opens the pairing page with the code in the fragment, so no log sees it. */
+  url: string;
+}
