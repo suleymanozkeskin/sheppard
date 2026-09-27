@@ -31,11 +31,13 @@ import {
   type ChannelNotFound,
   type HandleTaken,
   type NotAMember,
+  type NotFound,
   type ValidationFailed,
   channelNotFound,
   handleTaken,
   herdrCallFailed,
   herdrNotConfigured,
+  notAMember,
   notFound,
   operatorOnly,
   validationFailed,
@@ -71,6 +73,7 @@ import {
 } from "./herdr";
 import { acquireHubLock } from "./lock";
 import { Notifier } from "./notifier";
+import { KeepAwakeWatcher } from "./keep-awake";
 import { DeviceModelCatalogue, type DeviceLauncher } from "./model-catalogue";
 import { literalQuery } from "./search";
 import {
@@ -90,10 +93,12 @@ import type {
   AgentSessionView,
   AgentSessionSelectionView,
   AttachmentInput,
+  Channel,
   ChannelKind,
   ChannelReceipt,
   HerdrPaneView,
   HerdrTopologySnapshot,
+  KeepAwakeSetting,
   Launcher,
   LauncherDefinition,
   Message,
@@ -118,6 +123,8 @@ import {
   clampLimit,
   validAttachmentPaths,
   validBody,
+  validHumanAlert,
+  validKeepAwakeLimits,
   validLauncherEnvironment,
   validLauncherArgv,
   validModelIdentifier,
@@ -221,6 +228,22 @@ function routedPath(pathname: string): Result<RoutedPath, ValidationFailed> {
     third !== undefined
   ) {
     return Result.ok({ key: "/api/messages/:id/markdown", param: third, extra: "" });
+  }
+  if (
+    first === "api" &&
+    second === "keep-awake" &&
+    segments.length === 4 &&
+    (third === "agents" || third === "channels") &&
+    fourth !== undefined
+  ) {
+    return Result.try({
+      try: (): RoutedPath => ({
+        key: `/api/keep-awake/${third}/:name`,
+        param: decodeURIComponent(fourth),
+        extra: "",
+      }),
+      catch: () => validationFailed("path", "must use valid URL encoding"),
+    });
   }
   if (first === "api" && second === "agents" && segments.length === 3 && third !== undefined) {
     return Result.try({
@@ -1162,6 +1185,128 @@ function sendDirectMessage(
       void hub.notifier?.notifyChannel(message.channel);
       if (created) publishMetadata(hub, "direct", "inbox");
       return jsonResponse({ channel: message.channel, messageId: message.id }, 201, headers);
+    },
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
+// ---------------------------------------------------------------- keep-awake
+
+function keepAwakeAgent(hub: Hub, handle: string): Result<Participant, ValidationFailed | NotFound> {
+  return validName(handle, "handle").andThen((valid) => {
+    const participant = hub.store.findByHandle(valid);
+    if (participant === null || participant.kind !== "agent" || participant.deactivated) {
+      return Result.err(notFound(`Agent "${valid}"`));
+    }
+    return Result.ok(participant);
+  });
+}
+
+/** Direct conversations have no group to keep awake; agents there use agent policies. */
+function keepAwakeChannel(hub: Hub, name: string): Result<Channel, ValidationFailed | ChannelNotFound> {
+  return validName(name, "name").andThen((valid) => {
+    const channel = hub.store.findChannel(valid);
+    if (channel === null) return Result.err(channelNotFound(valid));
+    if (channel.kind === "direct") {
+      return Result.err(validationFailed("name", "must name a channel, not a direct conversation"));
+    }
+    return Result.ok(channel);
+  });
+}
+
+function keepAwakeResponse(setting: KeepAwakeSetting, headers: Headers): Response {
+  return jsonResponse({ setting }, 200, headers);
+}
+
+function getAgentKeepAwake(hub: Hub, handle: string, headers: Headers): Response {
+  return keepAwakeAgent(hub, handle).match({
+    ok: (agent) => keepAwakeResponse(hub.store.keepAwakeForAgent(agent.id), headers),
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
+function putAgentKeepAwake(hub: Hub, handle: string, body: JsonValue, headers: Headers): Response {
+  return keepAwakeAgent(hub, handle)
+    .andThen((agent) =>
+      decodeObject(body)
+        .andThen(validKeepAwakeLimits)
+        .map((limits) => hub.store.setAgentKeepAwake(agent.id, limits)),
+    )
+    .match({
+      ok: (policy) => {
+        publishMetadata(hub, "keepAwake");
+        return keepAwakeResponse({ kind: "on", policy }, headers);
+      },
+      err: (error) => errorResponse(error, headers),
+    });
+}
+
+function deleteAgentKeepAwake(hub: Hub, handle: string, headers: Headers): Response {
+  return keepAwakeAgent(hub, handle).match({
+    ok: (agent) => {
+      if (hub.store.removeAgentKeepAwake(agent.id)) publishMetadata(hub, "keepAwake");
+      return keepAwakeResponse({ kind: "off" }, headers);
+    },
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
+function getChannelKeepAwake(hub: Hub, name: string, headers: Headers): Response {
+  return keepAwakeChannel(hub, name).match({
+    ok: (channel) => keepAwakeResponse(hub.store.keepAwakeForChannel(channel.id), headers),
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
+/** The coordinator must be an active agent member of the channel it coordinates. */
+function putChannelKeepAwake(hub: Hub, name: string, body: JsonValue, headers: Headers): Response {
+  const set = keepAwakeChannel(hub, name).andThen((channel) =>
+    decodeObject(body).andThen((object) =>
+      Result.gen(function* () {
+        const handle = yield* requiredString(object, "coordinator");
+        const coordinator = yield* keepAwakeAgent(hub, handle);
+        if (!hub.store.isMember(coordinator.id, channel.id)) {
+          return Result.err(notAMember(channel.name, coordinator.id));
+        }
+        const limits = yield* validKeepAwakeLimits(object);
+        return Result.ok(hub.store.setChannelKeepAwake(channel.id, coordinator.id, limits));
+      }),
+    ),
+  );
+  return set.match({
+    ok: (policy) => {
+      publishMetadata(hub, "keepAwake");
+      return keepAwakeResponse({ kind: "on", policy }, headers);
+    },
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
+function deleteChannelKeepAwake(hub: Hub, name: string, headers: Headers): Response {
+  return keepAwakeChannel(hub, name).match({
+    ok: (channel) => {
+      if (hub.store.removeChannelKeepAwake(channel.id)) publishMetadata(hub, "keepAwake");
+      return keepAwakeResponse({ kind: "off" }, headers);
+    },
+    err: (error) => errorResponse(error, headers),
+  });
+}
+
+/** An agent asks for the human: a direct message, and its keep-awake wakes stop. */
+function alertHuman(hub: Hub, caller: Participant, body: JsonValue, headers: Headers): Response {
+  if (caller.kind !== "agent") {
+    return errorResponse(validationFailed("caller", "must be an agent"), headers);
+  }
+  const alerted = decodeObject(body)
+    .andThen((object) => requiredString(object, "text"))
+    .andThen(validHumanAlert)
+    .andThen((text) => hub.store.alertHuman(caller.id, text));
+  return alerted.match({
+    ok: (result) => {
+      const message = hub.store.messageById(result.messageId);
+      if (message !== null) hub.broadcaster.publish(message);
+      publishMetadata(hub, "direct", "inbox", "keepAwake");
+      return jsonResponse(result, 201, headers);
     },
     err: (error) => errorResponse(error, headers),
   });
@@ -3772,6 +3917,38 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
         return requireAuth(hub, request, headers, (caller) =>
           listReceipts(hub, caller, param, headers),
         );
+      case "GET /api/keep-awake":
+        return requireHuman(hub, request, headers, "read keep-awake policies", () =>
+          jsonResponse({ policies: hub.store.keepAwakePolicies() }, 200, headers),
+        );
+      case "GET /api/keep-awake/agents/:name":
+        return requireHuman(hub, request, headers, "read keep-awake policies", () =>
+          getAgentKeepAwake(hub, param, headers),
+        );
+      case "PUT /api/keep-awake/agents/:name":
+        return requireHuman(hub, request, headers, "set keep-awake policies", () =>
+          putAgentKeepAwake(hub, param, body, headers),
+        );
+      case "DELETE /api/keep-awake/agents/:name":
+        return requireHuman(hub, request, headers, "set keep-awake policies", () =>
+          deleteAgentKeepAwake(hub, param, headers),
+        );
+      case "GET /api/keep-awake/channels/:name":
+        return requireHuman(hub, request, headers, "read keep-awake policies", () =>
+          getChannelKeepAwake(hub, param, headers),
+        );
+      case "PUT /api/keep-awake/channels/:name":
+        return requireHuman(hub, request, headers, "set keep-awake policies", () =>
+          putChannelKeepAwake(hub, param, body, headers),
+        );
+      case "DELETE /api/keep-awake/channels/:name":
+        return requireHuman(hub, request, headers, "set keep-awake policies", () =>
+          deleteChannelKeepAwake(hub, param, headers),
+        );
+      case "POST /api/alert-human":
+        return requireAuth(hub, request, headers, (caller) =>
+          alertHuman(hub, caller, body, headers),
+        );
       case "GET /api/attachments/:id/content":
         return requireAuth(hub, request, headers, () => serveAttachment(hub, param, headers));
       case "GET /api/messages/:id/markdown":
@@ -3867,6 +4044,14 @@ export function startHub(config: ServerConfig = loadConfig()): Result<RunningHub
       });
   hub.notifier = notifier ?? undefined;
 
+  const keepAwake = herdr === undefined
+    ? null
+    : new KeepAwakeWatcher({
+        store: hub.store,
+        herdr,
+        onChange: () => publishMetadata(hub, "keepAwake"),
+      });
+
   const server = Bun.serve({
     hostname: HOST,
     port: config.port,
@@ -3886,6 +4071,7 @@ export function startHub(config: ServerConfig = loadConfig()): Result<RunningHub
   }, 25_000);
 
   notifier?.start();
+  keepAwake?.start();
 
   return Result.ok({
     hub,
@@ -3893,6 +4079,7 @@ export function startHub(config: ServerConfig = loadConfig()): Result<RunningHub
     notifier,
     stop: () => {
       notifier?.stop();
+      keepAwake?.stop();
       hub.topology?.stop();
       clearInterval(heartbeat);
       hub.broadcaster.closeAll();

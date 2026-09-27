@@ -423,6 +423,55 @@ const MIGRATIONS: readonly Migration[] = [
       );
     },
   },
+  {
+    version: 17,
+    up: (db) => {
+      // One row per watched agent or channel. The CHECKs keep target columns
+      // and state columns in legal combinations, so a decoded row never has to
+      // guess which fields belong to its variant.
+      db.exec(`
+        CREATE TABLE keep_awake_policies (
+          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          target_kind       TEXT NOT NULL CHECK (target_kind IN ('agent','channel')),
+          participant_id    INTEGER NULL REFERENCES participants(id),
+          channel_id        INTEGER NULL REFERENCES channels(id),
+          coordinator_id    INTEGER NULL REFERENCES participants(id),
+          idle_minutes      INTEGER NOT NULL CHECK (idle_minutes > 0),
+          blocked_minutes   INTEGER NOT NULL CHECK (blocked_minutes > 0),
+          max_wakes         INTEGER NOT NULL CHECK (max_wakes > 0),
+          state             TEXT NOT NULL CHECK (state IN ('watching','needs_human')),
+          wakes_used        INTEGER NOT NULL DEFAULT 0 CHECK (wakes_used >= 0),
+          last_wake_at      TEXT NULL,
+          cause_kind        TEXT NULL CHECK (cause_kind IN
+                              ('wakes_exhausted','agent_requested','dialog_unrecognized','dialog_stuck')),
+          cause_handle      TEXT NULL,
+          cause_reason      TEXT NULL CHECK (cause_reason IN
+                              ('harness-unsupported','folder-trust','no-known-dialog')),
+          human_mark_id     INTEGER NOT NULL DEFAULT 0 CHECK (human_mark_id >= 0),
+          state_since       TEXT NOT NULL,
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          CHECK ((target_kind = 'agent'
+                    AND participant_id IS NOT NULL
+                    AND channel_id IS NULL
+                    AND coordinator_id IS NULL)
+              OR (target_kind = 'channel'
+                    AND participant_id IS NULL
+                    AND channel_id IS NOT NULL
+                    AND coordinator_id IS NOT NULL)),
+          CHECK ((state = 'watching' AND cause_kind IS NULL)
+              OR (state = 'needs_human' AND cause_kind IS NOT NULL)),
+          CHECK ((cause_kind IS NULL OR cause_kind = 'wakes_exhausted')
+                   = (cause_handle IS NULL)),
+          CHECK ((COALESCE(cause_kind, '') = 'dialog_unrecognized') = (cause_reason IS NOT NULL))
+        )
+      `);
+      db.exec(`CREATE UNIQUE INDEX idx_keep_awake_agent
+                 ON keep_awake_policies(participant_id) WHERE target_kind = 'agent'`);
+      db.exec(`CREATE UNIQUE INDEX idx_keep_awake_channel
+                 ON keep_awake_policies(channel_id) WHERE target_kind = 'channel'`);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1]!.version;

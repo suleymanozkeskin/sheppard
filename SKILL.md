@@ -108,6 +108,24 @@ A push ping is only a notification. Pull the message with `msgr inbox` and `msgr
 
 Join an agent to a channel before instructions are sent. Messages from before the join do not count as unread for that agent.
 
+## Keep-awake wakes
+
+A human can turn on keep-awake for an agent or a channel in the web interface. Then Sheppard sends a prompt that starts with `[sheppard]` when the agent stays idle past the limit, or when a question or permission dialog stays unanswered.
+
+When you get a `[sheppard]` prompt:
+
+1. Read the prompt. It tells you what happened.
+2. If Sheppard closed your question, the human did not answer it. Do not wait for that answer.
+3. If Sheppard declined your permission request, do not retry the same action.
+4. Continue the assigned work that does not need the missing decision. Record the open decision as the repository's conventions require.
+5. If you cannot continue without a human decision, ask for it and stop:
+
+```sh
+msgr alert-human "<your question and the options>"
+```
+
+`msgr alert-human` sends the text to the human as a direct message. It also stops the keep-awake wakes for you. The wakes start again when the human writes in a channel or direct conversation that you are in, or resumes keep-awake. Use it only for a decision that blocks all your remaining work.
+
 Use these commands to inspect or change membership:
 
 ```sh

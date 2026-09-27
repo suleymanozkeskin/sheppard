@@ -8,6 +8,8 @@
  * Expected failures are the tagged error classes in ./errors, never values here.
  */
 
+import type { UnrecognizedReason } from "./blocked-dialog";
+
 export type Kind = "agent" | "human";
 export type RouteState = "active" | "stale";
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
@@ -27,6 +29,7 @@ export const METADATA_SCOPES = [
   "roles",
   "launchers",
   "models",
+  "keepAwake",
 ] as const;
 export type MetadataScope = (typeof METADATA_SCOPES)[number];
 
@@ -356,4 +359,76 @@ export interface PendingNotification {
   throughId: number;
   count: number;
   senders: string[];
+}
+
+/** Whole minutes. Only the keep-awake limits parser constructs it. */
+export type Minutes = number & { readonly unit: "minutes" };
+
+/** A count of wake attempts. Only the keep-awake limits parser constructs it. */
+export type WakeCount = number & { readonly unit: "wakes" };
+
+export interface KeepAwakeLimits {
+  /** How long a target stays idle before the hub wakes it. */
+  idleMinutes: Minutes;
+  /** How long a dialog stays unanswered before the hub closes it. */
+  blockedMinutes: Minutes;
+  /** Wakes allowed before the hub stops and asks for the human. */
+  maxWakes: WakeCount;
+}
+
+/** What one keep-awake policy watches, and who receives a group wake. */
+export type KeepAwakeTarget =
+  | { kind: "agent"; participantId: number; handle: string }
+  | {
+      kind: "channel";
+      channelId: number;
+      channel: string;
+      coordinatorId: number;
+      coordinator: string;
+    };
+
+/** Why the hub stopped waking a target. Each cause names the agent involved. */
+export type NeedsHumanCause =
+  | { kind: "wakes-exhausted" }
+  | { kind: "agent-requested"; handle: string }
+  | { kind: "dialog-unrecognized"; handle: string; reason: UnrecognizedReason }
+  | { kind: "dialog-stuck"; handle: string };
+
+export type LastWake = { kind: "woken"; at: string } | { kind: "not-woken" };
+
+/**
+ * `watching` may wake the target. `needs-human` never does; a human message in
+ * the target's scope or an explicit resume returns it to `watching`.
+ */
+export type KeepAwakeState =
+  | { kind: "watching"; wakesUsed: number; lastWake: LastWake; since: string }
+  | { kind: "needs-human"; cause: NeedsHumanCause; since: string };
+
+export interface KeepAwakePolicy {
+  id: number;
+  target: KeepAwakeTarget;
+  limits: KeepAwakeLimits;
+  state: KeepAwakeState;
+  /** The newest human message id in the target's scope when last checked. */
+  humanMarkId: number;
+}
+
+/** The keep-awake setting of one agent or channel, as the API reports it. */
+export type KeepAwakeSetting = { kind: "off" } | { kind: "on"; policy: KeepAwakePolicy };
+
+/** A routed agent member of a watched channel, as the watcher needs it. */
+export interface KeepAwakeMember {
+  participantId: number;
+  handle: string;
+  terminalId: string;
+  paneId: string;
+  occupantAgent: string | null;
+}
+
+/** The result of `msgr alert-human`. */
+export interface HumanAlertResult {
+  channel: string;
+  messageId: number;
+  /** How many keep-awake policies stopped waking because of this alert. */
+  pausedPolicies: number;
 }

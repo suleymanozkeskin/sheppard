@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeHerdr } from "../src/herdr";
+import { validKeepAwakeLimits } from "../src/validate";
 import { type CliHarness, type HarnessOptions, provisionAgent, startCliHub } from "./cli-support";
 
 const open: CliHarness[] = [];
@@ -56,6 +57,7 @@ describe("usage", () => {
       ["join"],
       ["send", "backend"],
       ["dm"],
+      ["alert-human"],
       ["members"],
       ["seen"],
       ["participants"],
@@ -124,6 +126,38 @@ describe("direct messages", () => {
 
     expect(sent.code).toBe(0);
     expect(JSON.parse(history.out)).toMatchObject({ messages: [{ body: "first second" }] });
+  });
+});
+
+describe("alert-human", () => {
+  test("sends the question to the human and pauses the agent's keep-awake policy", async () => {
+    const harness = hub();
+    const bob = await provisionAgent(harness, "bob");
+    const human = harness.hub.store.createHuman("operator");
+    if (human.isErr()) throw new Error("fixture human must be created");
+    const agent = harness.hub.store.findByHandle("bob");
+    if (agent === null) throw new Error("fixture agent missing");
+    const limits = validKeepAwakeLimits({});
+    if (limits.isErr()) throw new Error("default limits must parse");
+    harness.hub.store.setAgentKeepAwake(agent.id, limits.value);
+
+    const sent = await harness.run(["alert-human", "Which", "schema?", "--json"], { token: bob });
+    expect(sent.code).toBe(0);
+    expect(JSON.parse(sent.out)).toMatchObject({ pausedPolicies: 1 });
+    expect(harness.hub.store.keepAwakeForAgent(agent.id)).toMatchObject({
+      kind: "on",
+      policy: { state: { kind: "needs-human", cause: { kind: "agent-requested", handle: "bob" } } },
+    });
+
+    const direct = await harness.run(["dms", "--json"], { token: bob });
+    expect(JSON.parse(direct.out)).toMatchObject({ conversations: [{ participants: ["operator"] }] });
+  });
+
+  test("fails when no human exists", async () => {
+    const harness = hub();
+    const bob = await provisionAgent(harness, "bob");
+    const sent = await harness.run(["alert-human", "help"], { token: bob });
+    expect(sent.code).toBe(1);
   });
 });
 

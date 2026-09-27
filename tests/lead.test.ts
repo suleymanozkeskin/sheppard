@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LEAD_BRIEFING } from "../src/config";
-import { SCHEMA_VERSION, openDatabase } from "../src/db";
+import { openDatabase } from "../src/db";
 import { FakeHerdr } from "../src/herdr";
 import { DeviceModelCatalogue } from "../src/model-catalogue";
 import { Store } from "../src/store";
@@ -167,7 +167,8 @@ describe("native lead", () => {
       current.exec(`ALTER TABLE launchers DROP COLUMN env_json`);
       current.exec(`ALTER TABLE lifecycle_agents DROP COLUMN launch_env_json`);
       current.exec(`ALTER TABLE lifecycle_spawn_operations DROP COLUMN launch_env_json`);
-      current.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 2}`);
+      current.exec(`DROP TABLE keep_awake_policies`);
+      current.exec(`PRAGMA user_version = 14`);
       current.close();
 
       const migrated = openDatabase(path).unwrap("migrated database must open");

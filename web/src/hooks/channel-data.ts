@@ -117,6 +117,8 @@ function metadataReloaded(state: ChannelDataState, scope: MetadataScope): Channe
       return state
     case "models":
       return state
+    case "keepAwake":
+      return state
     default:
       return assertNeverMetadataScope(scope)
   }

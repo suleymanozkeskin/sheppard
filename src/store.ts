@@ -39,6 +39,7 @@ import {
   validationFailed,
 } from "./errors";
 import { hashToken, mintToken } from "./tokens";
+import type { UnrecognizedReason } from "./blocked-dialog";
 import { isObject, isString, type JsonValue } from "./json";
 import type { ModelConfig, RoleConfig } from "./config";
 import type {
@@ -52,7 +53,17 @@ import type {
   ChannelKind,
   DirectConversation,
   AgentRecentMessages,
+  HumanAlertResult,
   InboxEntry,
+  KeepAwakeLimits,
+  KeepAwakeMember,
+  KeepAwakePolicy,
+  KeepAwakeSetting,
+  KeepAwakeState,
+  KeepAwakeTarget,
+  Minutes,
+  NeedsHumanCause,
+  WakeCount,
   Kind,
   LauncherDefinition,
   Member,
@@ -3050,6 +3061,258 @@ export class Store {
     };
   }
 
+  // ------------------------------------------------------------------ keep-awake
+
+  /** Every policy whose target still exists and whose agents are active. */
+  keepAwakePolicies(): KeepAwakePolicy[] {
+    return this.db
+      .query<KeepAwakeRow, []>(
+        `${KEEP_AWAKE_SELECT}
+          WHERE (p.id IS NULL OR p.deactivated = 0)
+            AND (co.id IS NULL OR co.deactivated = 0)
+          ORDER BY k.id`,
+      )
+      .all()
+      .map(toKeepAwakePolicy);
+  }
+
+  keepAwakeForAgent(participantId: number): KeepAwakeSetting {
+    const row = this.db
+      .query<KeepAwakeRow, { participantId: number }>(
+        `${KEEP_AWAKE_SELECT}
+          WHERE k.target_kind = 'agent' AND k.participant_id = $participantId`,
+      )
+      .get({ participantId });
+    return row === null ? { kind: "off" } : { kind: "on", policy: toKeepAwakePolicy(row) };
+  }
+
+  keepAwakeForChannel(channelId: number): KeepAwakeSetting {
+    const row = this.db
+      .query<KeepAwakeRow, { channelId: number }>(
+        `${KEEP_AWAKE_SELECT}
+          WHERE k.target_kind = 'channel' AND k.channel_id = $channelId`,
+      )
+      .get({ channelId });
+    return row === null ? { kind: "off" } : { kind: "on", policy: toKeepAwakePolicy(row) };
+  }
+
+  /**
+   * Creates or replaces the policy of one agent. A replace starts a fresh
+   * watch: no wakes used and the current human message as the mark.
+   */
+  setAgentKeepAwake(participantId: number, limits: KeepAwakeLimits): KeepAwakePolicy {
+    return this.tx(() => {
+      const now = this.now();
+      const mark = this.latestHumanMessageIdForAgent(participantId);
+      this.db
+        .query<never, { participantId: number }>(
+          `DELETE FROM keep_awake_policies
+            WHERE target_kind = 'agent' AND participant_id = $participantId`,
+        )
+        .run({ participantId });
+      this.db
+        .query<never, KeepAwakeInsert & { participantId: number }>(
+          `INSERT INTO keep_awake_policies
+             (target_kind, participant_id, idle_minutes, blocked_minutes, max_wakes,
+              state, human_mark_id, state_since, created_at, updated_at)
+           VALUES ('agent', $participantId, $idle, $blocked, $maxWakes,
+                   'watching', $mark, $now, $now, $now)`,
+        )
+        .run({ participantId, ...keepAwakeInsert(limits, mark, now) });
+      const setting = this.keepAwakeForAgent(participantId);
+      if (setting.kind === "off") panic("agent keep-awake INSERT produced no row");
+      return setting.policy;
+    });
+  }
+
+  /** Creates or replaces the policy of one channel. See `setAgentKeepAwake`. */
+  setChannelKeepAwake(
+    channelId: number,
+    coordinatorId: number,
+    limits: KeepAwakeLimits,
+  ): KeepAwakePolicy {
+    return this.tx(() => {
+      const now = this.now();
+      const mark = this.latestHumanMessageIdForChannel(channelId);
+      this.db
+        .query<never, { channelId: number }>(
+          `DELETE FROM keep_awake_policies
+            WHERE target_kind = 'channel' AND channel_id = $channelId`,
+        )
+        .run({ channelId });
+      this.db
+        .query<never, KeepAwakeInsert & { channelId: number; coordinatorId: number }>(
+          `INSERT INTO keep_awake_policies
+             (target_kind, channel_id, coordinator_id, idle_minutes, blocked_minutes, max_wakes,
+              state, human_mark_id, state_since, created_at, updated_at)
+           VALUES ('channel', $channelId, $coordinatorId, $idle, $blocked, $maxWakes,
+                   'watching', $mark, $now, $now, $now)`,
+        )
+        .run({ channelId, coordinatorId, ...keepAwakeInsert(limits, mark, now) });
+      const setting = this.keepAwakeForChannel(channelId);
+      if (setting.kind === "off") panic("channel keep-awake INSERT produced no row");
+      return setting.policy;
+    });
+  }
+
+  /** Returns false when the agent had no policy. */
+  removeAgentKeepAwake(participantId: number): boolean {
+    const changes = this.db
+      .query<never, { participantId: number }>(
+        `DELETE FROM keep_awake_policies
+          WHERE target_kind = 'agent' AND participant_id = $participantId`,
+      )
+      .run({ participantId }).changes;
+    return changes > 0;
+  }
+
+  /** Returns false when the channel had no policy. */
+  removeChannelKeepAwake(channelId: number): boolean {
+    const changes = this.db
+      .query<never, { channelId: number }>(
+        `DELETE FROM keep_awake_policies
+          WHERE target_kind = 'channel' AND channel_id = $channelId`,
+      )
+      .run({ channelId }).changes;
+    return changes > 0;
+  }
+
+  /** Counts one wake against a watching policy. A paused policy is unchanged. */
+  recordKeepAwakeWake(policyId: number, at: string): void {
+    this.db
+      .query<never, { policyId: number; at: string }>(
+        `UPDATE keep_awake_policies
+            SET wakes_used = wakes_used + 1, last_wake_at = $at, updated_at = $at
+          WHERE id = $policyId AND state = 'watching'`,
+      )
+      .run({ policyId, at });
+  }
+
+  /** Stops a watching policy. A policy that already needs the human keeps its first cause. */
+  markKeepAwakeNeedsHuman(policyId: number, cause: NeedsHumanCause, at: string): void {
+    this.db
+      .query<never, { policyId: number; at: string } & CauseColumns>(
+        `UPDATE keep_awake_policies
+            SET state = 'needs_human', cause_kind = $causeKind, cause_handle = $causeHandle,
+                cause_reason = $causeReason, state_since = $at, updated_at = $at
+          WHERE id = $policyId AND state = 'watching'`,
+      )
+      .run({ policyId, at, ...causeColumns(cause) });
+  }
+
+  /** Returns a policy to a fresh watch with `humanMarkId` as the new mark. */
+  resumeKeepAwake(policyId: number, humanMarkId: number, at: string): void {
+    this.db
+      .query<never, { policyId: number; humanMarkId: number; at: string }>(
+        `UPDATE keep_awake_policies
+            SET state = 'watching', cause_kind = NULL, cause_handle = NULL, cause_reason = NULL,
+                wakes_used = 0, last_wake_at = NULL, human_mark_id = $humanMarkId,
+                state_since = $at, updated_at = $at
+          WHERE id = $policyId`,
+      )
+      .run({ policyId, humanMarkId, at });
+  }
+
+  /** The newest message id sent by a human in any channel the agent belongs to. */
+  latestHumanMessageIdForAgent(participantId: number): number {
+    const row = this.db
+      .query<{ high: number }, { participantId: number }>(
+        `SELECT COALESCE(MAX(m.id), 0) AS high
+           FROM messages m
+           JOIN participants sender ON sender.id = m.sender_id AND sender.kind = 'human'
+          WHERE m.channel_id IN (SELECT channel_id FROM memberships
+                                  WHERE participant_id = $participantId)`,
+      )
+      .get({ participantId });
+    return row === null ? 0 : row.high;
+  }
+
+  /** The newest message id sent by a human in one channel. */
+  latestHumanMessageIdForChannel(channelId: number): number {
+    const row = this.db
+      .query<{ high: number }, { channelId: number }>(
+        `SELECT COALESCE(MAX(m.id), 0) AS high
+           FROM messages m
+           JOIN participants sender ON sender.id = m.sender_id AND sender.kind = 'human'
+          WHERE m.channel_id = $channelId`,
+      )
+      .get({ channelId });
+    return row === null ? 0 : row.high;
+  }
+
+  /** When the channel last carried a message from anyone. */
+  channelLastMessage(channelId: number): ChannelLastMessage {
+    const row = this.db
+      .query<{ at: string | null }, { channelId: number }>(
+        `SELECT MAX(created_at) AS at FROM messages WHERE channel_id = $channelId`,
+      )
+      .get({ channelId });
+    return row === null || row.at === null ? { kind: "none" } : { kind: "at", at: row.at };
+  }
+
+  /** Active agent members of a channel that hold a live route. */
+  keepAwakeMembers(channelId: number): KeepAwakeMember[] {
+    return this.db
+      .query<KeepAwakeMemberRow, { channelId: number }>(
+        `SELECT p.id AS participant_id, p.handle, p.terminal_id, p.pane_id, p.occupant_agent
+           FROM memberships mem
+           JOIN participants p ON p.id = mem.participant_id
+          WHERE mem.channel_id = $channelId
+            AND p.kind = 'agent' AND p.deactivated = 0 AND p.route_state = 'active'
+            AND p.terminal_id IS NOT NULL AND p.pane_id IS NOT NULL
+          ORDER BY p.handle`,
+      )
+      .all({ channelId })
+      .map((row) => ({
+        participantId: row.participant_id,
+        handle: row.handle,
+        terminalId: row.terminal_id,
+        paneId: row.pane_id,
+        occupantAgent: row.occupant_agent,
+      }));
+  }
+
+  /**
+   * Sends an agent's stop request to the human as a direct message and pauses
+   * every watching policy that would wake that agent directly: its own agent
+   * policy and each channel policy where it is the coordinator. A channel where
+   * it is only a member keeps its watch, so the coordinator can reassign work.
+   */
+  alertHuman(
+    senderId: number,
+    body: string,
+  ): Result<HumanAlertResult, NotFound | ChannelExists> {
+    return this.tx(() => {
+      const sender = this.findById(senderId);
+      if (sender === null || sender.deactivated) {
+        return Result.err(notFound(`Participant "${senderId}"`));
+      }
+      const human = this.mostRecentlySeenHuman();
+      if (human === null) return Result.err(notFound("Human participant"));
+
+      const sent = this.sendDirect(senderId, [human.handle], body);
+      if (sent.isErr()) return sent;
+
+      const now = this.now();
+      const paused = this.db
+        .query<never, { senderId: number; handle: string; now: string }>(
+          `UPDATE keep_awake_policies
+              SET state = 'needs_human', cause_kind = 'agent_requested', cause_handle = $handle,
+                  cause_reason = NULL, state_since = $now, updated_at = $now
+            WHERE state = 'watching'
+              AND ((target_kind = 'agent' AND participant_id = $senderId)
+                OR (target_kind = 'channel' AND coordinator_id = $senderId))`,
+        )
+        .run({ senderId, handle: sender.handle, now }).changes;
+
+      return Result.ok({
+        channel: sent.value.message.channel,
+        messageId: sent.value.message.id,
+        pausedPolicies: paused,
+      });
+    });
+  }
+
   // --------------------------------------------------------------------- helpers
 
   private channelRow(name: string): ChannelRow | null {
@@ -3104,6 +3367,175 @@ export class Store {
       createdAt: row.created_at,
     }));
   }
+}
+
+const KEEP_AWAKE_SELECT = `
+  SELECT k.*,
+         p.handle  AS participant_handle,
+         c.name    AS channel_name,
+         co.handle AS coordinator_handle
+    FROM keep_awake_policies k
+    LEFT JOIN participants p  ON p.id  = k.participant_id
+    LEFT JOIN channels     c  ON c.id  = k.channel_id
+    LEFT JOIN participants co ON co.id = k.coordinator_id
+`;
+
+/**
+ * Column types narrower than TEXT are sound because the migration's CHECK
+ * constraints admit no other value.
+ */
+interface KeepAwakeRow {
+  id: number;
+  target_kind: "agent" | "channel";
+  participant_id: number | null;
+  channel_id: number | null;
+  coordinator_id: number | null;
+  idle_minutes: number;
+  blocked_minutes: number;
+  max_wakes: number;
+  state: "watching" | "needs_human";
+  wakes_used: number;
+  last_wake_at: string | null;
+  cause_kind: "wakes_exhausted" | "agent_requested" | "dialog_unrecognized" | "dialog_stuck" | null;
+  cause_handle: string | null;
+  cause_reason: UnrecognizedReason | null;
+  human_mark_id: number;
+  state_since: string;
+  participant_handle: string | null;
+  channel_name: string | null;
+  coordinator_handle: string | null;
+}
+
+interface KeepAwakeMemberRow {
+  participant_id: number;
+  handle: string;
+  terminal_id: string;
+  pane_id: string;
+  occupant_agent: string | null;
+}
+
+/** A type alias, not an interface, so it satisfies the SQL binding constraint. */
+type KeepAwakeInsert = {
+  idle: number;
+  blocked: number;
+  maxWakes: number;
+  mark: number;
+  now: string;
+};
+
+type CauseColumns = {
+  causeKind: NonNullable<KeepAwakeRow["cause_kind"]>;
+  causeHandle: string | null;
+  causeReason: UnrecognizedReason | null;
+};
+
+export type ChannelLastMessage = { kind: "none" } | { kind: "at"; at: string };
+
+function keepAwakeInsert(limits: KeepAwakeLimits, mark: number, now: string): KeepAwakeInsert {
+  return {
+    idle: limits.idleMinutes,
+    blocked: limits.blockedMinutes,
+    maxWakes: limits.maxWakes,
+    mark,
+    now,
+  };
+}
+
+function causeColumns(cause: NeedsHumanCause): CauseColumns {
+  switch (cause.kind) {
+    case "wakes-exhausted":
+      return { causeKind: "wakes_exhausted", causeHandle: null, causeReason: null };
+    case "agent-requested":
+      return { causeKind: "agent_requested", causeHandle: cause.handle, causeReason: null };
+    case "dialog-unrecognized":
+      return {
+        causeKind: "dialog_unrecognized",
+        causeHandle: cause.handle,
+        causeReason: cause.reason,
+      };
+    case "dialog-stuck":
+      return { causeKind: "dialog_stuck", causeHandle: cause.handle, causeReason: null };
+  }
+}
+
+function requiredColumn<T>(value: T | null, column: string, policyId: number): T {
+  if (value === null) panic(`keep_awake_policies row ${policyId} has no ${column}`);
+  return value;
+}
+
+function toKeepAwakeTarget(row: KeepAwakeRow): KeepAwakeTarget {
+  switch (row.target_kind) {
+    case "agent":
+      return {
+        kind: "agent",
+        participantId: requiredColumn(row.participant_id, "participant_id", row.id),
+        handle: requiredColumn(row.participant_handle, "participant handle", row.id),
+      };
+    case "channel":
+      return {
+        kind: "channel",
+        channelId: requiredColumn(row.channel_id, "channel_id", row.id),
+        channel: requiredColumn(row.channel_name, "channel name", row.id),
+        coordinatorId: requiredColumn(row.coordinator_id, "coordinator_id", row.id),
+        coordinator: requiredColumn(row.coordinator_handle, "coordinator handle", row.id),
+      };
+  }
+}
+
+function toNeedsHumanCause(row: KeepAwakeRow): NeedsHumanCause {
+  const kind = requiredColumn(row.cause_kind, "cause_kind", row.id);
+  switch (kind) {
+    case "wakes_exhausted":
+      return { kind: "wakes-exhausted" };
+    case "agent_requested":
+      return {
+        kind: "agent-requested",
+        handle: requiredColumn(row.cause_handle, "cause_handle", row.id),
+      };
+    case "dialog_unrecognized":
+      return {
+        kind: "dialog-unrecognized",
+        handle: requiredColumn(row.cause_handle, "cause_handle", row.id),
+        reason: requiredColumn(row.cause_reason, "cause_reason", row.id),
+      };
+    case "dialog_stuck":
+      return {
+        kind: "dialog-stuck",
+        handle: requiredColumn(row.cause_handle, "cause_handle", row.id),
+      };
+  }
+}
+
+function toKeepAwakeState(row: KeepAwakeRow): KeepAwakeState {
+  switch (row.state) {
+    case "watching":
+      return {
+        kind: "watching",
+        wakesUsed: row.wakes_used,
+        lastWake: row.last_wake_at === null
+          ? { kind: "not-woken" }
+          : { kind: "woken", at: row.last_wake_at },
+        since: row.state_since,
+      };
+    case "needs_human":
+      return { kind: "needs-human", cause: toNeedsHumanCause(row), since: row.state_since };
+  }
+}
+
+function toKeepAwakePolicy(row: KeepAwakeRow): KeepAwakePolicy {
+  return {
+    id: row.id,
+    target: toKeepAwakeTarget(row),
+    // SAFETY: the migration CHECKs admit only positive integers, and every row
+    // is written from limits that the keep-awake limits parser constructed.
+    limits: {
+      idleMinutes: row.idle_minutes as Minutes,
+      blockedMinutes: row.blocked_minutes as Minutes,
+      maxWakes: row.max_wakes as WakeCount,
+    },
+    state: toKeepAwakeState(row),
+    humanMarkId: row.human_mark_id,
+  };
 }
 
 const CHANNEL_SUMMARY_SELECT = `

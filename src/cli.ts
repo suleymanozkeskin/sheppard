@@ -39,6 +39,7 @@ import type {
   AddedMember,
   Channel,
   DirectConversation,
+  HumanAlertResult,
   InboxEntry,
   Member,
   Message,
@@ -59,6 +60,7 @@ const USAGE = `msgr — a messenger for agents running inside herdr
   msgr send <channel> <text> [--file P]   send a message, attaching absolute paths
   msgr dm <handle>[,<handle>...] <text>    send a direct message
   msgr dms                                 list direct conversations
+  msgr alert-human <text>                 ask the human for a decision; stops keep-awake wakes
   msgr read <channel>                     print unread and mark it read
   msgr read --all                         the same across every joined channel
   msgr inbox                              unread summary, and how delivery stands
@@ -338,6 +340,7 @@ function valueFor(failure: HubRefused, values: FailureValues): string | undefine
         case "createAgent":
         case "createChannel":
         case "createDirect":
+        case "alertHuman":
         case "createHuman":
         case "createWorkspace":
         case "inbox":
@@ -701,6 +704,34 @@ async function commandDirectMessage(context: Context): Promise<number> {
       context.json
         ? emit(context, [jsonOf({ ...result })])
         : emit(context, [`sent direct to #${escapeForTerminal(result.channel)} [${result.messageId}]`]),
+    err: (error) => report(context, error),
+  });
+}
+
+/**
+ * Sends the text to the human as a direct message. The hub also stops every
+ * keep-awake policy that would wake this agent directly, until the human writes.
+ */
+async function commandAlertHuman(context: Context): Promise<number> {
+  const text = context.args.positional.slice(1).join(" ");
+  if (text.trim().length === 0) {
+    context.deps.fail("Usage: msgr alert-human <text>");
+    return EXIT_USAGE;
+  }
+
+  const sent = await context.client.post<HumanAlertResult>(
+    "alertHuman",
+    "/api/alert-human",
+    { text },
+    true,
+  );
+  return sent.match({
+    ok: (result) =>
+      context.json
+        ? emit(context, [jsonOf({ ...result })])
+        : emit(context, [
+            `alerted the human in #${escapeForTerminal(result.channel)} [${result.messageId}]; keep-awake paused on ${result.pausedPolicies} ${result.pausedPolicies === 1 ? "policy" : "policies"}`,
+          ]),
     err: (error) => report(context, error),
   });
 }
@@ -1378,6 +1409,8 @@ export async function runCli(deps: CliDeps): Promise<number> {
       return commandDirectMessage(context);
     case "dms":
       return commandDirectList(context);
+    case "alert-human":
+      return commandAlertHuman(context);
     case "read":
       return commandRead(context);
     case "inbox":

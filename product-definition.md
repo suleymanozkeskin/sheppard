@@ -194,6 +194,35 @@ A ping is an interruption, not a reassignment. The agent reads the referenced
 messages and changes work only when a message explicitly changes its assignment.
 Delivery can occur more than once, but the unread cursor is the source of truth.
 
+### Keep-awake
+
+The human can turn on keep-awake for one agent or for one channel. Only the
+human can set, change, resume, or remove a keep-awake policy. A policy has an
+idle limit, a blocked limit, and a wake budget. The defaults are 20 minutes,
+30 minutes, and 3 wakes.
+
+- An agent policy wakes its agent when the agent stays idle or done past the
+  idle limit.
+- A channel policy wakes one coordinator that the human picks from the agent
+  members. It does this when every routed agent member is idle, done, or
+  blocked, and the channel has no new message, for the idle limit.
+- A dialog that stays unanswered past the blocked limit is closed with Escape.
+  Escape declines a question or a permission request and never grants it.
+  Sheppard closes only dialogs that it recognizes for a tested harness. It
+  never presses Escape on another dialog, such as the folder-trust dialog. In
+  that case it stops the policy and alerts the human.
+- A wake is a fixed Sheppard prompt. It contains channel names and minute
+  counts, never message bodies.
+- Every wake and every closed dialog counts against the budget. An empty budget
+  stops the policy and alerts the human.
+- An agent can run `msgr alert-human` to send a question to the human. This
+  stops each policy that wakes that agent directly.
+- A stopped policy watches again after a human message in its scope, or after
+  the human resumes it. Then the budget is full again.
+
+Keep-awake is the only automatic path that presses a key in an agent's pane.
+It acts only under a policy that the human set.
+
 ## 10. Roles, models, and launchers
 
 A role answers what job an agent performs. A launcher alias is user-owned and
@@ -302,6 +331,7 @@ The human must be able to answer these questions from one browser tab:
 
 - Which projects are active?
 - Which agents are working, idle, done, blocked, or unavailable?
+- Which keep-awake policies stopped and need the human?
 - Which agents have stale or missing routes?
 - Who leads each project?
 - What task or role does each agent have?
@@ -334,7 +364,8 @@ pane-scoped identity.
 
 A lead can start agents because staffing is an authenticated product capability.
 It cannot use the human-only prompt endpoint to type into another agent's pane.
-Messages are the agent-to-agent influence path.
+It cannot set keep-awake policies. Messages are the agent-to-agent influence
+path.
 
 ## 14. Product boundaries
 

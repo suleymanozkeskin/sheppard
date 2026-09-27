@@ -3,6 +3,7 @@ import { escapeForTerminal } from "./format";
 export type Operation =
   | "createChannel"
   | "createDirect"
+  | "alertHuman"
   | "createHuman"
   | "createAgent"
   | "joinChannel"
@@ -138,6 +139,7 @@ function validationCopy(operation: Operation, detail: string | undefined): CopyR
     case "sendMessage":
       return copyRow("That message cannot be sent.", sentenceDetailCopy(detail));
     case "createDirect":
+    case "alertHuman":
       return copyRow("That direct message cannot be sent.", sentenceDetailCopy(detail));
     case "uploadFile":
       return copyRow(
@@ -226,6 +228,7 @@ function notFoundCopy(
     case "inbox":
     case "createChannel":
     case "createDirect":
+    case "alertHuman":
     case "createHuman":
     case "createAgent":
     case "sendMessage":
