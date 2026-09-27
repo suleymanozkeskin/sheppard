@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loadConfig } from "../src/config";
+import { loadConfig, msgrAccessArgv } from "../src/config";
 
 describe("configuration", () => {
   test("enables extra human identities only for the exact QA flag", () => {
@@ -31,5 +31,15 @@ describe("configuration", () => {
       },
       { harness: "codex", name: "$(uname)", kind: "model", argvSuffix: [] },
     ]);
+  });
+});
+
+describe("msgrAccessArgv", () => {
+  test("allows msgr for Claude in the single-value flag form", () => {
+    expect(msgrAccessArgv("claude")).toEqual(["--allowedTools=Bash(msgr *)"]);
+  });
+
+  test("adds nothing for other harnesses", () => {
+    for (const kind of ["codex", "pi", "opencode", "grok"]) expect(msgrAccessArgv(kind)).toEqual([]);
   });
 });
