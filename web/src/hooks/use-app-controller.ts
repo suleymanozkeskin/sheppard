@@ -5,6 +5,8 @@ import { createAckScheduler } from "@/api/ack"
 import { ApiNetworkError, formatApiError } from "@/api/errors"
 import { AUTO_IDENTIFY_HANDLE, autoIdentify, NOT_CONNECTED_REASON } from "@/api/auto-identify"
 import { identityForHandle, removeIdentity, saveIdentity, type StoredIdentity } from "@/api/identity"
+import { checkRemoteSession } from "@/api/remote-session"
+import { PAIR_PATH, pageSite } from "@/remote-access"
 import { mockApi } from "@/api/mock"
 import { apiCall, createBrowserApi } from "@/api/runtime"
 import { type DirectoryList, type HerdrPaneView, type Member, type Message, type MetadataScope, type MsgrApi, type RolePreset, type RouteState, type WorkspaceList } from "@/api/types"
@@ -197,22 +199,45 @@ export function useAppController(
   useEffect(() => {
     let mounted = true
     authRecoveryActiveRef.current = true
-    void autoIdentify(() => apiCall(sessionApi, fallbackApi, (client) => client.createHuman({ handle: AUTO_IDENTIFY_HANDLE }))).then((result) => {
-      if (!mounted) return
-      result.match({
-        ok: ({ handle: registeredHandle }) => {
-          const nextIdentity = identityForHandle(registeredHandle)
-          setSessionExpired(false)
-          setIdentity(nextIdentity)
-          saveIdentity(nextIdentity).match({
-            ok: () => undefined,
-            err: (storageError) => setStorageNotice(storageError.message),
-          })
-        },
-        err: () => setSessionExpired(true),
+    const identified = (registeredHandle: string): void => {
+      const nextIdentity = identityForHandle(registeredHandle)
+      setSessionExpired(false)
+      setIdentity(nextIdentity)
+      saveIdentity(nextIdentity).match({
+        ok: () => undefined,
+        err: (storageError) => setStorageNotice(storageError.message),
       })
-      authRecoveryActiveRef.current = false
-    })
+    }
+    switch (pageSite(globalThis.location.protocol)) {
+      case "remote":
+        // A remote page has no sign-in by handle. Without a paired session it pairs.
+        void checkRemoteSession(sessionApi).then((check) => {
+          if (!mounted) return
+          switch (check.kind) {
+            case "paired":
+              identified(check.handle)
+              break
+            case "unpaired":
+              globalThis.location.assign(PAIR_PATH)
+              return
+            case "failed":
+              setSessionExpired(true)
+              break
+          }
+          authRecoveryActiveRef.current = false
+        })
+        break
+      case "local":
+        void autoIdentify(() => apiCall(sessionApi, fallbackApi, (client) => client.createHuman({ handle: AUTO_IDENTIFY_HANDLE }))).then((result) => {
+          if (!mounted) return
+          result.match({
+            ok: ({ handle: registeredHandle }) => identified(registeredHandle),
+            err: () => setSessionExpired(true),
+          })
+          authRecoveryActiveRef.current = false
+        })
+        break
+    }
     return () => {
       mounted = false
     }

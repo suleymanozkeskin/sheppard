@@ -1,6 +1,8 @@
 import { Result } from "better-result"
 
 import { draftFromLimits, parseLimitsDraft } from "../keep-awake"
+import { PAIRING_CODE_LENGTH, displayPairingCode, parsePairingCode } from "../remote-access"
+import { AUTO_IDENTIFY_HANDLE } from "./auto-identify"
 import { ApiConflictError, ApiHttpError, ApiNotFoundError, type Operation } from "./errors"
 import {
   lastSpokenText,
@@ -65,6 +67,13 @@ import type {
   KeepAwakePolicyList,
   KeepAwakeSetting,
   KeepAwakeSettingResult,
+  PairedDevice,
+  PairingCode,
+  RedeemPairingRequest,
+  CallerIdentity,
+  RemoteAccessStatus,
+  RemoteSession,
+  RevokedRemoteSession,
   KeepAwakeTarget,
   SetAgentKeepAwakeRequest,
   SetChannelKeepAwakeRequest,
@@ -187,6 +196,25 @@ function initialLauncherCatalogue(launcher: Launcher): DeviceCatalogue {
   }
 }
 
+const MOCK_REMOTE_HOST = "mock-mac.tail0000.ts.net"
+/** Pairing codes in the mock expire like the hub's: five minutes. */
+const MOCK_PAIRING_TTL_MS = 5 * 60_000
+const MOCK_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+function mockPairingCode(): string {
+  return Array.from({ length: PAIRING_CODE_LENGTH }, () =>
+    MOCK_CODE_ALPHABET[Math.floor(Math.random() * MOCK_CODE_ALPHABET.length)]).join("")
+}
+
+function remoteRefusal(
+  code: "NotFound" | "PairingRefused" | "ValidationFailed",
+  error: string,
+  status: 400 | 401 | 404,
+  operation: Operation,
+): ApiHttpError {
+  return new ApiHttpError({ body: JSON.stringify({ code, error }), message: error, status, operation })
+}
+
 function keepAwakeRefusal(
   code: "NotFound" | "NotAMember" | "ValidationFailed",
   error: string,
@@ -250,6 +278,9 @@ export class MockMsgrApi implements MsgrApi {
   private readonly uploadedContents = new Map<number, string>()
   private readonly keepAwakePolicies = new Map<string, KeepAwakePolicy>()
   private nextKeepAwakeId = 1
+  private readonly pairingCodes = new Map<string, string>()
+  private readonly remoteSessions: RemoteSession[] = []
+  private nextRemoteSessionId = 1
 
   private findChannel(name: string): Result<Channel, ApiNotFoundError> {
     const channel = [...this.channels, ...this.directChannels, ...this.workspaceChannels].find((candidate) => candidate.name === name)
@@ -861,6 +892,56 @@ export class MockMsgrApi implements MsgrApi {
     if (channel.isErr()) return channel
     this.keepAwakePolicies.delete(`channel:${name}`)
     return Result.ok({ setting: { kind: "off" } })
+  }
+
+  public async getMe(): ApiResult<CallerIdentity> {
+    return Result.ok({ handle: AUTO_IDENTIFY_HANDLE, kind: "human" })
+  }
+
+  public async getRemoteAccess(): ApiResult<RemoteAccessStatus> {
+    return Result.ok({
+      access: {
+        kind: "on",
+        host: MOCK_REMOTE_HOST,
+        origin: `https://${MOCK_REMOTE_HOST}`,
+        ownerLogin: "owner@example.com",
+        enabledAt: "2026-01-01T00:00:00.000Z",
+      },
+      sessions: [...this.remoteSessions],
+    })
+  }
+
+  public async createPairingCode(): ApiResult<PairingCode> {
+    const code = mockPairingCode()
+    const expiresAt = new Date(Date.now() + MOCK_PAIRING_TTL_MS).toISOString()
+    this.pairingCodes.set(code, expiresAt)
+    return Result.ok({ code: displayPairingCode(code), expiresAt, url: `https://${MOCK_REMOTE_HOST}/pair#code=${code}` })
+  }
+
+  public async redeemPairingCode(request: RedeemPairingRequest): ApiResult<PairedDevice> {
+    const parsed = parsePairingCode(request.code)
+    if (parsed.kind === "invalid") {
+      return Result.err(remoteRefusal("ValidationFailed", parsed.message, 400, "redeemPairingCode"))
+    }
+    const expiresAt = this.pairingCodes.get(parsed.code)
+    this.pairingCodes.delete(parsed.code)
+    if (expiresAt === undefined || Date.parse(expiresAt) <= Date.now()) {
+      return Result.err(remoteRefusal("PairingRefused", "The pairing code is not valid or has expired", 401, "redeemPairingCode"))
+    }
+    this.remoteSessions.push({
+      id: this.nextRemoteSessionId++,
+      handle: "human",
+      createdAt: new Date().toISOString(),
+      lastSeen: { kind: "not-seen" },
+    })
+    return Result.ok({ handle: "human" })
+  }
+
+  public async revokeRemoteSession(id: number): ApiResult<RevokedRemoteSession> {
+    const index = this.remoteSessions.findIndex((session) => session.id === id)
+    if (index < 0) return Result.err(remoteRefusal("NotFound", "Remote session not found", 404, "revokeRemoteSession"))
+    this.remoteSessions.splice(index, 1)
+    return Result.ok({ revoked: id })
   }
 
   private keepAwakeSetting(key: string): KeepAwakeSetting {

@@ -641,6 +641,7 @@ export type RequestBody =
   | AgentSessionSelectionRequest
   | SetAgentKeepAwakeRequest
   | SetChannelKeepAwakeRequest
+  | RedeemPairingRequest
 
 export interface HistoryQuery {
   limit?: number
@@ -731,6 +732,49 @@ export interface SetChannelKeepAwakeRequest extends KeepAwakeLimits {
   coordinator: string
 }
 
+/** Remote access through `tailscale serve`, as the hub reports it. */
+export type RemoteAccess =
+  | { kind: "off" }
+  | { kind: "on"; host: string; origin: string; ownerLogin: string; enabledAt: string }
+
+/** A phone or other device that paired with the hub. */
+export interface RemoteSession {
+  id: number
+  handle: string
+  createdAt: string
+  lastSeen: { kind: "seen"; at: string } | { kind: "not-seen" }
+}
+
+/** The authenticated caller, as `GET /api/me` reports it. */
+export interface CallerIdentity {
+  handle: string
+  kind: Kind
+}
+
+export interface RemoteAccessStatus {
+  access: RemoteAccess
+  sessions: RemoteSession[]
+}
+
+/** A one-time pairing code. `code` is shown as XXXX-XXXX; `url` carries it in the fragment. */
+export interface PairingCode {
+  code: string
+  expiresAt: string
+  url: string
+}
+
+export interface RedeemPairingRequest {
+  code: string
+}
+
+export interface PairedDevice {
+  handle: string
+}
+
+export interface RevokedRemoteSession {
+  revoked: number
+}
+
 export interface MsgrApi {
   createAgent(request: CreateAgentRequest): ApiResult<AgentProvision>
   createHuman(request: CreateHumanRequest): ApiResult<HumanRegistration>
@@ -772,6 +816,11 @@ export interface MsgrApi {
   getChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult>
   setChannelKeepAwake(name: string, request: SetChannelKeepAwakeRequest): ApiResult<KeepAwakeSettingResult>
   clearChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult>
+  getMe(): ApiResult<CallerIdentity>
+  getRemoteAccess(): ApiResult<RemoteAccessStatus>
+  createPairingCode(): ApiResult<PairingCode>
+  redeemPairingCode(request: RedeemPairingRequest): ApiResult<PairedDevice>
+  revokeRemoteSession(id: number): ApiResult<RevokedRemoteSession>
   listChannels(kind?: "chat" | "workspace"): ApiResult<ChannelList>
   listDirect(): ApiResult<DirectList>
   joinChannel(name: string): ApiResult<JoinResult>
