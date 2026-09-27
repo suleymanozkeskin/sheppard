@@ -15,7 +15,12 @@ import {
   parsePairingCode,
 } from "@/remote-access"
 
-function jsonResponse(body: unknown, status = 200): Response {
+interface JsonObject {
+  [key: string]: JsonValue
+}
+type JsonValue = boolean | JsonObject | JsonValue[] | null | number | string
+
+function jsonResponse(body: JsonValue, status = 200): Response {
   return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" }, status })
 }
 
