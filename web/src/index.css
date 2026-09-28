@@ -172,3 +172,17 @@
 .md-view pre code { background: transparent; padding: 0; }
 .md-view blockquote { border-inline-start: 3px solid var(--border); padding-inline-start: 0.75rem; color: var(--muted-foreground); }
 .md-view a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+
+/*
+ * iOS Safari zooms into a focused text field whose font size is below 16px and
+ * keeps the page zoomed after the field loses focus. On touch screens every
+ * text field uses at least 16px. It overrides component and utility sizes, so
+ * it needs !important. Pinch zoom stays available; the viewport is not locked.
+ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}
