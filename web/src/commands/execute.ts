@@ -55,6 +55,42 @@ function validCommandText(body: string): Result<string, CommandFailure> {
   return Result.ok(body.trim())
 }
 
+async function sendDirectToAgent(
+  api: MsgrApi,
+  handle: string,
+  text: string,
+  attachments: readonly string[],
+): Promise<Result<CommandSuccess, CommandFailure>> {
+  // Without attachments the request stays exactly the plain direct message.
+  const request =
+    attachments.length === 0 ? { to: [handle], body: text } : { to: [handle], body: text, attachments: [...attachments] }
+  const result = await api.createDirect(request)
+  return result
+    .map(({ channel }) =>
+      Object.freeze({
+        message: `Message sent to ${handle}.`,
+        destination: { kind: "conversation" as const, channel },
+      }),
+    )
+    .mapError(commandWriteFailure)
+}
+
+/**
+ * Sends one direct message to an agent with file attachments. Each attachment
+ * is an absolute path on the hub machine, or the stored path of an upload.
+ * Same outcomes as sendCommandMessage.
+ */
+export async function sendAgentMessage(
+  api: MsgrApi,
+  handle: string,
+  body: string,
+  attachments: readonly string[],
+): Promise<Result<CommandSuccess, CommandFailure>> {
+  const validated = validCommandText(body)
+  if (validated.isErr()) return validated
+  return sendDirectToAgent(api, handle, validated.value, attachments)
+}
+
 /** Sends once to the visible audience. Does not navigate, retry, or use mock fallback.
  * A rejected write preserves the draft. An uncertain reply requires inspection.
  */
@@ -67,17 +103,8 @@ export async function sendCommandMessage(
   if (validated.isErr()) return validated
   const text = validated.value
   switch (target.kind) {
-    case "agent": {
-      const result = await api.createDirect({ to: [target.handle], body: text })
-      return result
-        .map(({ channel }) =>
-          Object.freeze({
-            message: `Message sent to ${target.handle}.`,
-            destination: { kind: "conversation" as const, channel },
-          }),
-        )
-        .mapError(commandWriteFailure)
-    }
+    case "agent":
+      return sendDirectToAgent(api, target.handle, text, [])
     case "channel":
       if (target.membership === "not-joined")
         return Result.err({

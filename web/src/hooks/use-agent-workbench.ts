@@ -5,7 +5,9 @@ import type { AgentDetail, AgentRecentMessages, Message, MsgrApi } from "@/api/t
 import type { AppController } from "@/hooks/use-app-controller"
 import { useLiveMessages } from "@/hooks/use-live-messages"
 import { directChannelForAgent } from "@/commands/search"
-import { sendCommandMessage, type CommandFailure } from "@/commands/execute"
+import { sendAgentMessage, type CommandFailure } from "@/commands/execute"
+import { useComposerState, type AttachmentPath } from "@/hooks/use-composer-state"
+import { startUploads } from "@/attachment-upload"
 import { commandDraftKey, type CommandDraftTarget } from "@/commands/drafts"
 import { useCommandDrafts } from "@/hooks/use-command-drafts"
 import { readAgentActivity } from "@/agent-activity"
@@ -80,6 +82,13 @@ export function useAgentActivity(
   return state
 }
 
+/** An upload in progress or a failed attachment blocks sending. */
+export function attachmentsBlocked(attachments: readonly AttachmentPath[]): boolean {
+  return attachments.some(
+    (attachment) => attachment.status === "uploading" || attachment.status === "error" || attachment.error !== undefined,
+  )
+}
+
 /** Uses the exact single-agent audience. Messages stream through the shared SSE
  * client. Drafts stay intact on failure; uncertain sends cannot be repeated.
  */
@@ -96,8 +105,31 @@ export function useAgentConversation(controller: AppController, handle: string) 
   const [revision, setRevision] = useState(0)
   const pending = useRef(false)
   const live = useLiveMessages(controller.api, undefined, channel, revision)
+  const attachments = useComposerState()
+  const uploadSequence = useRef(0)
+  const attachFiles = (files: readonly File[]) => {
+    if (files.length === 0) return
+    if (controller.identity === null) return
+    const upload = startUploads(controller.api, files, attachments.attachments.length, attachments, (file) => {
+      uploadSequence.current += 1
+      return `agent-upload:${uploadSequence.current}:${file.name}`
+    })
+    switch (upload.kind) {
+      case "full":
+        setState({ kind: "failed", failure: { kind: "not-completed", message: "This message already has the maximum number of attachments." } })
+        return
+      case "started":
+        if (upload.skipped > 0)
+          setState({ kind: "failed", failure: { kind: "not-completed", message: `Only ${upload.accepted} of ${upload.accepted + upload.skipped} files were attached; a message holds at most 16.` } })
+        return
+    }
+  }
   async function send(): Promise<void> {
     if (controller.identity === null || pending.current || delivery !== "editable") return
+    if (attachmentsBlocked(attachments.attachments)) {
+      setState({ kind: "failed", failure: { kind: "not-completed", message: "Wait for the uploads to finish, or remove the failed attachments. Nothing was sent." } })
+      return
+    }
     const started = store.start(key)
     if (started.isErr()) {
       setState({ kind: "failed", failure: { kind: "not-completed", message: started.error.message } })
@@ -105,10 +137,11 @@ export function useAgentConversation(controller: AppController, handle: string) 
     }
     pending.current = true
     setState({ kind: "sending" })
-    const result = await sendCommandMessage(
+    const result = await sendAgentMessage(
       controller.api,
-      { kind: "agent", handle, routeState: "active" },
+      handle,
       started.value.body,
+      attachments.attachments.map((attachment) => attachment.path),
     )
     pending.current = false
     result.match({
@@ -117,6 +150,7 @@ export function useAgentConversation(controller: AppController, handle: string) 
           throw new Error("Agent message returned a non-conversation destination")
         setCreated({ kind: "existing", channel: destination.channel })
         store.complete(key)
+        attachments.markSent()
         setState({ kind: "sent" })
         setRevision((value) => value + 1)
         controller.reload()
@@ -149,6 +183,8 @@ export function useAgentConversation(controller: AppController, handle: string) 
           }
         : state
   return {
+    attachments,
+    attachFiles,
     channel,
     draft,
     setDraft,

@@ -9,6 +9,7 @@ import {
   focusCommandAgent,
   messageDestination,
   promptCommandAgent,
+  sendAgentMessage,
   sendCommandMessage,
 } from "./execute"
 import { COMMAND_MESSAGE_LIMIT } from "./types"
@@ -47,6 +48,22 @@ describe("command message writes", () => {
     expect(result.isOk()).toBe(true)
     expect(calls).toEqual(['/api/direct {"to":["worker"],"body":"Review this."}'])
     if (result.isOk()) expect(result.value.destination).toEqual({ kind: "conversation", channel: "dm-one" })
+  })
+
+  test("an agent message carries its attachment paths", async () => {
+    const calls: string[] = []
+    const api = new HttpMsgrApi({
+      baseUrl: "",
+      fetchImpl: async (input, init) => {
+        calls.push(`${input} ${init?.body}`)
+        return Response.json({ channel: "dm-one", messageId: 1 })
+      },
+    })
+    const result = await sendAgentMessage(api, "worker", "See the log.", ["/tmp/upload/build.log"])
+    expect(result.isOk()).toBe(true)
+    expect(calls).toEqual([
+      '/api/direct {"to":["worker"],"body":"See the log.","attachments":["/tmp/upload/build.log"]}',
+    ])
   })
 
   test("a channel send does not join as a hidden side effect", async () => {
