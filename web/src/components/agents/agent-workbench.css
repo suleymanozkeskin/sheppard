@@ -394,6 +394,61 @@
   gap: 8px;
   padding: 5px 8px 8px;
 }
+.agent-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.agent-message-attachments li {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in oklch, var(--muted) 40%, transparent);
+  font-size: 11px;
+}
+.agent-message-attachments li > span:first-child {
+  max-width: 15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-message-attachments li > span:not(:first-child) {
+  color: var(--muted-foreground);
+}
+.agent-message-attachments li > [role="alert"] {
+  color: var(--destructive);
+}
+.agent-message-attachments button {
+  border-radius: 4px;
+  padding: 2px;
+  color: var(--muted-foreground);
+}
+.agent-message-attachments button:hover {
+  color: var(--foreground);
+}
+.agent-message-attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.agent-message-attach-row input:not([type="file"]) {
+  height: 32px;
+  min-width: 12rem;
+  flex: 1;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in oklch, var(--muted) 30%, transparent);
+  font-size: 12px;
+  outline: none;
+}
 .agent-send-confirmation {
   display: flex;
   justify-content: space-between;

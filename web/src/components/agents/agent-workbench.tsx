@@ -40,6 +40,7 @@ import { agentLocation } from "@/commands/catalog"
 import { absoluteTimeLabel, paneStatusLabel, relativeAgeLabel, workspaceLabel } from "@/workspace-presentation"
 import { shellRoutePath, type AgentView, type ShellRoute, type ShellRouter } from "@/shell-routing"
 import { AgentSessionPanel } from "./agent-session-panel"
+import { AgentAttachButton, AgentAttachmentTray } from "./agent-attachments"
 import { CommandMenuTrigger } from "@/components/commands/command-menu"
 import "./agent-workbench.css"
 
@@ -574,6 +575,7 @@ function AgentMessageComposer({
         Direct message to <strong>{handle}</strong>
         {routeState === "stale" && <span>Stored until chat reconnects</span>}
       </label>
+      <AgentAttachmentTray disabled={disabled} model={model} />
       <div className="agent-message-field">
         <textarea
           autoComplete="off"
@@ -907,6 +909,7 @@ function AgentMessageTools({
 }) {
   return (
     <div className="agent-message-tools">
+      <AgentAttachButton disabled={disabled} model={model} />
       <DictationButton disabled={disabled} inputRef={inputRef} onChange={model.setDraft} value={model.draft} />
       <span>{browserCommandModifier()} ↵ to send</span>
       <Button
