@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/message-scroller"
 import { useMessageScroller, useMessageScrollerVisibility } from "@/components/ui/message-scroller-hooks"
 import { highestContiguousVisibleId, type AckScheduler } from "@/api/ack"
+import type { ArrivalFocus } from "@/shell-routing"
 import { formatApiError } from "@/api/errors"
 import { cn } from "@/lib/utils"
 import type { AgentStatus, ApiResult, AttachmentMeta, ChannelReceipt, Message, MsgrApi, RouteState } from "@/api/types"
@@ -76,6 +77,10 @@ export interface ChannelViewProps {
   onRetry?: () => void
   selfHandle?: string
   focusedMessageId?: number
+  /** Where focus lands when a route opens at a message. Without it, the message takes focus. */
+  arrivalFocus?: ArrivalFocus
+  /** Called in place of focusing the message when arrivalFocus is "composer". */
+  onFocusComposer?: () => void
   onFocusedMessageChange?: (messageId: number) => void
   onStartDirect?: (handle: string) => void
   messageableHandles?: ReadonlySet<string>
@@ -134,6 +139,8 @@ export function ChannelView({
   ackScheduler,
   selfHandle,
   focusedMessageId,
+  arrivalFocus,
+  onFocusComposer,
   onFocusedMessageChange,
   onStartDirect,
   messageableHandles,
@@ -174,6 +181,8 @@ export function ChannelView({
         channelName={channelName}
         errorMessage={errorMessage}
         focusedMessageId={focusedMessageId}
+        arrivalFocus={arrivalFocus}
+        onFocusComposer={onFocusComposer}
         loadState={loadState}
         messages={messages}
         onFocusedMessageChange={onFocusedMessageChange}
@@ -200,6 +209,8 @@ interface ChannelScrollerProps {
   canAcknowledge: boolean | undefined
   errorMessage: string | undefined
   focusedMessageId: number | undefined
+  arrivalFocus: ArrivalFocus | undefined
+  onFocusComposer: (() => void) | undefined
   loadState: ChannelLoadState
   messages: Message[]
   onFocusedMessageChange: ((messageId: number) => void) | undefined
@@ -225,6 +236,8 @@ function ChannelScroller({
   canAcknowledge,
   errorMessage,
   focusedMessageId,
+  arrivalFocus,
+  onFocusComposer,
   loadState,
   messages,
   onFocusedMessageChange,
@@ -319,6 +332,8 @@ function ChannelScroller({
                   focusState={focusedMessageId !== undefined && message.id === activeFocusedMessageId
                     ? "requested"
                     : message.id === activeFocusedMessageId ? "focused" : "unfocused"}
+                  arrivalFocus={arrivalFocus}
+                  onFocusComposer={onFocusComposer}
                   key={message.id}
                   message={message}
                   previousMessage={messages[index - 1]}
@@ -367,6 +382,8 @@ interface MessageWithMarkersProps {
   unreadMarker: "first" | "none"
   groupState: "grouped" | "standalone"
   focusState: "focused" | "requested" | "unfocused"
+  arrivalFocus: ArrivalFocus | undefined
+  onFocusComposer: (() => void) | undefined
   message: Message
   previousMessage: Message | undefined
   onFocusedMessageChange: ((messageId: number) => void) | undefined
@@ -385,6 +402,8 @@ function MessageWithMarkers({
   unreadMarker,
   groupState,
   focusState,
+  arrivalFocus,
+  onFocusComposer,
   message,
   previousMessage,
   onFocusedMessageChange,
@@ -398,9 +417,23 @@ function MessageWithMarkers({
   const showDateMarker = previousDateKey !== dateKey
   const isGrouped = groupState === "grouped"
   const isFocused = focusState !== "unfocused"
+  // The latest composer callback, read without making the ref callback change on
+  // every render: a changed ref callback would run again and pull focus back.
+  const focusComposerRef = useRef(onFocusComposer)
+  useLayoutEffect(() => {
+    focusComposerRef.current = onFocusComposer
+  }, [onFocusComposer])
   const focusMessage = useCallback((element: HTMLDivElement | null) => {
-    if (element !== null && focusState === "requested") element.focus()
-  }, [focusState])
+    if (element === null || focusState !== "requested") return
+    switch (arrivalFocus) {
+      case undefined:
+        element.focus()
+        return
+      case "composer":
+        focusComposerRef.current?.()
+        return
+    }
+  }, [arrivalFocus, focusState])
 
   return (
     <>

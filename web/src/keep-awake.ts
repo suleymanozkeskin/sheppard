@@ -1,4 +1,5 @@
 import type {
+  AlertMessage,
   HerdrWorkspaceView,
   KeepAwakeLimits,
   KeepAwakePolicy,
@@ -173,11 +174,25 @@ export function defaultCoordinator(members: readonly Member[], leadHandles: Read
   return chosen === undefined ? { kind: "no-agent-members" } : { kind: "chosen", handle: chosen.handle }
 }
 
-export type KeepAwakeRoute = { kind: "agent"; handle: string } | { kind: "channel"; name: string }
+/**
+ * Where an alarm leads. An agent's question opens its direct message, ready for
+ * a reply; a dialog opens the agent's session, where the dialog shows; any
+ * other stop opens the policy's target.
+ */
+export type KeepAwakeRoute =
+  | { kind: "agent"; handle: string }
+  | { kind: "channel"; name: string }
+  | { kind: "question"; channel: string; messageId: number }
+
+/** What Resume sends: the same limits again, which starts a fresh watch. */
+export type KeepAwakeResume =
+  | { kind: "agent"; handle: string; limits: KeepAwakeLimits }
+  | { kind: "channel"; name: string; coordinator: string; limits: KeepAwakeLimits }
 
 export interface KeepAwakeAlarm {
   policyId: number
   route: KeepAwakeRoute
+  resume: KeepAwakeResume
   label: string
   detail: string
 }
@@ -193,9 +208,10 @@ export function keepAwakeAlarms(policies: readonly KeepAwakePolicy[]): KeepAwake
       case "needs-human":
         alarms.push({
           policyId: policy.id,
-          route: routeFor(policy),
+          route: alarmRoute(policy, state.cause),
+          resume: resumeFor(policy),
           label: labelFor(policy),
-          detail: describeCause(state.cause, policy.limits.maxWakes),
+          detail: alarmDetail(state.cause, policy.limits.maxWakes),
           since: state.since,
         })
     }
@@ -205,12 +221,61 @@ export function keepAwakeAlarms(policies: readonly KeepAwakePolicy[]): KeepAwake
     .map(({ since: _since, ...alarm }) => alarm)
 }
 
-function routeFor(policy: KeepAwakePolicy): KeepAwakeRoute {
+function targetRoute(policy: KeepAwakePolicy): KeepAwakeRoute {
   switch (policy.target.kind) {
     case "agent":
       return { kind: "agent", handle: policy.target.handle }
     case "channel":
       return { kind: "channel", name: policy.target.channel }
+  }
+}
+
+/** Chooses where a stopped policy's alarm leads. Does no I/O. */
+export function alarmRoute(policy: KeepAwakePolicy, cause: NeedsHumanCause): KeepAwakeRoute {
+  switch (cause.kind) {
+    case "agent-requested":
+      return questionRoute(policy, cause.alert)
+    case "dialog-unrecognized":
+    case "dialog-stuck":
+      return { kind: "agent", handle: cause.handle }
+    case "wakes-exhausted":
+      return targetRoute(policy)
+  }
+}
+
+/** A question from before the alert was recorded opens the target instead. */
+function questionRoute(policy: KeepAwakePolicy, alert: AlertMessage): KeepAwakeRoute {
+  switch (alert.kind) {
+    case "message":
+      return { kind: "question", channel: alert.channel, messageId: alert.messageId }
+    case "not-recorded":
+      return targetRoute(policy)
+  }
+}
+
+/** An agent's question shows as the question itself; other causes keep their sentence. */
+export function alarmDetail(cause: NeedsHumanCause, maxWakes: number): string {
+  switch (cause.kind) {
+    case "agent-requested":
+      switch (cause.alert.kind) {
+        case "message":
+          return `@${cause.handle}: ${cause.alert.excerpt}`
+        case "not-recorded":
+          return describeCause(cause, maxWakes)
+      }
+    case "wakes-exhausted":
+    case "dialog-unrecognized":
+    case "dialog-stuck":
+      return describeCause(cause, maxWakes)
+  }
+}
+
+function resumeFor(policy: KeepAwakePolicy): KeepAwakeResume {
+  switch (policy.target.kind) {
+    case "agent":
+      return { kind: "agent", handle: policy.target.handle, limits: policy.limits }
+    case "channel":
+      return { kind: "channel", name: policy.target.channel, coordinator: policy.target.coordinator, limits: policy.limits }
   }
 }
 

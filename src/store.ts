@@ -66,6 +66,7 @@ import type {
   KeepAwakeSetting,
   KeepAwakeState,
   KeepAwakeTarget,
+  AlertMessage,
   Minutes,
   NeedsHumanCause,
   RemoteAccess,
@@ -3201,7 +3202,8 @@ export class Store {
       .query<never, { policyId: number; at: string } & CauseColumns>(
         `UPDATE keep_awake_policies
             SET state = 'needs_human', cause_kind = $causeKind, cause_handle = $causeHandle,
-                cause_reason = $causeReason, state_since = $at, updated_at = $at
+                cause_reason = $causeReason, cause_message_id = $causeMessageId,
+                state_since = $at, updated_at = $at
           WHERE id = $policyId AND state = 'watching'`,
       )
       .run({ policyId, at, ...causeColumns(cause) });
@@ -3213,6 +3215,7 @@ export class Store {
       .query<never, { policyId: number; humanMarkId: number; at: string }>(
         `UPDATE keep_awake_policies
             SET state = 'watching', cause_kind = NULL, cause_handle = NULL, cause_reason = NULL,
+                cause_message_id = NULL,
                 wakes_used = 0, last_wake_at = NULL, human_mark_id = $humanMarkId,
                 state_since = $at, updated_at = $at
           WHERE id = $policyId`,
@@ -3302,15 +3305,16 @@ export class Store {
 
       const now = this.now();
       const paused = this.db
-        .query<never, { senderId: number; handle: string; now: string }>(
+        .query<never, { senderId: number; handle: string; now: string; messageId: number }>(
           `UPDATE keep_awake_policies
               SET state = 'needs_human', cause_kind = 'agent_requested', cause_handle = $handle,
-                  cause_reason = NULL, state_since = $now, updated_at = $now
+                  cause_reason = NULL, cause_message_id = $messageId,
+                  state_since = $now, updated_at = $now
             WHERE state = 'watching'
               AND ((target_kind = 'agent' AND participant_id = $senderId)
                 OR (target_kind = 'channel' AND coordinator_id = $senderId))`,
         )
-        .run({ senderId, handle: sender.handle, now }).changes;
+        .run({ senderId, handle: sender.handle, now, messageId: sent.value.message.id }).changes;
 
       return Result.ok({
         channel: sent.value.message.channel,
@@ -3560,12 +3564,21 @@ const KEEP_AWAKE_SELECT = `
   SELECT k.*,
          p.handle  AS participant_handle,
          c.name    AS channel_name,
-         co.handle AS coordinator_handle
+         co.handle AS coordinator_handle,
+         am.id         AS alert_message_id,
+         am.body       AS alert_body,
+         am.channel_id AS alert_channel_id,
+         ac.name       AS alert_channel
     FROM keep_awake_policies k
     LEFT JOIN participants p  ON p.id  = k.participant_id
     LEFT JOIN channels     c  ON c.id  = k.channel_id
     LEFT JOIN participants co ON co.id = k.coordinator_id
+    LEFT JOIN messages     am ON am.id = k.cause_message_id
+    LEFT JOIN channels     ac ON ac.id = am.channel_id
 `;
+
+/** The alert excerpt is the first line of the question, cut to this many characters. */
+const ALERT_EXCERPT_LENGTH = 160;
 
 /**
  * Column types narrower than TEXT are sound because the migration's CHECK
@@ -3588,6 +3601,11 @@ interface KeepAwakeRow {
   cause_reason: UnrecognizedReason | null;
   human_mark_id: number;
   state_since: string;
+  cause_message_id: number | null;
+  alert_message_id: number | null;
+  alert_body: string | null;
+  alert_channel_id: number | null;
+  alert_channel: string | null;
   participant_handle: string | null;
   channel_name: string | null;
   coordinator_handle: string | null;
@@ -3614,6 +3632,7 @@ type CauseColumns = {
   causeKind: NonNullable<KeepAwakeRow["cause_kind"]>;
   causeHandle: string | null;
   causeReason: UnrecognizedReason | null;
+  causeMessageId: number | null;
 };
 
 export type ChannelLastMessage = { kind: "none" } | { kind: "at"; at: string };
@@ -3631,18 +3650,53 @@ function keepAwakeInsert(limits: KeepAwakeLimits, mark: number, now: string): Ke
 function causeColumns(cause: NeedsHumanCause): CauseColumns {
   switch (cause.kind) {
     case "wakes-exhausted":
-      return { causeKind: "wakes_exhausted", causeHandle: null, causeReason: null };
+      return { causeKind: "wakes_exhausted", causeHandle: null, causeReason: null, causeMessageId: null };
     case "agent-requested":
-      return { causeKind: "agent_requested", causeHandle: cause.handle, causeReason: null };
+      return {
+        causeKind: "agent_requested",
+        causeHandle: cause.handle,
+        causeReason: null,
+        causeMessageId: alertMessageId(cause.alert),
+      };
     case "dialog-unrecognized":
       return {
         causeKind: "dialog_unrecognized",
         causeHandle: cause.handle,
         causeReason: cause.reason,
+        causeMessageId: null,
       };
     case "dialog-stuck":
-      return { causeKind: "dialog_stuck", causeHandle: cause.handle, causeReason: null };
+      return { causeKind: "dialog_stuck", causeHandle: cause.handle, causeReason: null, causeMessageId: null };
   }
+}
+
+function alertMessageId(alert: AlertMessage): number | null {
+  switch (alert.kind) {
+    case "message":
+      return alert.messageId;
+    case "not-recorded":
+      return null;
+  }
+}
+
+/** A paused row from before migration 19, or one whose message was deleted, has no alert. */
+function toAlertMessage(row: KeepAwakeRow): AlertMessage {
+  if (
+    row.alert_message_id === null ||
+    row.alert_body === null ||
+    row.alert_channel_id === null ||
+    row.alert_channel === null
+  ) {
+    return { kind: "not-recorded" };
+  }
+  const firstLine = row.alert_body.split("\n", 1)[0] ?? "";
+  return {
+    kind: "message",
+    channelId: row.alert_channel_id,
+    channel: row.alert_channel,
+    messageId: row.alert_message_id,
+    excerpt: firstLine.length > ALERT_EXCERPT_LENGTH ? `${firstLine.slice(0, ALERT_EXCERPT_LENGTH)}…` : firstLine,
+  };
 }
 
 function requiredColumn<T>(value: T | null, column: string, policyId: number): T {
@@ -3678,6 +3732,7 @@ function toNeedsHumanCause(row: KeepAwakeRow): NeedsHumanCause {
       return {
         kind: "agent-requested",
         handle: requiredColumn(row.cause_handle, "cause_handle", row.id),
+        alert: toAlertMessage(row),
       };
     case "dialog_unrecognized":
       return {

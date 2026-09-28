@@ -390,9 +390,14 @@ export type KeepAwakeTarget =
 /** Why the hub stopped waking a target. Each cause names the agent involved. */
 export type NeedsHumanCause =
   | { kind: "wakes-exhausted" }
-  | { kind: "agent-requested"; handle: string }
+  | { kind: "agent-requested"; handle: string; alert: AlertMessage }
   | { kind: "dialog-unrecognized"; handle: string; reason: UnrecognizedReason }
   | { kind: "dialog-stuck"; handle: string };
+
+/** Where the human can read and answer an agent's `msgr alert-human` question. */
+export type AlertMessage =
+  | { kind: "message"; channelId: number; channel: string; messageId: number; excerpt: string }
+  | { kind: "not-recorded" };
 
 export type LastWake = { kind: "woken"; at: string } | { kind: "not-woken" };
 

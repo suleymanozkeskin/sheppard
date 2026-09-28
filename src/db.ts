@@ -507,6 +507,15 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 19,
+    up: (db) => {
+      // The direct message that `msgr alert-human` sent. No foreign key: a
+      // deleted conversation must not block, and the reader treats a missing
+      // message as not recorded. Rows paused before this version stay NULL.
+      db.exec(`ALTER TABLE keep_awake_policies ADD COLUMN cause_message_id INTEGER NULL`);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1]!.version;

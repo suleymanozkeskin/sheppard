@@ -9,7 +9,15 @@ export type ShellRoute =
   | { kind: "channels"; query?: string; membership?: ChannelMembershipFilter }
   | { kind: "channel"; channel: string; channelKind?: "chat" | "workspace"; messageId?: number }
   | { kind: "direct"; query?: string; filter?: DirectFilter }
-  | { kind: "conversation"; channel: string; messageId?: number; query?: string; filter?: DirectFilter }
+  | {
+      kind: "conversation"
+      channel: string
+      messageId?: number
+      /** With a message target, "composer" puts keyboard focus in the composer instead of on the message. */
+      focus?: ArrivalFocus
+      query?: string
+      filter?: DirectFilter
+    }
   | { kind: "agents" }
   | { kind: "agent"; handle: string; view?: AgentView }
   | { kind: "launchers" }
@@ -45,6 +53,13 @@ function decodeSegment(segment: string): string {
   } catch {
     return segment
   }
+}
+
+/** Where keyboard focus lands when a conversation opens at a message. */
+export type ArrivalFocus = "composer"
+
+function arrivalFocusFromSearch(search: string): ArrivalFocus | undefined {
+  return new URLSearchParams(search).get("focus") === "composer" ? "composer" : undefined
 }
 
 function messageIdFromSearch(search: string): number | undefined {
@@ -189,9 +204,11 @@ function routeFromSegments(segments: readonly string[], search: string): ShellRo
           const channel = decodeSegment(item)
           const messageId = messageIdFromSearch(search)
           const options = directRouteOptions(search)
-          return messageId === undefined
-            ? { channel, kind: "conversation", ...options }
-            : { channel, kind: "conversation", messageId, ...options }
+          if (messageId === undefined) return { channel, kind: "conversation", ...options }
+          const focus = arrivalFocusFromSearch(search)
+          return focus === undefined
+            ? { channel, kind: "conversation", messageId, ...options }
+            : { channel, kind: "conversation", messageId, focus, ...options }
         }
       }
     case "agents":
@@ -284,6 +301,7 @@ export function shellRoutePath(route: ShellRoute): string {
     case "conversation": {
       const params = new URLSearchParams()
       if (route.messageId !== undefined) params.set("messageId", String(route.messageId))
+      if (route.messageId !== undefined && route.focus !== undefined) params.set("focus", route.focus)
       if (route.query !== undefined && route.query.length > 0) params.set("q", route.query)
       if (route.filter !== undefined) params.set("filter", route.filter)
       const search = params.toString()

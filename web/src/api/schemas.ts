@@ -278,9 +278,20 @@ const keepAwakeTargetSchema = v.variant("kind", [
   }),
 ])
 
+const alertMessageSchema = v.variant("kind", [
+  v.object({
+    kind: v.literal("message"),
+    channelId: integer,
+    channel: v.string(),
+    messageId: integer,
+    excerpt: v.string(),
+  }),
+  v.object({ kind: v.literal("not-recorded") }),
+])
+
 const needsHumanCauseSchema = v.variant("kind", [
   v.object({ kind: v.literal("wakes-exhausted") }),
-  v.object({ kind: v.literal("agent-requested"), handle: v.string() }),
+  v.object({ kind: v.literal("agent-requested"), handle: v.string(), alert: alertMessageSchema }),
   v.object({
     kind: v.literal("dialog-unrecognized"),
     handle: v.string(),

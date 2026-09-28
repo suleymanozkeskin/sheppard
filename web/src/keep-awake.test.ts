@@ -3,9 +3,11 @@ import { describe, expect, it } from "bun:test"
 import { HttpMsgrApi } from "@/api/client"
 import { mockWorkspaces } from "@/api/fixtures"
 import { MockMsgrApi } from "@/api/mock"
-import type { HerdrWorkspaceView, KeepAwakePolicy, Member } from "@/api/types"
+import type { HerdrWorkspaceView, KeepAwakePolicy, Member, NeedsHumanCause } from "@/api/types"
 import {
   KEEP_AWAKE_DEFAULTS,
+  alarmDetail,
+  alarmRoute,
   defaultCoordinator,
   describeCause,
   describeSetting,
@@ -47,7 +49,7 @@ describe("parseLimitsDraft", () => {
 describe("describeCause", () => {
   it("states each cause in plain words", () => {
     expect(describeCause({ kind: "wakes-exhausted" }, 3)).toBe("Stopped after 3 wakes.")
-    expect(describeCause({ kind: "agent-requested", handle: "bob" }, 3)).toBe("@bob asked for a human decision.")
+    expect(describeCause({ kind: "agent-requested", handle: "bob", alert: { kind: "not-recorded" } }, 3)).toBe("@bob asked for a human decision.")
     expect(describeCause({ kind: "dialog-unrecognized", handle: "bob", reason: "folder-trust" }, 3)).toBe("@bob shows a dialog sheppard cannot close (folder trust).")
     expect(describeCause({ kind: "dialog-stuck", handle: "bob" }, 3)).toBe("@bob's dialog stayed open after Escape.")
   })
@@ -86,6 +88,57 @@ describe("keepAwakeAlarms", () => {
       ["@bob", { kind: "agent", handle: "bob" }],
       ["#ops", { kind: "channel", name: "ops" }],
     ])
+  })
+})
+
+const OPS: KeepAwakePolicy["target"] = { kind: "channel", channelId: 1, channel: "ops", coordinatorId: 2, coordinator: "lead" }
+const QUESTION: NeedsHumanCause = {
+  kind: "agent-requested",
+  handle: "lead",
+  alert: { kind: "message", channelId: 9, channel: "dm-9", messageId: 41, excerpt: "Postgres or SQLite?" },
+}
+
+describe("alarmRoute", () => {
+  const channelPolicy = stopped(5, "2026-08-17T11:00:00.000Z", OPS)
+
+  it("opens an agent's question in its direct message", () => {
+    expect(alarmRoute(channelPolicy, QUESTION)).toEqual({ kind: "question", channel: "dm-9", messageId: 41 })
+  })
+
+  it("opens the target when the question was not recorded", () => {
+    expect(alarmRoute(channelPolicy, { kind: "agent-requested", handle: "lead", alert: { kind: "not-recorded" } })).toEqual({
+      kind: "channel",
+      name: "ops",
+    })
+  })
+
+  it("opens the agent's page for a dialog it cannot close", () => {
+    expect(alarmRoute(channelPolicy, { kind: "dialog-unrecognized", handle: "bob", reason: "folder-trust" })).toEqual({
+      kind: "agent",
+      handle: "bob",
+    })
+    expect(alarmRoute(channelPolicy, { kind: "dialog-stuck", handle: "bob" })).toEqual({ kind: "agent", handle: "bob" })
+  })
+
+  it("opens the target after the wake budget ran out", () => {
+    expect(alarmRoute(channelPolicy, { kind: "wakes-exhausted" })).toEqual({ kind: "channel", name: "ops" })
+    expect(alarmRoute(WATCHING, { kind: "wakes-exhausted" })).toEqual({ kind: "agent", handle: "bob" })
+  })
+})
+
+describe("alarmDetail", () => {
+  it("shows the question itself, and the cause sentence otherwise", () => {
+    expect(alarmDetail(QUESTION, 3)).toBe("@lead: Postgres or SQLite?")
+    expect(alarmDetail({ kind: "dialog-stuck", handle: "bob" }, 3)).toBe("@bob's dialog stayed open after Escape.")
+  })
+})
+
+describe("alarm resume", () => {
+  it("sends the same limits, with the coordinator for a channel", () => {
+    const [agentAlarm] = keepAwakeAlarms([stopped(2, "2026-08-17T10:00:00.000Z", WATCHING.target)])
+    const [channelAlarm] = keepAwakeAlarms([stopped(3, "2026-08-17T10:00:00.000Z", OPS)])
+    expect(agentAlarm?.resume).toEqual({ kind: "agent", handle: "bob", limits: KEEP_AWAKE_DEFAULTS })
+    expect(channelAlarm?.resume).toEqual({ kind: "channel", name: "ops", coordinator: "lead", limits: KEEP_AWAKE_DEFAULTS })
   })
 })
 
@@ -145,6 +198,7 @@ describe("keep-awake API", () => {
     const set = await api.setAgentKeepAwake("planner", KEEP_AWAKE_DEFAULTS)
     expect(set.match({ ok: ({ setting }) => setting.kind, err: () => "error" })).toBe("on")
     const listed = await api.listKeepAwake()
-    expect(listed.match({ ok: ({ policies }) => policies.length, err: () => -1 })).toBe(1)
+    // The mock starts with one stopped channel policy for the demo alarm.
+    expect(listed.match({ ok: ({ policies }) => policies.length, err: () => -1 })).toBe(2)
   })
 })
