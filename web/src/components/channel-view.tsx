@@ -517,7 +517,8 @@ function MessageRow({
             {formatTime(message.createdAt)}
           </time>
         </MessageHeader>}
-        <MessageGroup className="gap-0.5">
+        {/* max-w-full: a long attachment name must not widen an end-aligned message past the screen. */}
+        <MessageGroup className="max-w-full gap-0.5">
           <Bubble align={isSelf ? "end" : "start"} variant={isSelf ? "default" : "secondary"}>
             <BubbleContent className="px-3 py-1">
               <MessageBody
