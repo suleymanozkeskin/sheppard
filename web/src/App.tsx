@@ -1405,7 +1405,8 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
           </span>
         </div>}
         {activeWorkspace === undefined && activeDirect === undefined && <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 text-xs text-muted-foreground" data-membership={selectedChannelIsNonMember ? "non-member" : undefined}>
-          <div className="flex min-w-0 items-center gap-3">
+          {/* On a narrow screen the controls scroll sideways instead of running under the stream state. */}
+          <div className="flex min-w-0 items-center gap-3 overflow-x-auto [scrollbar-width:none]">
             <Button
               aria-label={`Show ${activeChannel?.memberCount ?? selectedMembers.length} channel members`}
               className="-mx-2 h-auto shrink-0 gap-1.5 px-2 py-1 text-xs font-normal text-muted-foreground"
@@ -1416,7 +1417,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
               {activeChannel?.memberCount ?? selectedMembers.length} members
               {identity !== null && membersState.status === "ready" && staleMemberCount > 0 && (
                 <span className="ml-2 text-amber-700 dark:text-amber-400">
-                  · {staleMemberCount} inactive agent route{staleMemberCount === 1 ? "" : "s"}
+                  · {staleMemberCount} inactive<span className="hidden sm:inline"> agent route{staleMemberCount === 1 ? "" : "s"}</span>
                 </span>
               )}
               {membersState.status === "ready" && membersState.errorMessage !== undefined && (
@@ -1451,7 +1452,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
                   variant="ghost"
                 >
                   <MoreHorizontal aria-hidden="true" />
-                  Manage
+                  <span className="hidden sm:inline">Manage</span>
                 </Button>
                 <Button
                   aria-expanded={keepAwakeChannel === activeChannel.name}
@@ -1477,13 +1478,13 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
               </div>
             )}
           </div>
-          <span className="inline-flex items-center gap-1.5" data-stream-state={streamState}>
+          <span className="inline-flex shrink-0 items-center gap-1.5" data-stream-state={streamState}>
             {streamState === "live" && <Radio className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />}
             {streamState === "reconnecting" && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
             {streamState === "degraded" && <WifiOff className="size-3.5 text-amber-600" aria-hidden="true" />}
             {streamState === "offline" && <WifiOff className="size-3.5" aria-hidden="true" />}
-            {streamStateLabel(streamState)}
-            {identity !== null && selectedInbox?.pushEnabled && <span className="ml-2">· push enabled</span>}
+            <span className="sr-only sm:not-sr-only">{streamStateLabel(streamState)}</span>
+            {identity !== null && selectedInbox?.pushEnabled && <span className="ml-2 hidden sm:inline">· push enabled</span>}
           </span>
         </div>}
         {activeWorkspace === undefined && activeDirect === undefined && activeChannel !== undefined && activeChannel.kind !== "direct" && keepAwakeChannel === activeChannel.name && (
