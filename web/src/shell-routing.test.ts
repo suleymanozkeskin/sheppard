@@ -15,6 +15,7 @@ describe("shell routes", () => {
       { kind: "direct" },
       { kind: "conversation", channel: "dm-abc123" },
       { kind: "conversation", channel: "dm-abc123", messageId: 7 },
+      { kind: "conversation", channel: "dm-abc123", messageId: 7, focus: "composer" },
       { kind: "agents" },
       { kind: "agent", handle: "codex-reviewer" },
       { kind: "agent", handle: "codex-reviewer", view: "messages" },

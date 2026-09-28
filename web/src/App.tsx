@@ -28,14 +28,14 @@ import * as v from "valibot"
 
 import { formatApiError } from "@/api/errors"
 import { apiCall, createBrowserApi } from "@/api/runtime"
-import type { AgentStatus, Channel, DirectConversation, HerdrPaneView, HerdrWorkspaceView, InboxEntry, Member, MsgrApi, Participant, SearchResult } from "@/api/types"
+import type { AgentStatus, ApiResult, Channel, DirectConversation, HerdrPaneView, HerdrWorkspaceView, InboxEntry, KeepAwakeSettingResult, Member, MsgrApi, Participant, SearchResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import { ShellBackLink } from "@/components/shell-back-link"
 import type { CreationPagesController } from "@/components/creation-pages"
 import { AgentAvatar } from "@/components/agent-avatar"
 import { ChannelView } from "@/components/channel-view"
 import { KeepAwakeControl } from "@/components/keep-awake-control"
-import { keepAwakeAlarms, workspaceLeadHandles, type KeepAwakeAlarm } from "@/keep-awake"
+import { keepAwakeAlarms, workspaceLeadHandles, type KeepAwakeAlarm, type KeepAwakeResume } from "@/keep-awake"
 import { AgentStatusOrb } from "@/components/agent-status-orb"
 import { DictationButton } from "@/components/dictation-button"
 import { KeyboardOverlay } from "@/components/ui/keyboard-overlay"
@@ -335,22 +335,62 @@ function KeepAwakeAlarmList({ controller, router }: { controller: AppController;
   return (
     <section aria-label="Keep awake alarms" className="shrink-0 border-b bg-amber-50 px-2 py-1.5 dark:bg-amber-950/30" data-keep-awake-alarms>
       {state.alarms.map((alarm) => (
-        <button
-          className="flex w-full items-start gap-2 rounded-md px-1.5 py-1 text-left text-xs text-amber-900 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring dark:text-amber-200 dark:hover:bg-amber-900/40"
-          data-keep-awake-alarm={alarm.policyId}
-          key={alarm.policyId}
-          onClick={() => router.navigate(keepAwakeAlarmRoute(alarm))}
-          type="button"
-        >
-          <AlarmClock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0">
-            <span className="block truncate font-medium">{alarm.label} needs you</span>
-            <span className="block truncate text-amber-800/80 dark:text-amber-200/80">{alarm.detail}</span>
-          </span>
-        </button>
+        <KeepAwakeAlarmRow alarm={alarm} controller={controller} key={alarm.policyId} router={router} />
       ))}
     </section>
   )
+}
+
+type AlarmResumeState = { status: "idle" } | { status: "resuming" } | { status: "failed"; message: string }
+
+/** One stopped policy: open it where the human can act, or resume it without a reply. */
+function KeepAwakeAlarmRow({ alarm, controller, router }: { alarm: KeepAwakeAlarm; controller: AppController; router: ShellRouter }) {
+  const [resume, setResume] = useState<AlarmResumeState>({ status: "idle" })
+  const runResume = () => {
+    setResume({ status: "resuming" })
+    void apiCall(controller.api, undefined, (client) => resumeKeepAwake(client, alarm.resume)).then((result) => {
+      setResume(result.isOk() ? { status: "idle" } : { status: "failed", message: formatApiError(result.error) })
+    })
+  }
+  return (
+    <div className="flex items-start gap-1" data-keep-awake-alarm={alarm.policyId}>
+      <button
+        className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-1.5 py-1 text-left text-xs text-amber-900 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring dark:text-amber-200 dark:hover:bg-amber-900/40"
+        data-keep-awake-alarm-open={alarm.route.kind}
+        onClick={() => router.navigate(keepAwakeAlarmRoute(alarm))}
+        type="button"
+      >
+        <AlarmClock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+        <span className="min-w-0">
+          <span className="block truncate font-medium">{alarm.label} needs you</span>
+          <span className="block truncate text-amber-800/80 dark:text-amber-200/80">{alarm.detail}</span>
+          {resume.status === "failed" && (
+            <span className="block truncate text-destructive" role="alert">Resume failed: {resume.message}</span>
+          )}
+        </span>
+      </button>
+      <button
+        aria-label={`Resume keep awake for ${alarm.label}`}
+        className="mt-0.5 shrink-0 rounded-md px-1.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-900/40"
+        data-keep-awake-alarm-resume={alarm.policyId}
+        disabled={resume.status === "resuming"}
+        onClick={runResume}
+        title="Watch again without a reply"
+        type="button"
+      >
+        {resume.status === "resuming" ? "Resuming…" : "Resume"}
+      </button>
+    </div>
+  )
+}
+
+function resumeKeepAwake(client: MsgrApi, resume: KeepAwakeResume): ApiResult<KeepAwakeSettingResult> {
+  switch (resume.kind) {
+    case "agent":
+      return client.setAgentKeepAwake(resume.handle, resume.limits)
+    case "channel":
+      return client.setChannelKeepAwake(resume.name, { coordinator: resume.coordinator, ...resume.limits })
+  }
 }
 
 function keepAwakeAlarmRoute(alarm: KeepAwakeAlarm): ShellRoute {
@@ -359,6 +399,8 @@ function keepAwakeAlarmRoute(alarm: KeepAwakeAlarm): ShellRoute {
       return { kind: "agent", handle: alarm.route.handle }
     case "channel":
       return { kind: "channel", channel: alarm.route.name }
+    case "question":
+      return { kind: "conversation", channel: alarm.route.channel, messageId: alarm.route.messageId, focus: "composer" }
   }
 }
 
@@ -1053,6 +1095,9 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
   const [channelMenu, setChannelMenu] = useState<{ x: number; y: number } | undefined>()
   // The channel whose keep-awake panel is open. Another channel closes it.
   const [keepAwakeChannel, setKeepAwakeChannel] = useState<string | undefined>()
+  const dispatchComposerAction = controller.dispatchAction
+  // Stable across renders, so a message opened with focus=composer focuses once.
+  const focusComposer = useCallback(() => dispatchComposerAction("composer.focus"), [dispatchComposerAction])
   const {
     activeWorkspaceId,
     activeChannel,
@@ -1568,6 +1613,8 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
               channelName={selectedChannel}
               errorMessage={messageState.status === "ready" ? messageState.errorMessage : undefined}
               focusedMessageId={focusedMessageId}
+              arrivalFocus={router.route.kind === "conversation" ? router.route.focus : undefined}
+              onFocusComposer={focusComposer}
               ackScheduler={identity === null ? undefined : ackScheduler}
               loadState={messageState.status}
               messages={selectedMessages}

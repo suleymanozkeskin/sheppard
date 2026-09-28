@@ -313,7 +313,11 @@ export class KeepAwakeWatcher {
     }
   }
 
-  /** A human message in the target's scope resets the watch and its budget. */
+  /**
+   * A human message in the target's scope resets the watch and its budget. So
+   * does a human reply after an agent's alert in the conversation that holds
+   * it, which for a channel policy is a direct message outside the channel.
+   */
   private resumeOnHumanMessage(policy: KeepAwakePolicy): boolean {
     const latest = (() => {
       switch (policy.target.kind) {
@@ -323,9 +327,22 @@ export class KeepAwakeWatcher {
           return this.store.latestHumanMessageIdForChannel(policy.target.channelId);
       }
     })();
-    if (latest <= policy.humanMarkId) return false;
-    this.store.resumeKeepAwake(policy.id, latest, new Date(this.now()).toISOString());
-    return true;
+    if (latest > policy.humanMarkId || this.repliedToAlert(policy)) {
+      this.store.resumeKeepAwake(policy.id, latest, new Date(this.now()).toISOString());
+      return true;
+    }
+    return false;
+  }
+
+  private repliedToAlert(policy: KeepAwakePolicy): boolean {
+    if (policy.state.kind !== "needs-human" || policy.state.cause.kind !== "agent-requested") return false;
+    const alert = policy.state.cause.alert;
+    switch (alert.kind) {
+      case "not-recorded":
+        return false;
+      case "message":
+        return this.store.latestHumanMessageIdForChannel(alert.channelId) > alert.messageId;
+    }
   }
 
   private watchPolicy(

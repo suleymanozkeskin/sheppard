@@ -348,6 +348,40 @@ describe("KeepAwakeWatcher with a channel policy", () => {
   });
 });
 
+describe("resume after an agent's alert", () => {
+  test("a reply in the alert conversation resumes a channel policy", async () => {
+    const base = harness();
+    const lead = expectOk(base.store.createAgent("lead")).participant.id;
+    expectOk(base.store.join(lead, "backend"));
+    const channel = base.store.findChannel("backend");
+    if (channel === null) throw new Error("fixture channel missing");
+    const policy = base.store.setChannelKeepAwake(channel.id, lead, limits());
+    const alert = expectOk(base.store.alertHuman(lead, "Postgres or SQLite?"));
+    const alice = base.store.findByHandle("alice");
+    if (alice === null) throw new Error("fixture human missing");
+
+    expect((await base.watcher.tick()).actions).not.toContainEqual({ kind: "resumed", policyId: policy.id });
+    expectOk(base.store.send(alice.id, alert.channel, "Use Postgres."));
+    const outcome = await base.watcher.tick();
+    expect(outcome.actions).toContainEqual({ kind: "resumed", policyId: policy.id });
+  });
+
+  test("an older human message in that conversation does not resume it", async () => {
+    const base = harness();
+    const lead = expectOk(base.store.createAgent("lead")).participant.id;
+    expectOk(base.store.join(lead, "backend"));
+    const channel = base.store.findChannel("backend");
+    const alice = base.store.findByHandle("alice");
+    if (channel === null || alice === null) throw new Error("fixtures missing");
+    base.store.setChannelKeepAwake(channel.id, lead, limits());
+    expectOk(base.store.sendDirect(alice.id, ["lead"], "Earlier note."));
+    expectOk(base.store.alertHuman(lead, "Postgres or SQLite?"));
+
+    const outcome = await base.watcher.tick();
+    expect(outcome.actions.some((action) => action.kind === "resumed")).toBe(false);
+  });
+});
+
 describe("Store keep-awake rows", () => {
   test("replacing a policy starts a fresh watch", () => {
     const { store, bob } = harness();
@@ -366,8 +400,43 @@ describe("Store keep-awake rows", () => {
     expect(store.messageById(result.messageId)?.body).toBe("Which database should I use?");
     expect(agentPolicy(store, bob).state).toEqual({
       kind: "needs-human",
-      cause: { kind: "agent-requested", handle: "bob" },
+      cause: {
+        kind: "agent-requested",
+        handle: "bob",
+        alert: {
+          kind: "message",
+          channelId: expect.any(Number),
+          channel: result.channel,
+          messageId: result.messageId,
+          excerpt: "Which database should I use?",
+        },
+      },
       since: "2026-08-17T00:00:00.000Z",
+    });
+  });
+
+  test("the alert excerpt is the first line, cut to 160 characters", () => {
+    const { store, bob } = harness();
+    store.setAgentKeepAwake(bob, limits());
+    expectOk(store.alertHuman(bob, `${"x".repeat(200)}\nsecond line`));
+    const state = agentPolicy(store, bob).state;
+    const alert = state.kind === "needs-human" && state.cause.kind === "agent-requested" ? state.cause.alert : null;
+    expect(alert?.kind === "message" && alert.excerpt).toBe(`${"x".repeat(160)}…`);
+  });
+
+  test("a pause without a recorded alert message reads as not recorded", () => {
+    const { store, bob } = harness();
+    const policy = store.setAgentKeepAwake(bob, limits());
+    store.markKeepAwakeNeedsHuman(
+      policy.id,
+      { kind: "agent-requested", handle: "bob", alert: { kind: "not-recorded" } },
+      "2026-08-17T00:10:00.000Z",
+    );
+    const state = agentPolicy(store, bob).state;
+    expect(state.kind === "needs-human" && state.cause).toEqual({
+      kind: "agent-requested",
+      handle: "bob",
+      alert: { kind: "not-recorded" },
     });
   });
 

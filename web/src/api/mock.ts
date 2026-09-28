@@ -1,6 +1,6 @@
 import { Result } from "better-result"
 
-import { draftFromLimits, parseLimitsDraft } from "../keep-awake"
+import { KEEP_AWAKE_DEFAULTS, draftFromLimits, parseLimitsDraft } from "../keep-awake"
 import { PAIRING_CODE_LENGTH, displayPairingCode, parsePairingCode } from "../remote-access"
 import { AUTO_IDENTIFY_HANDLE } from "./auto-identify"
 import { ApiConflictError, ApiHttpError, ApiNotFoundError, type Operation } from "./errors"
@@ -276,8 +276,32 @@ export class MockMsgrApi implements MsgrApi {
   )
   private readonly uploadedAttachments = new Map<string, AttachmentMeta>()
   private readonly uploadedContents = new Map<number, string>()
-  private readonly keepAwakePolicies = new Map<string, KeepAwakePolicy>()
-  private nextKeepAwakeId = 1
+  private readonly keepAwakePolicies = new Map<string, KeepAwakePolicy>([
+    // A stopped channel policy whose coordinator asked the human a question, so
+    // the demo shows the alarm that opens the question's direct message.
+    ["channel:research", {
+      id: 1,
+      target: { kind: "channel", channelId: 2, channel: "research", coordinatorId: 1, coordinator: "planner" },
+      limits: KEEP_AWAKE_DEFAULTS,
+      state: {
+        kind: "needs-human",
+        cause: {
+          kind: "agent-requested",
+          handle: "planner",
+          alert: {
+            kind: "message",
+            channelId: 101,
+            channel: "dm-planner-runner",
+            messageId: 12,
+            excerpt: "Can you review the hand-off before the next deploy?",
+          },
+        },
+        since: "2026-08-17T09:49:00.000Z",
+      },
+      humanMarkId: 0,
+    }],
+  ])
+  private nextKeepAwakeId = 2
   private readonly pairingCodes = new Map<string, string>()
   private readonly remoteSessions: RemoteSession[] = []
   private nextRemoteSessionId = 1

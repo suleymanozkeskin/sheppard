@@ -696,9 +696,14 @@ export type KeepAwakeTarget =
   | { kind: "agent"; participantId: number; handle: string }
   | { kind: "channel"; channelId: number; channel: string; coordinatorId: number; coordinator: string }
 
+/** Where the human can read and answer an agent's `msgr alert-human` question. */
+export type AlertMessage =
+  | { kind: "message"; channelId: number; channel: string; messageId: number; excerpt: string }
+  | { kind: "not-recorded" }
+
 export type NeedsHumanCause =
   | { kind: "wakes-exhausted" }
-  | { kind: "agent-requested"; handle: string }
+  | { kind: "agent-requested"; handle: string; alert: AlertMessage }
   | { kind: "dialog-unrecognized"; handle: string; reason: UnrecognizedDialogReason }
   | { kind: "dialog-stuck"; handle: string }
 
