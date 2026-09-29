@@ -138,6 +138,14 @@ const herdrPaneSchema = v.object({
   focused: v.boolean(),
   participant: nullableString,
   participantRouteState: v.nullable(v.picklist(["active", "stale"])),
+  // A hub before reconnect support sends no field; that means no ended identity.
+  previousIdentity: v.optional(
+    v.variant("kind", [
+      v.object({ kind: v.literal("none") }),
+      v.object({ kind: v.literal("ended"), handle: v.string() }),
+    ]),
+    { kind: "none" },
+  ),
 })
 
 const herdrTabSchema = v.object({

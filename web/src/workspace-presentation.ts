@@ -181,6 +181,29 @@ export function paneIdentity(pane: HerdrPaneView, workspace?: HerdrWorkspaceView
   return paneIdentityDetails(pane, workspace).label
 }
 
+/**
+ * The handle that the connect dialog starts with: the identity that ended in
+ * this pane, or a handle made from the pane label.
+ */
+export function initialConnectHandle(pane: HerdrPaneView, label: string): string {
+  switch (pane.previousIdentity.kind) {
+    case "ended":
+      return pane.previousIdentity.handle
+    case "none":
+      return suggestedPaneHandle(label, pane.paneId)
+  }
+}
+
+/** The connect action's text for an agent pane without an identity. */
+export function connectPaneActionLabel(pane: HerdrPaneView, fallback: string): string {
+  switch (pane.previousIdentity.kind) {
+    case "ended":
+      return `Reconnect as @${pane.previousIdentity.handle}`
+    case "none":
+      return fallback
+  }
+}
+
 export function suggestedPaneHandle(label: string, paneId: string): string {
   const fallback = `agent-${paneId.split(":").at(-1) ?? "pane"}`
   const normalized = label

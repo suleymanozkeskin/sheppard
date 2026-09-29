@@ -230,7 +230,12 @@ export interface HerdrPaneView {
   focused: boolean
   participant: string | null
   participantRouteState: RouteState | null
+  /** The ended identity that this pane can reconnect as, for a pane without one. */
+  previousIdentity: EndedIdentity
 }
+
+/** An identity whose route ended in this pane, for example at a restart. `none` also covers two or more. */
+export type EndedIdentity = { kind: "none" } | { kind: "ended"; handle: string }
 
 export interface HerdrTabView {
   id: string

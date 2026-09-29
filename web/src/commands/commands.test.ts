@@ -24,6 +24,7 @@ const pane: HerdrPaneView = {
   paneId: "p1",
   participant: "worker",
   participantRouteState: "active",
+  previousIdentity: { kind: "none" },
   role: "tester",
 }
 const workspace: HerdrWorkspaceView = {

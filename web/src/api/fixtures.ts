@@ -109,6 +109,7 @@ export const mockWorkspaces: HerdrWorkspaceView[] = [
         focused: true,
         participant: "codex-reviewer",
         participantRouteState: "active",
+        previousIdentity: { kind: "none" },
       },
       {
         paneId: "pane-server",
@@ -118,6 +119,7 @@ export const mockWorkspaces: HerdrWorkspaceView[] = [
         focused: false,
         participant: "server-worker",
         participantRouteState: "active",
+        previousIdentity: { kind: "none" },
       },
     ],
     tabs: [{
@@ -132,6 +134,7 @@ export const mockWorkspaces: HerdrWorkspaceView[] = [
           focused: true,
           participant: "codex-reviewer",
           participantRouteState: "active",
+          previousIdentity: { kind: "none" },
         },
         {
           paneId: "pane-server",
@@ -141,6 +144,7 @@ export const mockWorkspaces: HerdrWorkspaceView[] = [
           focused: false,
           participant: "server-worker",
           participantRouteState: "active",
+          previousIdentity: { kind: "none" },
         },
       ],
     }],

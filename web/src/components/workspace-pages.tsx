@@ -34,6 +34,7 @@ import {
   agentPaneCount,
   comparePanes,
   compareWorkspaces,
+  connectPaneActionLabel,
   isEmptyPane,
   matchedParticipantCount,
   unmanagedAgentCount,
@@ -314,7 +315,7 @@ function PaneActions({ controller, identity, navigate, pane }: { controller: App
       {pane.agentKind !== null && pane.participant === null && (
         <Button aria-label={`Connect ${identity} to Sheppard chat`} disabled={!canWrite} onClick={() => controller.openConnectPane(pane, identity)} size="sm" title={canWrite ? "Create a pane-scoped chat identity" : NOT_CONNECTED_REASON} type="button" variant="ghost">
           <MessageCirclePlus aria-hidden="true" />
-          Connect
+          {connectPaneActionLabel(pane, "Connect")}
         </Button>
       )}
       {pane.participant !== null && (
@@ -510,7 +511,7 @@ function WorkspaceDirectoryAgentMenu({ controller, identity, onClose, pane }: { 
         ? (
           <button className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50" data-menu-item="connect-pane" disabled={!canWrite} onClick={() => { controller.openConnectPane(pane, identity); onClose() }} role="menuitem" title={canWrite ? "Create a pane-scoped chat identity" : NOT_CONNECTED_REASON} type="button">
             <MessageCirclePlus aria-hidden="true" className="size-4" />
-            Connect to Sheppard
+            {connectPaneActionLabel(pane, "Connect to Sheppard")}
           </button>
         )
         : (
