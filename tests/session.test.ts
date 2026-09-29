@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { Result } from "better-result";
 import { FakeHerdr } from "../src/herdr";
+import { SessionRecorder } from "../src/session-recorder";
 import {
   type SessionCandidate,
   type SessionTurn,
@@ -936,7 +937,7 @@ describe("session mapping selection", () => {
     );
 
     expect(response.status).toBe(400);
-    expect((await refusedSession(response)).error).toContain("only be selected when");
+    expect((await refusedSession(response)).error).toContain("is already exact");
     expect(hub.hub.store.findSessionMapping("term-1")).toBeNull();
   });
 
@@ -1109,6 +1110,66 @@ describe("session mapping selection", () => {
     expect(response.status).toBe(400);
     expect((await refusedSession(response)).error).toContain("more than one");
     expect(hub.hub.store.findSessionMapping("term-1")).toBeNull();
+  });
+});
+
+describe("recording sessions for resume", () => {
+  function paneHerdr(): FakeHerdr {
+    const herdr = new FakeHerdr();
+    herdr.workspaces = [{ id: "w1", label: "Backend" }];
+    herdr.withPane({ paneId: "w1:p1", terminalId: "term-1", agent: "claude", cwd: CWD });
+    return herdr;
+  }
+
+  const dir = () => `${claudeConfigDir(process.env).dir}/projects/${slugifyCwd(CWD)}`;
+  // Later than any participant created by the test, so the start-time rung keeps it.
+  const AFTER_CREATION = "2099-01-01T00:00:00.000Z";
+
+  test("the recorder stores an exact mapping for a routed agent", async () => {
+    const hub = testHub();
+    const herdr = paneHerdr();
+    const worker = hub.hub.store.createAgent("worker").unwrap("worker fixture").participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "claude" });
+    const reader = countingReader({
+      [`${dir()}/marked.jsonl`]: transcript([claudeLine("user", "You are worker. Start.", AFTER_CREATION)]),
+      [`${dir()}/other.jsonl`]: transcript([claudeLine("user", "Someone else.", AFTER_CREATION)]),
+    });
+    const recorder = new SessionRecorder({ store: hub.hub.store, herdr, reader });
+
+    expect(await recorder.tick()).toEqual([{ kind: "recorded", handle: "worker", sessionId: "marked" }]);
+    expect(hub.hub.store.findSessionMapping("term-1")).toMatchObject({ session_id: "marked", confidence: "exact" });
+    expect(await recorder.tick()).toEqual([]);
+  });
+
+  test("the recorder stores nothing for an inferred mapping", async () => {
+    const hub = testHub();
+    const herdr = paneHerdr();
+    const worker = hub.hub.store.createAgent("worker").unwrap("worker fixture").participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "claude" });
+    const reader = countingReader({
+      [`${dir()}/only.jsonl`]: transcript([claudeLine("user", "Start the work.", AFTER_CREATION)]),
+    });
+    const recorder = new SessionRecorder({ store: hub.hub.store, herdr, reader });
+
+    expect(await recorder.tick()).toEqual([{ kind: "not-exact", handle: "worker" }]);
+    expect(hub.hub.store.findSessionMapping("term-1")).toBeNull();
+  });
+
+  test("the operator confirms an inferred mapping, which makes it exact", async () => {
+    const hub = testHub();
+    hub.hub.herdr = paneHerdr();
+    const worker = hub.hub.store.createAgent("worker").unwrap("worker fixture").participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "claude" });
+    hub.hub.windowReader = countingReader({
+      [`${dir()}/only.jsonl`]: transcript([claudeLine("user", "Start the work.", AFTER_CREATION)]),
+    });
+    const created = await hub.post("/api/humans", { handle: "human" });
+    const operator = { cookie: (created.headers.get("set-cookie") ?? "").split(";")[0] ?? "" };
+
+    const response = await hub.post("/api/herdr/agents/w1:p1/session/select", { sessionId: "only" }, operator);
+
+    expect(response.status).toBe(200);
+    expect(hub.hub.store.findSessionMapping("term-1")).toMatchObject({ session_id: "only", confidence: "exact" });
   });
 });
 

@@ -77,6 +77,8 @@ import {
 import { acquireHubLock } from "./lock";
 import { Notifier } from "./notifier";
 import { KeepAwakeWatcher } from "./keep-awake";
+import { SessionRecorder } from "./session-recorder";
+import { type ResumableHarness, matchLauncher, resumableHarness, resumeArgv } from "./resume";
 import {
   type RequestChannel,
   classifyRequest,
@@ -118,6 +120,10 @@ import type {
   ModelEntry,
   PairingCode,
   Participant,
+  RecordedSession,
+  ResumeLauncher,
+  ResumeState,
+  ResumedAgent,
   RoleDetail,
   RolePreset,
   RoleRuntimePreset,
@@ -266,6 +272,16 @@ function routedPath(pathname: string): Result<RoutedPath, ValidationFailed> {
     fourth !== undefined
   ) {
     return Result.ok({ key: "/api/remote-access/sessions/:id", param: fourth, extra: "" });
+  }
+  if (first === "api" && second === "agents" && segments.length === 4 && third !== undefined && fourth === "resume") {
+    return Result.try({
+      try: (): RoutedPath => ({
+        key: "/api/agents/:handle/resume",
+        param: decodeURIComponent(third),
+        extra: "",
+      }),
+      catch: () => validationFailed("path", "must use valid URL encoding"),
+    });
   }
   if (first === "api" && second === "agents" && segments.length === 3 && third !== undefined) {
     return Result.try({
@@ -1102,6 +1118,7 @@ async function agentDetail(hub: Hub, handle: string, headers: Headers): Promise<
     pane,
     recentMessageIds: hub.store.recentMessageIds(participant.id),
     channels: hub.store.agentChannels(participant.id),
+    resume: resumeStateFor(hub, participant),
   };
   return jsonResponse(detail, 200, headers);
 }
@@ -2154,6 +2171,7 @@ async function herdrAgentSession(
     session_id: mapping.chosen.sessionId,
     session_path: mapping.chosen.path,
     confidence: mapping.confidence,
+    cwd: pane.cwd,
   });
 
   const window = await readWindow(adapter.value, mapping.chosen.path, reader, { before, limit });
@@ -2263,14 +2281,24 @@ async function selectHerdrAgentSession(
     handle: participant?.handle ?? null,
     startedAt: participant?.createdAt ?? null,
   });
-  if (mapping.confidence !== "ambiguous") {
-    return errorResponse(
-      validationFailed("sessionId", "can only be selected when the current mapping is ambiguous"),
-      headers,
-    );
+  // An ambiguous mapping lets the human pick one candidate. An inferred
+  // mapping lets the human confirm its one candidate, which makes it exact and
+  // so a resume point. An exact mapping needs no choice.
+  const selectable = (() => {
+    switch (mapping.confidence) {
+      case "ambiguous":
+        return mapping.candidates;
+      case "inferred":
+        return mapping.chosen === null ? [] : [mapping.chosen];
+      case "exact":
+        return null;
+    }
+  })();
+  if (selectable === null) {
+    return errorResponse(validationFailed("sessionId", "is already exact for this pane"), headers);
   }
 
-  const matches = mapping.candidates.filter((candidate) => candidate.sessionId === selected.value);
+  const matches = selectable.filter((candidate) => candidate.sessionId === selected.value);
   if (matches.length !== 1) {
     const problem = matches.length === 0
       ? "is not a current candidate for this pane"
@@ -2290,6 +2318,7 @@ async function selectHerdrAgentSession(
     session_id: candidate.sessionId,
     session_path: candidate.path,
     confidence: "exact",
+    cwd: pane.cwd,
   });
 
   const selectedView: AgentSessionSelectionView = {
@@ -3765,6 +3794,181 @@ function redeemPairingCode(
     });
 }
 
+// ------------------------------------------------------------------- resume
+
+/** Whether an identity can continue its harness session. Reads the store only. */
+function resumeStateFor(hub: Hub, participant: Participant): ResumeState {
+  switch (participant.routeState) {
+    case "active":
+      return { kind: "connected" };
+    case "stale":
+      break;
+  }
+  const session = hub.store.recordedSessionFor(participant.id);
+  switch (session.kind) {
+    case "not-recorded":
+      return { kind: "no-session" };
+    case "recorded":
+      break;
+  }
+  const harness = resumableHarness(session.harness);
+  if (harness === null) return { kind: "unsupported", harness: session.harness };
+  const spawned = hub.store.spawnLauncherForTerminal(session.terminalId);
+  const recorded = spawned.kind === "spawned" ? spawned.launcher : null;
+  const launcher = matchLauncher(harness, session.sessionPath, recorded, hub.store.listLaunchers());
+  switch (launcher.kind) {
+    case "none":
+      return { kind: "no-launcher", harness };
+    case "recorded":
+    case "matched":
+    case "choose":
+      return { kind: "resumable", harness, sessionId: session.sessionId, launcher };
+  }
+}
+
+/** Every active agent identity whose route ended and whose session can resume. */
+function resumableAgents(hub: Hub): Array<{ handle: string; resume: ResumeState }> {
+  return hub.store
+    .staleRoutedParticipants()
+    .filter((participant) => participant.kind === "agent" && !participant.deactivated)
+    .map((participant) => ({ handle: participant.handle, resume: resumeStateFor(hub, participant) }))
+    .filter((agent) => agent.resume.kind === "resumable");
+}
+
+/** The launcher the request names, checked against the resume state's choice. */
+function resumeLauncherName(launcher: ResumeLauncher, body: JsonValue): Result<string, ValidationFailed> {
+  return decodeObject(body)
+    .andThen((object) => optionalString(object, "launcher"))
+    .andThen((requested) => {
+      switch (launcher.kind) {
+        case "recorded":
+        case "matched":
+          return requested === null || requested === launcher.launcher
+            ? Result.ok(launcher.launcher)
+            : Result.err(validationFailed("launcher", `must be ${launcher.launcher} for this session`));
+        case "choose":
+          return requested !== null && launcher.launchers.includes(requested)
+            ? Result.ok(requested)
+            : Result.err(validationFailed("launcher", `must be one of ${launcher.launchers.join(", ")}`));
+      }
+    });
+}
+
+/** The workspace of the identity's last pane: the lifecycle record, else the pane id. */
+function resumeWorkspaceId(hub: Hub, participant: Participant, terminalId: string): string | null {
+  const lifecycle = hub.store.lifecycleAgentForTerminal(terminalId);
+  if (lifecycle !== null) return lifecycle.workspaceId;
+  const paneId = participant.paneId;
+  if (paneId === null) return null;
+  const separator = paneId.indexOf(":");
+  return separator <= 0 ? null : paneId.slice(0, separator);
+}
+
+/**
+ * Starts the identity's recorded session again in a new pane of its last
+ * workspace, with the launcher's arguments and environment, a new token, and
+ * the harness's resume argument. The identity is bound to the new pane.
+ * A failed start closes the new pane; the identity stays ended and its token
+ * stays the new one, which no process holds.
+ */
+async function resumeAgent(hub: Hub, handle: string, body: JsonValue, headers: Headers): Promise<Response> {
+  const validHandle = validName(handle, "handle");
+  if (validHandle.isErr()) return errorResponse(validHandle.error, headers);
+  const participant = hub.store.findByHandle(validHandle.value);
+  if (participant === null || participant.kind !== "agent" || participant.deactivated) {
+    return errorResponse(notFound("Agent"), headers);
+  }
+  const state = resumeStateFor(hub, participant);
+  const session = hub.store.recordedSessionFor(participant.id);
+  if (state.kind !== "resumable" || session.kind !== "recorded") {
+    return errorResponse(validationFailed("handle", `cannot resume: ${state.kind}`), headers);
+  }
+  const launcherName = resumeLauncherName(state.launcher, body);
+  if (launcherName.isErr()) return errorResponse(launcherName.error, headers);
+  const launcher = hub.store.launcher(launcherName.value);
+  const harness = resumableHarness(session.harness);
+  if (launcher === null || harness === null) return errorResponse(notFound("Launcher"), headers);
+  const workspaceId = resumeWorkspaceId(hub, participant, session.terminalId);
+  if (workspaceId === null) return errorResponse(validationFailed("handle", "has no recorded workspace"), headers);
+  return startResumedAgent(hub, participant, { launcher, harness, workspaceId, session }, headers);
+}
+
+interface ResumePlan {
+  launcher: LauncherRecord;
+  harness: ResumableHarness;
+  workspaceId: string;
+  session: Extract<RecordedSession, { kind: "recorded" }>;
+}
+
+async function startResumedAgent(
+  hub: Hub,
+  participant: Participant,
+  plan: ResumePlan,
+  headers: Headers,
+): Promise<Response> {
+  const herdr = herdrPort(hub);
+  if (herdr.isErr()) return errorResponse(herdr.error, headers);
+  const panes = await herdr.value.paneList();
+  if (panes.isErr()) return errorResponse(panes.error, headers);
+  const rootPane = panes.value.find((pane) => workspaceIdForPane(pane) === plan.workspaceId);
+  if (rootPane === undefined) return errorResponse(notFound("Workspace"), headers);
+  const token = hub.store.reissueAgentToken(participant.id);
+  if (token.isErr()) return errorResponse(token.error, headers);
+
+  // The harness finds the session only from the folder it ran in.
+  const split = await herdr.value.paneSplit(rootPane.paneId, {
+    cwd: plan.session.cwd,
+    env: {
+      ...plan.launcher.env,
+      MSGR_URL: `http://${HOST}:${hub.config.port}`,
+      MSGR_HANDLE: participant.handle,
+      MSGR_TOKEN: token.value,
+    },
+  });
+  if (split.isErr()) return errorResponse(split.error, headers);
+  const argv = [
+    ...plan.launcher.argv,
+    ...resumeArgv(plan.harness, plan.session.sessionId),
+    ...msgrAccessArgv(plan.harness),
+  ];
+  const started = await startLifecycleAgent(
+    herdr.value, split.value.paneId, participant.handle, plan.harness, argv, plan.launcher.startTimeoutMs,
+  );
+  if (started.isErr()) {
+    const closed = await herdr.value.paneClose(split.value.paneId);
+    if (closed.isErr()) return errorResponse(closed.error, headers);
+    return errorResponse(started.error, headers);
+  }
+  return bindResumedAgent(hub, participant, plan, split.value, headers);
+}
+
+/** Binds the identity to the started pane and records its session there. */
+function bindResumedAgent(
+  hub: Hub,
+  participant: Participant,
+  plan: ResumePlan,
+  pane: PaneInfo,
+  headers: Headers,
+): Response {
+  const role = hub.store.lifecycleAgentForTerminal(plan.session.terminalId)?.role ?? null;
+  hub.store.bindRoute(participant.id, { terminalId: pane.terminalId, paneId: pane.paneId, occupantAgent: plan.harness });
+  hub.store.registerLifecycleAgent(
+    plan.workspaceId, pane.paneId, pane.terminalId, participant.id, role, plan.harness, plan.launcher.env,
+  );
+  hub.store.saveSessionMapping({
+    terminal_id: pane.terminalId,
+    harness: plan.harness,
+    session_id: plan.session.sessionId,
+    session_path: plan.session.sessionPath,
+    confidence: "exact",
+    cwd: plan.session.cwd,
+  });
+  void hub.topology?.refresh();
+  publishMetadata(hub, "participants", "members");
+  const resumed: ResumedAgent = { handle: participant.handle, paneId: pane.paneId, sessionId: plan.session.sessionId };
+  return jsonResponse(resumed, 200, headers);
+}
+
 // ------------------------------------------------------------------- routing
 
 function requireAuth(
@@ -3903,6 +4107,14 @@ export function createFetchHandler(hub: Hub): (request: Request) => Promise<Resp
         return createAgent(hub, body, headers);
       case "GET /api/agents/:handle":
         return agentDetail(hub, param, headers);
+      case "GET /api/resumable-agents":
+        return requireHuman(hub, request, headers, "list resumable agents", () =>
+          jsonResponse({ agents: resumableAgents(hub) }, 200, headers),
+        );
+      case "POST /api/agents/:handle/resume":
+        return requireHumanAsync(hub, request, headers, "resume agents", () =>
+          resumeAgent(hub, param, body, headers),
+        );
       case "POST /api/humans":
         return createHuman(hub, body, headers);
       case "POST /api/channels":
@@ -4233,6 +4445,8 @@ export function startHub(config: ServerConfig = loadConfig()): Result<RunningHub
       });
   hub.notifier = notifier ?? undefined;
 
+  const sessionRecorder = herdr === undefined ? null : new SessionRecorder({ store: hub.store, herdr });
+
   const keepAwake = herdr === undefined
     ? null
     : new KeepAwakeWatcher({
@@ -4261,6 +4475,7 @@ export function startHub(config: ServerConfig = loadConfig()): Result<RunningHub
 
   notifier?.start();
   keepAwake?.start();
+  sessionRecorder?.start();
 
   return Result.ok({
     hub,
@@ -4269,6 +4484,7 @@ export function startHub(config: ServerConfig = loadConfig()): Result<RunningHub
     stop: () => {
       notifier?.stop();
       keepAwake?.stop();
+      sessionRecorder?.stop();
       hub.topology?.stop();
       clearInterval(heartbeat);
       hub.broadcaster.closeAll();

@@ -171,6 +171,7 @@ describe("native lead", () => {
       current.exec(`DROP TABLE remote_access`);
       current.exec(`DROP TABLE remote_sessions`);
       current.exec(`DROP TABLE pairing_codes`);
+      current.exec(`ALTER TABLE session_mappings DROP COLUMN cwd`);
       current.exec(`PRAGMA user_version = 14`);
       current.close();
 

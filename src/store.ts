@@ -70,6 +70,7 @@ import type {
   AlertMessage,
   Minutes,
   NeedsHumanCause,
+  RecordedSession,
   RemoteAccess,
   RemoteSession,
   WakeCount,
@@ -107,6 +108,8 @@ export interface SessionMappingRow {
   session_id: string;
   session_path: string;
   confidence: string;
+  /** The pane's working folder when the mapping was saved; NULL for rows before migration 20. */
+  cwd: string | null;
   resolved_at: string;
 }
 
@@ -989,7 +992,7 @@ export class Store {
     return (
       this.db
         .query<SessionMappingRow, { terminalId: string }>(
-          `SELECT terminal_id, harness, session_id, session_path, confidence, resolved_at
+          `SELECT terminal_id, harness, session_id, session_path, confidence, cwd, resolved_at
              FROM session_mappings WHERE terminal_id = $terminalId`,
         )
         .get({ terminalId }) ?? null
@@ -1000,13 +1003,14 @@ export class Store {
     this.db
       .query<never, SessionMappingRow>(
         `INSERT INTO session_mappings
-           (terminal_id, harness, session_id, session_path, confidence, resolved_at)
-         VALUES ($terminal_id, $harness, $session_id, $session_path, $confidence, $resolved_at)
+           (terminal_id, harness, session_id, session_path, confidence, cwd, resolved_at)
+         VALUES ($terminal_id, $harness, $session_id, $session_path, $confidence, $cwd, $resolved_at)
          ON CONFLICT (terminal_id) DO UPDATE SET
            harness = excluded.harness,
            session_id = excluded.session_id,
            session_path = excluded.session_path,
            confidence = excluded.confidence,
+           cwd = excluded.cwd,
            resolved_at = excluded.resolved_at`,
       )
       .run({ ...row, resolved_at: new Date().toISOString() });
@@ -3362,6 +3366,61 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- resume
+
+  /**
+   * The exact session mapping of the identity's last terminal for the harness
+   * that ran there. An inferred mapping is not a record: it was a guess.
+   */
+  recordedSessionFor(participantId: number): RecordedSession {
+    const row = this.db
+      .query<{ terminal_id: string; harness: string; session_id: string; session_path: string; cwd: string }, { participantId: number }>(
+        `SELECT sm.terminal_id, sm.harness, sm.session_id, sm.session_path, sm.cwd
+           FROM participants p
+           JOIN session_mappings sm ON sm.terminal_id = p.terminal_id
+          WHERE p.id = $participantId AND sm.confidence = 'exact' AND sm.harness = p.occupant_agent
+            AND sm.cwd IS NOT NULL`,
+      )
+      .get({ participantId });
+    return row === null
+      ? { kind: "not-recorded" }
+      : {
+          kind: "recorded",
+          terminalId: row.terminal_id,
+          harness: row.harness,
+          sessionId: row.session_id,
+          sessionPath: row.session_path,
+          cwd: row.cwd,
+        };
+  }
+
+  /** The launcher name of the committed spawn that started this terminal. */
+  spawnLauncherForTerminal(terminalId: string): SpawnLauncher {
+    const row = this.db
+      .query<{ launcher: string | null }, { terminalId: string }>(
+        `SELECT launcher FROM lifecycle_spawn_operations
+          WHERE terminal_id = $terminalId AND status = 'committed'
+          ORDER BY updated_at DESC LIMIT 1`,
+      )
+      .get({ terminalId });
+    return row === null || row.launcher === null ? { kind: "not-spawned" } : { kind: "spawned", launcher: row.launcher };
+  }
+
+  /**
+   * Gives an agent a new token and returns it once. The old token stops
+   * working. The resumed process receives the new one in its environment.
+   */
+  reissueAgentToken(participantId: number): Result<string, NotFound> {
+    const token = mintToken();
+    const changes = this.db
+      .query<never, { participantId: number; tokenHash: string }>(
+        `UPDATE participants SET token_hash = $tokenHash
+          WHERE id = $participantId AND kind = 'agent' AND deactivated = 0`,
+      )
+      .run({ participantId, tokenHash: hashToken(token) }).changes;
+    return changes === 1 ? Result.ok(token) : Result.err(notFound(`Agent "${participantId}"`));
+  }
+
   // --------------------------------------------------------------- remote access
 
   remoteAccess(): RemoteAccess {
@@ -3672,6 +3731,9 @@ type CauseColumns = {
   causeReason: UnrecognizedReason | null;
   causeMessageId: number | null;
 };
+
+/** Whether Sheppard spawned a terminal, and with which launcher. */
+export type SpawnLauncher = { kind: "spawned"; launcher: string } | { kind: "not-spawned" };
 
 export type ChannelLastMessage = { kind: "none" } | { kind: "at"; at: string };
 
