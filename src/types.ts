@@ -161,6 +161,41 @@ export interface AgentDetail {
   pane: HerdrPaneView | null;
   recentMessageIds: AgentRecentMessages[];
   channels: AgentChannelMembership[];
+  resume: ResumeState;
+}
+
+/** The launcher that starts a resumed session; `choose` needs the human's pick. */
+export type ResumeLauncher =
+  | { kind: "recorded"; launcher: string }
+  | { kind: "matched"; launcher: string }
+  | { kind: "choose"; launchers: readonly string[] };
+
+/**
+ * Whether an identity can continue its harness session in a new pane.
+ * - `connected`: its route is active; nothing to resume.
+ * - `resumable`: its route ended and its last terminal had an exact session.
+ * - `no-session`: its route ended without an exact session; reconnect a pane.
+ * - `no-launcher`: an exact session exists, but no registered launcher of that
+ *   harness holds it.
+ * - `unsupported`: its harness cannot resume a session by id.
+ */
+export type ResumeState =
+  | { kind: "connected" }
+  | { kind: "resumable"; harness: string; sessionId: string; launcher: ResumeLauncher }
+  | { kind: "no-session" }
+  | { kind: "no-launcher"; harness: string }
+  | { kind: "unsupported"; harness: string | null };
+
+/** An exact session recorded for an identity's last terminal. */
+export type RecordedSession =
+  | { kind: "recorded"; terminalId: string; harness: string; sessionId: string; sessionPath: string; cwd: string }
+  | { kind: "not-recorded" };
+
+/** The result of POST /api/agents/:handle/resume. */
+export interface ResumedAgent {
+  handle: string;
+  paneId: string;
+  sessionId: string;
 }
 
 /** A launcher definition used by configuration and private storage paths. */

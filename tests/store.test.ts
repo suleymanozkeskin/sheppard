@@ -218,6 +218,7 @@ describe("session mappings", () => {
       session_id: "first",
       session_path: "/sessions/first.jsonl",
       confidence: "exact",
+      cwd: "/Users/demo/work",
     });
     expect(store.findSessionMapping("term-1")).toMatchObject({
       terminal_id: "term-1",
@@ -225,6 +226,7 @@ describe("session mappings", () => {
       session_id: "first",
       session_path: "/sessions/first.jsonl",
       confidence: "exact",
+      cwd: "/Users/demo/work",
     });
 
     store.saveSessionMapping({
@@ -233,6 +235,7 @@ describe("session mappings", () => {
       session_id: "second",
       session_path: "/sessions/second.jsonl",
       confidence: "inferred",
+      cwd: "/Users/demo/work",
     });
     expect(store.findSessionMapping("term-1")).toMatchObject({
       terminal_id: "term-1",
@@ -240,6 +243,7 @@ describe("session mappings", () => {
       session_id: "second",
       session_path: "/sessions/second.jsonl",
       confidence: "inferred",
+      cwd: "/Users/demo/work",
     });
   });
 });

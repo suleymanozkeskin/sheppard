@@ -516,6 +516,15 @@ const MIGRATIONS: readonly Migration[] = [
       db.exec(`ALTER TABLE keep_awake_policies ADD COLUMN cause_message_id INTEGER NULL`);
     },
   },
+  {
+    version: 20,
+    up: (db) => {
+      // The pane's working folder when its session was mapped. A resumed
+      // harness must start there to find the session. Older rows stay NULL
+      // and are not resume points until a mapping is saved again.
+      db.exec(`ALTER TABLE session_mappings ADD COLUMN cwd TEXT NULL`);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1]!.version;
