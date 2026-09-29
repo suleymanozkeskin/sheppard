@@ -16,6 +16,7 @@ export type Operation =
   | "spawnAgent" | "connectAgent" | "stopAgent" | "promptAgent"
   | "listKeepAwake" | "getKeepAwake" | "setKeepAwake" | "clearKeepAwake"
   | "getMe" | "getRemoteAccess" | "createPairingCode" | "redeemPairingCode" | "revokeRemoteSession"
+  | "listResumableAgents" | "resumeAgent"
 
 const responseBodySchema = v.object({
   code: v.optional(v.string()),

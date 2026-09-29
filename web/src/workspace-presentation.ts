@@ -204,6 +204,19 @@ export function connectPaneActionLabel(pane: HerdrPaneView, fallback: string): s
   }
 }
 
+/**
+ * The connect action's text for a narrow button. The full text from
+ * `connectPaneActionLabel` belongs in its title and accessible name.
+ */
+export function connectPaneShortLabel(pane: HerdrPaneView, fallback: string): string {
+  switch (pane.previousIdentity.kind) {
+    case "ended":
+      return "Reconnect"
+    case "none":
+      return fallback
+  }
+}
+
 export function suggestedPaneHandle(label: string, paneId: string): string {
   const fallback = `agent-${paneId.split(":").at(-1) ?? "pane"}`
   const normalized = label

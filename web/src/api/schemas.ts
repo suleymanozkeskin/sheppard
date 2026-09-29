@@ -186,6 +186,26 @@ const agentRecentMessagesSchema = v.object({
   messageIds: v.array(integer),
 })
 
+const resumeLauncherSchema = v.variant("kind", [
+  v.object({ kind: v.literal("recorded"), launcher: v.string() }),
+  v.object({ kind: v.literal("matched"), launcher: v.string() }),
+  v.object({ kind: v.literal("choose"), launchers: v.array(v.string()) }),
+])
+
+export const resumeStateSchema = v.variant("kind", [
+  v.object({ kind: v.literal("connected") }),
+  v.object({ kind: v.literal("resumable"), harness: v.string(), sessionId: v.string(), launcher: resumeLauncherSchema }),
+  v.object({ kind: v.literal("no-session") }),
+  v.object({ kind: v.literal("no-launcher"), harness: v.string() }),
+  v.object({ kind: v.literal("unsupported"), harness: nullableString }),
+])
+
+export const resumableAgentListSchema = v.object({
+  agents: v.array(v.object({ handle: v.string(), resume: resumeStateSchema })),
+})
+
+export const resumedAgentSchema = v.object({ handle: v.string(), paneId: v.string(), sessionId: v.string() })
+
 export const agentDetailSchema = v.object({
   participant: agentDetailParticipantSchema,
   routeState: v.picklist(["active", "stale"]),
@@ -193,6 +213,8 @@ export const agentDetailSchema = v.object({
   recentMessageIds: v.array(agentRecentMessagesSchema),
   // The AGENT'S unread per membership. Optional until every fixture ships it.
   channels: v.optional(v.array(v.object({ channel: v.string(), unread: integer }))),
+  // A hub before resume support sends no field; that means no recorded session.
+  resume: v.optional(resumeStateSchema, { kind: "no-session" }),
 })
 
 const sessionTurnSchema = v.object({

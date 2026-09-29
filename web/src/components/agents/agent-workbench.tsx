@@ -41,6 +41,7 @@ import { absoluteTimeLabel, paneStatusLabel, relativeAgeLabel, workspaceLabel } 
 import { shellRoutePath, type AgentView, type ShellRoute, type ShellRouter } from "@/shell-routing"
 import { AgentSessionPanel } from "./agent-session-panel"
 import { AgentAttachButton, AgentAttachmentTray } from "./agent-attachments"
+import { AgentResumePanel } from "./agent-resume-panel"
 import { CommandMenuTrigger } from "@/components/commands/command-menu"
 import "./agent-workbench.css"
 
@@ -161,6 +162,7 @@ function ReadyAgentWorkbench({
           void focus()
         }}
         onMessage={message}
+        onResumed={onRefresh}
         pane={pane}
         pending={actionState.kind === "working"}
         workspace={workspace}
@@ -225,6 +227,7 @@ interface AgentHeaderProps {
   pending: boolean
   onMessage: () => void
   onFocus: () => void
+  onResumed: () => void
 }
 
 function AgentWorkbenchHeader({
@@ -237,6 +240,7 @@ function AgentWorkbenchHeader({
   pending,
   onMessage,
   onFocus,
+  onResumed,
 }: AgentHeaderProps) {
   const handle = detail.participant.handle
   const title = pane?.title ?? pane?.label ?? "No terminal title reported."
@@ -265,6 +269,7 @@ function AgentWorkbenchHeader({
           This identity has no running pane. Messages remain stored until an agent reconnects with this handle.
         </p>
       )}
+      <AgentResumePanel controller={controller} handle={handle} onResumed={onResumed} resume={detail.resume} />
       {paneState === "ambiguous" && (
         <p className="agent-workbench-offline" role="alert">
           More than one pane is linked to this handle. Check the workspace before you use terminal actions.

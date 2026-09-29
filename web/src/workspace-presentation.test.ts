@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { HerdrPaneView, HerdrWorkspaceView } from "@/api/types"
-import { compareWorkspaces, connectPaneActionLabel, initialConnectHandle, paneIdentityDetails, paneStatusLabel, suggestedPaneHandle, unmanagedAgentCount, workspaceDirectoryBudget } from "@/workspace-presentation"
+import { compareWorkspaces, connectPaneActionLabel, connectPaneShortLabel, initialConnectHandle, paneIdentityDetails, paneStatusLabel, suggestedPaneHandle, unmanagedAgentCount, workspaceDirectoryBudget } from "@/workspace-presentation"
 
 const workspace: HerdrWorkspaceView = {
   id: "workspace-test",
@@ -96,10 +96,12 @@ describe("reconnect after an ended route", () => {
     const ended: HerdrPaneView = { ...base, previousIdentity: { kind: "ended", handle: "claude-personal-worker" } }
     expect(initialConnectHandle(ended, "worker pane")).toBe("claude-personal-worker")
     expect(connectPaneActionLabel(ended, "Connect to chat")).toBe("Reconnect as @claude-personal-worker")
+    expect(connectPaneShortLabel(ended, "Connect to chat")).toBe("Reconnect")
   })
 
   test("falls back to the label suggestion without an ended identity", () => {
     expect(initialConnectHandle(base, "worker pane")).toBe("worker-pane")
     expect(connectPaneActionLabel(base, "Connect to chat")).toBe("Connect to chat")
+    expect(connectPaneShortLabel(base, "Connect")).toBe("Connect")
   })
 })

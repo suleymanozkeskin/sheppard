@@ -110,6 +110,40 @@ export interface AgentDetail {
   pane: HerdrPaneView | null
   recentMessageIds: AgentRecentMessages[]
   channels?: AgentChannelMembership[]
+  resume: ResumeState
+}
+
+/** The launcher that starts a resumed session; `choose` needs the human's pick. */
+export type ResumeLauncher =
+  | { kind: "recorded"; launcher: string }
+  | { kind: "matched"; launcher: string }
+  | { kind: "choose"; launchers: string[] }
+
+/** Whether an identity can continue its harness session: the hub's `ResumeState`. */
+export type ResumeState =
+  | { kind: "connected" }
+  | { kind: "resumable"; harness: string; sessionId: string; launcher: ResumeLauncher }
+  | { kind: "no-session" }
+  | { kind: "no-launcher"; harness: string }
+  | { kind: "unsupported"; harness: string | null }
+
+export interface ResumableAgent {
+  handle: string
+  resume: ResumeState
+}
+
+export interface ResumableAgentList {
+  agents: ResumableAgent[]
+}
+
+export interface ResumeAgentRequest {
+  launcher?: string
+}
+
+export interface ResumedAgent {
+  handle: string
+  paneId: string
+  sessionId: string
 }
 
 /**
@@ -647,6 +681,7 @@ export type RequestBody =
   | SetAgentKeepAwakeRequest
   | SetChannelKeepAwakeRequest
   | RedeemPairingRequest
+  | ResumeAgentRequest
 
 export interface HistoryQuery {
   limit?: number
@@ -828,6 +863,8 @@ export interface MsgrApi {
   clearChannelKeepAwake(name: string): ApiResult<KeepAwakeSettingResult>
   getMe(): ApiResult<CallerIdentity>
   getRemoteAccess(): ApiResult<RemoteAccessStatus>
+  listResumableAgents(): ApiResult<ResumableAgentList>
+  resumeAgent(handle: string, request: ResumeAgentRequest): ApiResult<ResumedAgent>
   createPairingCode(): ApiResult<PairingCode>
   redeemPairingCode(request: RedeemPairingRequest): ApiResult<PairedDevice>
   revokeRemoteSession(id: number): ApiResult<RevokedRemoteSession>

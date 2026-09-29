@@ -39,6 +39,8 @@ import {
   pairedDeviceSchema,
   pairingCodeSchema,
   callerIdentitySchema,
+  resumableAgentListSchema,
+  resumedAgentSchema,
   remoteAccessStatusSchema,
   revokedRemoteSessionSchema,
   launcherListSchema,
@@ -132,6 +134,9 @@ import type {
   PairingCode,
   RedeemPairingRequest,
   CallerIdentity,
+  ResumableAgentList,
+  ResumeAgentRequest,
+  ResumedAgent,
   RemoteAccessStatus,
   RevokedRemoteSession,
   SetAgentKeepAwakeRequest,
@@ -503,6 +508,14 @@ export class HttpMsgrApi implements MsgrApi {
     return this.request("DELETE", keepAwakePath("channels", name), keepAwakeSettingResultSchema)
   }
 
+  public listResumableAgents(): ApiResult<ResumableAgentList> {
+    return this.request("GET", "/api/resumable-agents", resumableAgentListSchema)
+  }
+
+  public resumeAgent(handle: string, request: ResumeAgentRequest): ApiResult<ResumedAgent> {
+    return this.request("POST", `/api/agents/${encodeURIComponent(handle)}/resume`, resumedAgentSchema, request)
+  }
+
   public getMe(): ApiResult<CallerIdentity> {
     return this.request("GET", "/api/me", callerIdentitySchema)
   }
@@ -804,6 +817,8 @@ function keepAwakePath(target: "agents" | "channels", name: string): string {
 
 function operationForRequest(method: HttpMethod, path: string): Operation {
   if (path === "/api/me") return "getMe"
+  if (path === "/api/resumable-agents") return "listResumableAgents"
+  if (path.startsWith("/api/agents/") && path.endsWith("/resume") && method === "POST") return "resumeAgent"
   if (path === "/api/remote-access") return "getRemoteAccess"
   if (path.startsWith("/api/remote-access/sessions/")) return "revokeRemoteSession"
   if (path === "/api/pairing") return "createPairingCode"
