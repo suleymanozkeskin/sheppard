@@ -18,6 +18,7 @@ function workspace(role: string | null, participant: string | null): HerdrWorksp
       paneId: "workspace-1:pane-1",
       participant,
       participantRouteState: "active",
+      previousIdentity: { kind: "none" },
       role,
     }],
     tabs: [],

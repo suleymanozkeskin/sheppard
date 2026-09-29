@@ -1933,6 +1933,7 @@ function connectedIdentity(
   store: Store,
   pane: PaneInfo,
   handle: string,
+  liveTerminalIds: ReadonlySet<string>,
 ): Result<ConnectedIdentity, HandleTaken | ValidationFailed> {
   const requested = store.findByHandle(handle);
   const owner = store.findActiveAgentByTerminal(pane.terminalId);
@@ -1943,7 +1944,14 @@ function connectedIdentity(
     if (owner !== null && owner.id !== requested.id) {
       return Result.err(validationFailed("handle", "another active identity owns this terminal"));
     }
-    if (requested.routeState === "active" && requested.terminalId !== null && requested.terminalId !== pane.terminalId) {
+    // A route whose terminal no longer exists ended with its session, for
+    // example at a restart, even when no failed ping marked it stale yet.
+    if (
+      requested.routeState === "active" &&
+      requested.terminalId !== null &&
+      requested.terminalId !== pane.terminalId &&
+      liveTerminalIds.has(requested.terminalId)
+    ) {
       return Result.err(validationFailed("handle", "already belongs to another active terminal"));
     }
     return Result.ok(Object.freeze({ kind: "existing", participant: Object.freeze(requested) }));
@@ -1988,7 +1996,8 @@ async function connectHerdrAgent(
     return errorResponse(validationFailed("paneId", "has no agent occupant"), headers);
   }
 
-  const identity = connectedIdentity(hub.store, pane, requestedHandle.value);
+  const liveTerminalIds = new Set(listed.value.map((candidate) => candidate.terminalId));
+  const identity = connectedIdentity(hub.store, pane, requestedHandle.value, liveTerminalIds);
   if (identity.isErr()) return errorResponse(identity.error, headers);
   const { participant } = identity.value;
 

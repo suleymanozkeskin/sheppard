@@ -246,7 +246,15 @@ export interface HerdrPaneView {
   participant: string | null;
   participantRouteState: RouteState | null;
   role: string | null;
+  /** The ended identity that this pane can reconnect as, for a pane without one. */
+  previousIdentity: EndedIdentity;
 }
+
+/**
+ * An agent identity whose route ended in this pane, for example by a restart
+ * that gave the terminal a new id. `none` also covers two or more candidates.
+ */
+export type EndedIdentity = { kind: "none" } | { kind: "ended"; handle: string };
 
 export interface HerdrTabView {
   id: string;

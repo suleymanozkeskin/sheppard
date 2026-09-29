@@ -180,6 +180,7 @@ export class HerdrTopology {
     this.currentPanes = [...panes.value];
 
     this.reconcileStaleRoutes(panes.value);
+    this.store.endRoutesWithoutTerminal(new Set(panes.value.map((pane) => pane.terminalId)));
 
     const viewForPane = (pane: PaneInfo): HerdrPaneView => {
       const routedParticipant = this.store.agentRouteForTerminal(pane.terminalId);
@@ -204,6 +205,10 @@ export class HerdrTopology {
         participant: participant?.handle ?? null,
         participantRouteState: participant?.routeState ?? null,
         role,
+        previousIdentity:
+          participant === null && pane.agent !== null
+            ? this.store.endedIdentityForPane(pane.paneId, pane.agent)
+            : { kind: "none" },
       };
     };
 

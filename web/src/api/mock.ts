@@ -828,6 +828,7 @@ export class MockMsgrApi implements MsgrApi {
       focused: false,
       participant: handle,
       participantRouteState: "active",
+      previousIdentity: { kind: "none" },
     })
     const firstTab = workspace.tabs[0]
     if (firstTab !== undefined) {

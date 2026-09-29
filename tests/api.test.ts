@@ -311,6 +311,7 @@ describe("agent detail", () => {
       participant: "worker",
       participantRouteState: "active",
       role: null,
+      previousIdentity: { kind: "none" },
     });
     expect(detail.recentMessageIds).toEqual([
       { channel: "backend", messageIds: [backendSecond.id, backendFirst.id] },

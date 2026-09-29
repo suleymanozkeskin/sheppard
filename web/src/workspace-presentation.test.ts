@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
-import type { HerdrWorkspaceView } from "@/api/types"
-import { compareWorkspaces, paneIdentityDetails, paneStatusLabel, suggestedPaneHandle, unmanagedAgentCount, workspaceDirectoryBudget } from "@/workspace-presentation"
+import type { HerdrPaneView, HerdrWorkspaceView } from "@/api/types"
+import { compareWorkspaces, connectPaneActionLabel, initialConnectHandle, paneIdentityDetails, paneStatusLabel, suggestedPaneHandle, unmanagedAgentCount, workspaceDirectoryBudget } from "@/workspace-presentation"
 
 const workspace: HerdrWorkspaceView = {
   id: "workspace-test",
@@ -15,6 +15,7 @@ const workspace: HerdrWorkspaceView = {
       focused: false,
       participant: "codex-reviewer",
       participantRouteState: "active",
+      previousIdentity: { kind: "none" },
     },
     {
       paneId: "pane-unmanaged",
@@ -24,6 +25,7 @@ const workspace: HerdrWorkspaceView = {
       focused: false,
       participant: null,
       participantRouteState: null,
+      previousIdentity: { kind: "none" },
     },
     {
       paneId: "pane-empty",
@@ -33,6 +35,7 @@ const workspace: HerdrWorkspaceView = {
       focused: false,
       participant: null,
       participantRouteState: null,
+      previousIdentity: { kind: "none" },
     },
   ],
   tabs: [],
@@ -74,5 +77,29 @@ describe("workspace presentation", () => {
       panes: workspace.panes.map((pane) => pane.participant === null ? pane : { ...pane, participantRouteState: "stale" as const }),
     }
     expect([active, stale].toSorted(compareWorkspaces).map(({ id }) => id)).toEqual(["stale", "active"])
+  })
+})
+
+describe("reconnect after an ended route", () => {
+  const base: HerdrPaneView = {
+    paneId: "w1:pQ",
+    label: "worker pane",
+    agentKind: "claude",
+    agentStatus: "idle",
+    focused: false,
+    participant: null,
+    participantRouteState: null,
+    previousIdentity: { kind: "none" },
+  }
+
+  test("starts the connect dialog with the ended identity", () => {
+    const ended: HerdrPaneView = { ...base, previousIdentity: { kind: "ended", handle: "claude-personal-worker" } }
+    expect(initialConnectHandle(ended, "worker pane")).toBe("claude-personal-worker")
+    expect(connectPaneActionLabel(ended, "Connect to chat")).toBe("Reconnect as @claude-personal-worker")
+  })
+
+  test("falls back to the label suggestion without an ended identity", () => {
+    expect(initialConnectHandle(base, "worker pane")).toBe("worker-pane")
+    expect(connectPaneActionLabel(base, "Connect to chat")).toBe("Connect to chat")
   })
 })

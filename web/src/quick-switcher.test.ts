@@ -69,6 +69,7 @@ describe("quick switcher corpus", () => {
           paneId: "pane-1",
           participant: "echo-agent",
           participantRouteState: "active",
+          previousIdentity: { kind: "none" },
         }],
       }],
     })

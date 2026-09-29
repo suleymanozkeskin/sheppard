@@ -57,6 +57,7 @@ import type {
   ChannelReceipt,
   ChannelKind,
   DirectConversation,
+  EndedIdentity,
   AgentRecentMessages,
   HumanAlertResult,
   InboxEntry,
@@ -1017,6 +1018,43 @@ export class Store {
         `UPDATE participants SET route_state = 'stale' WHERE id = $participantId`,
       )
       .run({ participantId });
+  }
+
+  /**
+   * Ends every active agent route whose terminal is not in `liveTerminalIds`,
+   * the terminals of one complete Herdr pane list. A restart gives every
+   * terminal a new id, so this is how the routes of a previous session end.
+   * Returns the participants whose route ended. Topology reconciliation
+   * restores a route whose terminal comes back.
+   */
+  endRoutesWithoutTerminal(liveTerminalIds: ReadonlySet<string>): number[] {
+    const routed = this.db
+      .query<{ id: number; terminal_id: string }, []>(
+        `SELECT id, terminal_id FROM participants
+          WHERE kind = 'agent' AND deactivated = 0 AND route_state = 'active'
+            AND terminal_id IS NOT NULL`,
+      )
+      .all();
+    const ended = routed.filter((row) => !liveTerminalIds.has(row.terminal_id)).map((row) => row.id);
+    for (const participantId of ended) this.markRouteStale(participantId);
+    return ended;
+  }
+
+  /**
+   * The one ended agent identity that was last routed to this pane with the
+   * same agent kind. Two or more such identities are ambiguous and give none.
+   */
+  endedIdentityForPane(paneId: string, occupantAgent: string): EndedIdentity {
+    const rows = this.db
+      .query<{ handle: string }, { paneId: string; occupantAgent: string }>(
+        `SELECT handle FROM participants
+          WHERE kind = 'agent' AND deactivated = 0 AND route_state = 'stale'
+            AND pane_id = $paneId AND occupant_agent = $occupantAgent
+          LIMIT 2`,
+      )
+      .all({ paneId, occupantAgent });
+    const [only] = rows;
+    return rows.length === 1 && only !== undefined ? { kind: "ended", handle: only.handle } : { kind: "none" };
   }
 
   /** Routes marked stale, which only their own participant acting can clear. */

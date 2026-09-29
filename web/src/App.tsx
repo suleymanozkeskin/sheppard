@@ -2485,7 +2485,9 @@ function ConnectPaneDialog({ handle, onClose, onHandleChange, onSubmit, state, t
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold" id="connect-pane-title">Connect {target.label}</h2>
-          <p className="mt-2 text-sm text-muted-foreground">This creates a Sheppard identity for the live Herdr pane. The agent can read its direct messages and channels that it joins. It cannot read other private conversations.</p>
+          {target.pane.previousIdentity.kind === "ended"
+            ? <p className="mt-2 text-sm text-muted-foreground" data-connect-reconnect>This pane was <strong className="text-foreground">@{target.pane.previousIdentity.handle}</strong> before its terminal ended, for example at a restart. Reconnect keeps that identity, its channels, direct messages, and unread state.</p>
+            : <p className="mt-2 text-sm text-muted-foreground">This creates a Sheppard identity for the live Herdr pane. The agent can read its direct messages and channels that it joins. It cannot read other private conversations.</p>}
         </div>
         <Button aria-label="Close connect pane" onClick={onClose} size="icon" type="button" variant="ghost"><X aria-hidden="true" /></Button>
       </div>
@@ -2507,7 +2509,7 @@ function ConnectPaneDialog({ handle, onClose, onHandleChange, onSubmit, state, t
           <Button onClick={onClose} type="button" variant="ghost">Cancel</Button>
           <Button disabled={state.status === "working" || handle.trim().length === 0} type="submit">
             <MessageCirclePlus aria-hidden="true" />
-            {state.status === "working" ? "Connecting…" : "Connect to chat"}
+            {state.status === "working" ? "Connecting…" : target.pane.previousIdentity.kind === "ended" && handle.trim() === target.pane.previousIdentity.handle ? "Reconnect" : "Connect to chat"}
           </Button>
         </div>
       </form>

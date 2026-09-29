@@ -19,7 +19,7 @@ import { useLiveMessages } from "@/hooks/use-live-messages"
 import { useSearch } from "@/hooks/use-search"
 import type { ShellNavigate, ShellRoute } from "@/shell-routing"
 import { applyTheme, DEFAULT_THEME_MODE, loadThemeMode, nextThemeMode, prefersDarkTheme, resolveTheme, saveThemeMode, type ThemeMode } from "@/theme"
-import { paneIdentity, paneStopConfirmation, suggestedPaneHandle, unmanagedAgentCount } from "@/workspace-presentation"
+import { initialConnectHandle, paneIdentity, paneStopConfirmation, unmanagedAgentCount } from "@/workspace-presentation"
 import {
   bindingConflicts,
   defaultBindings,
@@ -1055,7 +1055,7 @@ export function useAppController(
     }
     if (pane.agentKind === null) return
     setConnectPaneTarget({ label, pane })
-    setConnectPaneHandle(suggestedPaneHandle(label, pane.paneId))
+    setConnectPaneHandle(initialConnectHandle(pane, label))
     setConnectPaneState({ status: "idle" })
   }, [identity])
 

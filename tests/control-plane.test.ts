@@ -11,7 +11,7 @@ import {
   noAgentAtTarget,
 } from "../src/herdr";
 import { Notifier } from "../src/notifier";
-import { workspaceChannelName } from "../src/topology";
+import { HerdrTopology, workspaceChannelName } from "../src/topology";
 import {
   BASE,
   TEST_HERDR_SOCKET_PATH,
@@ -1287,6 +1287,7 @@ describe("herdr control plane", () => {
               participant: "opus21",
               participantRouteState: "active",
               role: null,
+              previousIdentity: { kind: "none" },
             },
             {
               paneId: "w1:p2",
@@ -1298,6 +1299,7 @@ describe("herdr control plane", () => {
               participant: null,
               participantRouteState: null,
               role: null,
+              previousIdentity: { kind: "none" },
             },
           ],
           tabs: [
@@ -1315,6 +1317,7 @@ describe("herdr control plane", () => {
                   participant: "opus21",
                   participantRouteState: "active",
                   role: null,
+                  previousIdentity: { kind: "none" },
                 },
               ],
             },
@@ -1332,6 +1335,7 @@ describe("herdr control plane", () => {
                   participant: null,
                   participantRouteState: null,
                   role: null,
+                  previousIdentity: { kind: "none" },
                 },
               ],
             },
@@ -1409,6 +1413,7 @@ describe("herdr control plane", () => {
               participant: "opus21",
               participantRouteState: "active",
               role: null,
+              previousIdentity: { kind: "none" },
             },
           ],
           tabs: [],
@@ -1594,6 +1599,7 @@ describe("herdr control plane", () => {
               participant: null,
               participantRouteState: null,
               role: null,
+              previousIdentity: { kind: "none" },
             },
           ],
           tabs: [],
@@ -1657,7 +1663,7 @@ describe("connecting an existing agent pane", () => {
 
   test("does not suffix an existing handle or move it from an active terminal", async () => {
     const hub = testHub();
-    hub.hub.herdr = hostingHerdr();
+    hub.hub.herdr = hostingHerdr().withPane({ paneId: "w1:p2", terminalId: "other", workspaceId: "w1", agent: "codex" });
     const operator = await operatorAuth(hub);
     const worker = hub.hub.store.createAgent("worker").unwrap().participant;
     hub.hub.store.bindRoute(worker.id, { terminalId: "other", paneId: "w1:p2", occupantAgent: "codex" });
@@ -1667,6 +1673,33 @@ describe("connecting an existing agent pane", () => {
     expect(response.status).toBe(400);
     expect(hub.hub.store.findById(worker.id)?.terminalId).toBe("other");
     expect(hub.hub.store.findByHandle("worker-2")).toBeNull();
+  });
+
+  test("reconnects an identity whose terminal ended, as after a restart", async () => {
+    const hub = testHub();
+    hub.hub.herdr = hostingHerdr();
+    const operator = await operatorAuth(hub);
+    const worker = hub.hub.store.createAgent("worker").unwrap().participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-before-restart", paneId: "w1:p1", occupantAgent: "codex" });
+
+    const response = await hub.post("/api/herdr/agents/w1%3Ap1/connect", { handle: "worker" }, operator);
+
+    expect(response.status).toBe(200);
+    expect(hub.hub.store.findById(worker.id)).toMatchObject({ terminalId: "term-1", routeState: "active" });
+  });
+
+  test("topology ends a route whose terminal is gone and offers it to the same pane", async () => {
+    const hub = testHub();
+    const herdr = hostingHerdr();
+    const worker = hub.hub.store.createAgent("worker").unwrap().participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-before-restart", paneId: "w1:p1", occupantAgent: "codex" });
+
+    const topology = new HerdrTopology({ herdr, store: hub.hub.store, onChange: () => undefined });
+    await topology.refresh();
+
+    expect(hub.hub.store.findById(worker.id)?.routeState).toBe("stale");
+    const pane = topology.snapshot().workspaces[0]?.panes[0];
+    expect(pane).toMatchObject({ participant: null, previousIdentity: { kind: "ended", handle: "worker" } });
   });
 
   test("refuses to displace the active owner with a named stale identity", async () => {
