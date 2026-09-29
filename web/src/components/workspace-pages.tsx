@@ -35,6 +35,7 @@ import {
   comparePanes,
   compareWorkspaces,
   connectPaneActionLabel,
+  connectPaneShortLabel,
   isEmptyPane,
   matchedParticipantCount,
   unmanagedAgentCount,
@@ -313,9 +314,17 @@ function PaneActions({ controller, identity, navigate, pane }: { controller: App
   return (
     <div className="flex shrink-0 items-center gap-1">
       {pane.agentKind !== null && pane.participant === null && (
-        <Button aria-label={`Connect ${identity} to Sheppard chat`} disabled={!canWrite} onClick={() => controller.openConnectPane(pane, identity)} size="sm" title={canWrite ? "Create a pane-scoped chat identity" : NOT_CONNECTED_REASON} type="button" variant="ghost">
+        <Button
+          aria-label={pane.previousIdentity.kind === "ended" ? connectPaneActionLabel(pane, "Connect") : `Connect ${identity} to Sheppard chat`}
+          disabled={!canWrite}
+          onClick={() => controller.openConnectPane(pane, identity)}
+          size="sm"
+          title={canWrite ? connectPaneActionLabel(pane, "Create a pane-scoped chat identity") : NOT_CONNECTED_REASON}
+          type="button"
+          variant="ghost"
+        >
           <MessageCirclePlus aria-hidden="true" />
-          {connectPaneActionLabel(pane, "Connect")}
+          {connectPaneShortLabel(pane, "Connect")}
         </Button>
       )}
       {pane.participant !== null && (

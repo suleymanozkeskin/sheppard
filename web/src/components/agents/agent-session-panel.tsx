@@ -234,7 +234,17 @@ function ReadySessionContent({
 }: SessionPanelProps & { session: AgentSession }) {
   switch (session.source.state) {
     case "ready":
-      return <SessionTranscript session={session} onLoadOlder={onLoadOlder} readState={readState} />
+      return (
+        <>
+          <SessionConfirmation
+            canSelect={canSelect}
+            onSelect={onSelectSession}
+            selectionState={selectionState}
+            session={session}
+          />
+          <SessionTranscript session={session} onLoadOlder={onLoadOlder} readState={readState} />
+        </>
+      )
     case "absent":
     case "unsupported":
     case "error":
@@ -257,6 +267,60 @@ function ReadySessionContent({
             )}
         </>
       )
+  }
+}
+
+/**
+ * An inferred mapping was matched by start time only. Confirming its one
+ * candidate stores it as exact, which makes it the agent's resume point.
+ */
+function SessionConfirmation({
+  canSelect,
+  onSelect,
+  selectionState,
+  session,
+}: {
+  canSelect: boolean
+  onSelect: (sessionId: string) => void
+  selectionState: SessionSelectionState
+  session: AgentSession
+}) {
+  const candidate = inferredCandidate(session)
+  if (candidate === null) return null
+  const working = selectionState.status === "working"
+  return (
+    <div className="mb-3 rounded-lg border px-3 py-2 text-sm" data-session-confirm={candidate.sessionId}>
+      <p className="text-muted-foreground">
+        This session was matched by its start time. Confirm it, so the agent can resume it after a restart.
+      </p>
+      <Button
+        className="mt-2"
+        disabled={!canSelect || working}
+        onClick={() => onSelect(candidate.sessionId)}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        {working ? "Confirming…" : "Confirm this session"}
+      </Button>
+      {selectionState.status === "error" && (
+        <p className="mt-2 text-destructive" role="alert">{selectionState.message}</p>
+      )}
+    </div>
+  )
+}
+
+/** The one candidate of an inferred mapping, when the hub sent it. */
+function inferredCandidate(session: AgentSession): SessionCandidate | null {
+  if (session.mapping === null) return null
+  switch (session.mapping.confidence) {
+    case "inferred": {
+      const [only, ...rest] = session.mapping.candidates
+      return only !== undefined && rest.length === 0 ? only : null
+    }
+    case "exact":
+    case "ambiguous":
+      return null
   }
 }
 

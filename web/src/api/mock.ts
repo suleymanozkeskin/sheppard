@@ -71,6 +71,10 @@ import type {
   PairingCode,
   RedeemPairingRequest,
   CallerIdentity,
+  ResumableAgentList,
+  ResumeAgentRequest,
+  ResumedAgent,
+  ResumeState,
   RemoteAccessStatus,
   RemoteSession,
   RevokedRemoteSession,
@@ -551,6 +555,7 @@ export class MockMsgrApi implements MsgrApi {
       routeState: participant.routeState,
       pane,
       recentMessageIds,
+      resume: this.resumeStateFor(handle, participant.routeState),
     })
   }
 
@@ -917,6 +922,55 @@ export class MockMsgrApi implements MsgrApi {
     if (channel.isErr()) return channel
     this.keepAwakePolicies.delete(`channel:${name}`)
     return Result.ok({ setting: { kind: "off" } })
+  }
+
+  /**
+   * Resume states by handle. `old-runner` resumes with its matched launcher.
+   * `archived-reviewer` has no pane of its own here and asks for a launcher.
+   */
+  private readonly resumeStates = new Map<string, ResumeState>([
+    ["old-runner", { kind: "resumable", harness: "claude", sessionId: "5f0c7c2e", launcher: { kind: "matched", launcher: "claude-personal" } }],
+    ["archived-reviewer", {
+      kind: "resumable",
+      harness: "claude",
+      sessionId: "9a1d44b0",
+      launcher: { kind: "choose", launchers: ["claude-personal", "claude-work"] },
+    }],
+  ])
+
+  private resumeStateFor(handle: string, routeState: "active" | "stale"): ResumeState {
+    if (routeState === "active") return { kind: "connected" }
+    return this.resumeStates.get(handle) ?? { kind: "no-session" }
+  }
+
+  public async listResumableAgents(): ApiResult<ResumableAgentList> {
+    return Result.ok({
+      agents: [...this.resumeStates]
+        .filter(([, resume]) => resume.kind === "resumable")
+        .map(([handle, resume]) => ({ handle, resume })),
+    })
+  }
+
+  public async resumeAgent(handle: string, request: ResumeAgentRequest): ApiResult<ResumedAgent> {
+    const resume = this.resumeStates.get(handle)
+    if (resume === undefined || resume.kind !== "resumable") {
+      return Result.err(new ApiHttpError({
+        body: JSON.stringify({ code: "ValidationFailed", error: `handle cannot resume: ${resume?.kind ?? "no-session"}` }),
+        message: "Resume failed",
+        status: 400,
+        operation: "resumeAgent",
+      }))
+    }
+    if (resume.launcher.kind === "choose" && (request.launcher === undefined || !resume.launcher.launchers.includes(request.launcher))) {
+      return Result.err(new ApiHttpError({
+        body: JSON.stringify({ code: "ValidationFailed", error: `launcher must be one of ${resume.launcher.launchers.join(", ")}` }),
+        message: "Resume failed",
+        status: 400,
+        operation: "resumeAgent",
+      }))
+    }
+    this.resumeStates.set(handle, { kind: "connected" })
+    return Result.ok({ handle, paneId: `mock:resumed-${handle}`, sessionId: resume.sessionId })
   }
 
   public async getMe(): ApiResult<CallerIdentity> {

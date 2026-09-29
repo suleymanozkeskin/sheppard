@@ -35,6 +35,7 @@ import type { CreationPagesController } from "@/components/creation-pages"
 import { AgentAvatar } from "@/components/agent-avatar"
 import { ChannelView } from "@/components/channel-view"
 import { KeepAwakeControl } from "@/components/keep-awake-control"
+import { ResumableAgentsRail } from "@/components/agents/resumable-agents-rail"
 import { keepAwakeAlarms, workspaceLeadHandles, type KeepAwakeAlarm, type KeepAwakeResume } from "@/keep-awake"
 import { AgentStatusOrb } from "@/components/agent-status-orb"
 import { DictationButton } from "@/components/dictation-button"
@@ -295,6 +296,7 @@ function SidebarFrame({ activeSection, children, controller, directManager = fal
         {SIDEBAR_QUICK_NAV_ITEMS.map((item) => <SidebarPrimaryLink {...item} active={activeSection === item.route} key={item.route} router={router} />)}
       </nav>
       {controller.identity !== null && <KeepAwakeAlarmList controller={controller} router={router} />}
+      {controller.identity !== null && <ResumableAgentsRail controller={controller} router={router} />}
       <div className="flex min-h-0 flex-1 flex-col" data-sidebar-body>
         {children}
       </div>

@@ -5,7 +5,7 @@ import type { HerdrPaneView, HerdrWorkspaceView } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import { AgentStatusMark } from "@/components/agent-status-mark"
 import type { AppController } from "@/hooks/use-app-controller"
-import { connectPaneActionLabel, paneIdentity, paneStatusLabel, workspaceLabel as formatWorkspaceLabel } from "@/workspace-presentation"
+import { connectPaneActionLabel, connectPaneShortLabel, paneIdentity, paneStatusLabel, workspaceLabel as formatWorkspaceLabel } from "@/workspace-presentation"
 import type { ShellRouter } from "@/shell-routing"
 
 export { AgentWorkbench as AgentDetailPage } from "./agents/agent-workbench"
@@ -71,7 +71,20 @@ function AgentEntryCard({ entry, onConnect, onMessage, onOpen, onOpenWorkspace }
       <div className="flex items-center justify-end gap-1 border-t px-3 py-1.5">
         {linked
           ? <Button onClick={onMessage} size="sm" type="button" variant="ghost"><MessageCircle aria-hidden="true" />Message</Button>
-          : <Button onClick={onConnect} size="sm" type="button" variant="ghost"><MessageCirclePlus aria-hidden="true" />{connectPaneActionLabel(entry.pane, "Connect to chat")}</Button>}
+          : (
+            <Button
+              aria-label={connectPaneActionLabel(entry.pane, "Connect to chat")}
+              data-agent-card-connect
+              onClick={onConnect}
+              size="sm"
+              title={connectPaneActionLabel(entry.pane, "Connect to chat")}
+              type="button"
+              variant="ghost"
+            >
+              <MessageCirclePlus aria-hidden="true" />
+              {connectPaneShortLabel(entry.pane, "Connect to chat")}
+            </Button>
+          )}
         <Button onClick={onOpenWorkspace} size="sm" type="button" variant="ghost">Workspace</Button>
       </div>
     </li>
