@@ -126,7 +126,7 @@ describe("pi session reader", () => {
 });
 
 const OPENCODE_SCHEMA = [
-  `CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL)`,
+  `CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)`,
   `CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL)`,
   `CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL)`,
 ];
@@ -142,10 +142,10 @@ function opencodeFixture(): OpencodeFixture {
   const databasePath = join(dataHome, "opencode", "opencode.db");
   const db = new Database(databasePath, { create: true });
   for (const statement of OPENCODE_SCHEMA) db.exec(statement);
-  const session = db.query("INSERT INTO session VALUES (?, ?, ?, ?)");
-  session.run("ses_top", null, CWD, 1_786_126_531_435);
-  session.run("ses_child", "ses_top", CWD, 1_786_126_532_000);
-  session.run("ses_elsewhere", null, "/other", 1_786_126_533_000);
+  const session = db.query("INSERT INTO session VALUES (?, ?, ?, ?, ?)");
+  session.run("ses_top", null, CWD, 1_786_126_531_435, 1_786_126_540_000);
+  session.run("ses_child", "ses_top", CWD, 1_786_126_532_000, 1_786_126_532_000);
+  session.run("ses_elsewhere", null, "/other", 1_786_126_533_000, 1_786_126_533_000);
   const message = db.query("INSERT INTO message VALUES (?, ?, ?, ?)");
   message.run("msg_u", "ses_top", 1_786_126_531_454, JSON.stringify({ role: "user" }));
   message.run("msg_a", "ses_top", 1_786_126_531_470, JSON.stringify({ role: "assistant" }));
@@ -171,7 +171,7 @@ describe("opencode session reader", () => {
     );
     expect(found.map((candidate) => candidate.sessionId)).toEqual(["ses_top"]);
     expect(found[0]).toMatchObject({
-      path: opencodeSessionPath({ databasePath, sessionId: "ses_top" }),
+      path: opencodeSessionPath({ kind: "database", databasePath, sessionId: "ses_top" }),
       startedAt: new Date(1_786_126_531_435).toISOString(),
       cwd: CWD,
       firstUserText: "You are @worker. Review it.",
@@ -181,7 +181,7 @@ describe("opencode session reader", () => {
 
   test("reads turns newest first and pages by the part cursor without overlap", async () => {
     const { databasePath } = opencodeFixture();
-    const path = opencodeSessionPath({ databasePath, sessionId: "ses_top" });
+    const path = opencodeSessionPath({ kind: "database", databasePath, sessionId: "ses_top" });
 
     const newest = expectOk(await readWindow(opencodeAdapter, path, bunWindowReader(), { before: null, limit: 2 }));
     expect(newest.turns.map((turn) => [turn.kind, turn.role, turn.tool?.outcome ?? null])).toEqual([
@@ -208,9 +208,16 @@ describe("opencode session reader", () => {
 
   test("a stored path must name the database and a session", () => {
     expect(expectOk(parseOpencodeSessionPath("/data/opencode/opencode.db#ses_1"))).toEqual({
+      kind: "database",
       databasePath: "/data/opencode/opencode.db",
       sessionId: "ses_1",
     });
+    expect(expectOk(parseOpencodeSessionPath("/data/opencode/storage/session/global/ses_2.json"))).toEqual({
+      kind: "storage",
+      sessionFile: "/data/opencode/storage/session/global/ses_2.json",
+      sessionId: "ses_2",
+    });
+    expect(parseOpencodeSessionPath("/data/opencode/storage/message/ses_2/msg_1.json").isErr()).toBe(true);
     expect(parseOpencodeSessionPath("/data/opencode/opencode.db").isErr()).toBe(true);
     expect(parseOpencodeSessionPath("/data/other.db#ses_1").isErr()).toBe(true);
   });
