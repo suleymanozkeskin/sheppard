@@ -1191,6 +1191,8 @@ test("spawn setup keeps exact runtime values and survives Back", async ({ page }
   await page.keyboard.press("Meta+k")
   const menu = page.getByRole("dialog", { name: "Sheppard command menu" })
   await menu.getByRole("combobox").fill("Spawn agent")
+  // Enter acts on the selected result; wait until the search has selected spawn.
+  await expect(menu.getByRole("option", { selected: true })).toContainText("Spawn")
   await menu.getByRole("combobox").press("Enter")
   await expect(menu.getByRole("heading", { name: "Spawn an agent" })).toBeVisible()
   await expect(menu.locator('[data-combobox="command-launcher"] [data-combobox-value]')).toHaveText("codex")
