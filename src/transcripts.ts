@@ -20,6 +20,7 @@
  *      "I could not see".
  */
 
+import { Database } from "bun:sqlite";
 import { Result, TaggedError } from "better-result";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -150,6 +151,16 @@ export interface TranscriptAdapter {
    * Absent means every parsed turn stays distinct.
    */
   mergeConsecutive?(older: SessionTurn, newer: SessionTurn): SessionTurn | null;
+  /**
+   * Reads one window itself, for a harness that keeps sessions in a database
+   * instead of one JSONL file. `before` is the cursor that this same adapter
+   * returned as `nextBefore`. Absent means `readWindow` pages the file.
+   */
+  readSession?(
+    path: string,
+    reader: WindowReader,
+    options: { before: number | null; limit: number },
+  ): Promise<Result<SessionWindow, TranscriptUnreadable>>;
 }
 
 /**
@@ -645,6 +656,386 @@ export const grokAdapter: TranscriptAdapter = {
   mergeConsecutive: mergeGrokTurns,
 };
 
+/** Session files one pi working directory may hold before the listing is refused. */
+export const MAX_PI_SESSION_FILES = 4_096;
+
+/**
+ * PI_CODING_AGENT_DIR decides where pi writes, with a leading `~` expanded the
+ * way pi expands it. Ask this helper; do not restate the default path.
+ */
+export function piAgentDir(env: Readonly<Record<string, string | undefined>>): ConfigDirectory {
+  const configured = env.PI_CODING_AGENT_DIR;
+  if (configured !== undefined && configured.trim().length > 0) {
+    const expanded = configured === "~" || configured.startsWith("~/")
+      ? join(homedir(), configured.slice(1))
+      : configured;
+    return { dir: expanded, fromEnvironment: true };
+  }
+  return { dir: join(homedir(), ".pi", "agent"), fromEnvironment: false };
+}
+
+/**
+ * pi's own session directory name for a working directory: the leading
+ * separator dropped, every `/`, `\` and `:` folded to a dash, wrapped in `--`.
+ */
+export function piEncodedCwd(cwd: string): string {
+  return `--${cwd.replace(/^[/\\]/u, "").replace(/[/\\:]/gu, "-")}--`;
+}
+
+/** The session header, the first line of every pi session file. */
+interface PiHeader {
+  sessionId: string;
+  startedAt: string | null;
+  cwd: string | null;
+}
+
+function piHeader(head: string): PiHeader | null {
+  for (const line of head.split("\n")) {
+    const row = parseJsonLine(line);
+    if (row === null) continue;
+    if (row.type !== "session") return null;
+    const sessionId = textField(row, "id");
+    if (sessionId === null) return null;
+    return { sessionId, startedAt: textField(row, "timestamp"), cwd: textField(row, "cwd") };
+  }
+  return null;
+}
+
+function piToolTurns(content: JsonValue | undefined, at: string | null): SessionTurn[] {
+  if (!Array.isArray(content)) return [];
+  const out: SessionTurn[] = [];
+  for (const item of content) {
+    if (!isObject(item) || item.type !== "toolCall") continue;
+    out.push({
+      kind: "tool",
+      role: null,
+      text: summarise(item.arguments),
+      tool: { name: textField(item, "name") ?? "tool", outcome: "unknown" },
+      at,
+      sidechain: false,
+    });
+  }
+  return out;
+}
+
+function piMessageTurns(message: JsonObject, at: string | null): SessionTurn[] {
+  switch (message.role) {
+    case "user": {
+      const text = textFromContent(message.content);
+      return text.length === 0 ? [] : [{ kind: "turn", role: "user", text, tool: null, at, sidechain: false }];
+    }
+    case "assistant": {
+      const text = textFromContent(message.content);
+      const said: SessionTurn[] = text.length === 0
+        ? []
+        : [{ kind: "turn", role: "assistant", text, tool: null, at, sidechain: false }];
+      return [...said, ...piToolTurns(message.content, at)];
+    }
+    case "toolResult":
+      return [{
+        kind: "tool",
+        role: null,
+        text: summarise(message.content),
+        tool: { name: "result", outcome: message.isError === true ? "error" : "ok" },
+        at,
+        sidechain: false,
+      }];
+    default:
+      return [];
+  }
+}
+
+export const piAdapter: TranscriptAdapter = {
+  harness: "pi",
+
+  async locate(pane, reader) {
+    const { dir } = piAgentDir(pane.env);
+    const sessionDir = join(dir, "sessions", piEncodedCwd(pane.cwd));
+    const listed = await reader.list(sessionDir);
+    if (listed.isErr()) return Result.err(listed.error);
+    if (listed.value === null) return Result.ok([]);
+    if (listed.value.length > MAX_PI_SESSION_FILES) {
+      return Result.err(unreadable("list bounded", `${listed.value.length} session files exceeds ${MAX_PI_SESSION_FILES}`));
+    }
+    const candidates: SessionCandidate[] = [];
+    for (const name of listed.value) {
+      if (!name.endsWith(".jsonl")) continue;
+      const path = join(sessionDir, name);
+      const sized = await reader.size(path);
+      if (sized.isErr()) return Result.err(sized.error);
+      const head = await reader.slice(path, 0, Math.min(HEAD_BYTES, sized.value));
+      if (head.isErr()) return Result.err(head.error);
+      // A file without a session header is not a pi session and is skipped.
+      const header = piHeader(head.value);
+      if (header === null) continue;
+      // Two working directories can fold to one name; the header decides.
+      if (header.cwd !== null && header.cwd !== pane.cwd) continue;
+      candidates.push({
+        sessionId: header.sessionId,
+        path,
+        startedAt: header.startedAt,
+        sizeBytes: sized.value,
+        cwd: header.cwd,
+        firstUserText: firstUserTextOf(piAdapter, head.value),
+      });
+    }
+    return Result.ok(candidates);
+  },
+
+  identify(head) {
+    const header = piHeader(head);
+    return header === null ? { startedAt: null, cwd: null } : { startedAt: header.startedAt, cwd: header.cwd };
+  },
+
+  parse(line) {
+    const row = parseJsonLine(line);
+    if (row === null || row.type !== "message") return [];
+    const message = objectField(row, "message");
+    return message === null ? [] : piMessageTurns(message, textField(row, "timestamp"));
+  },
+};
+
+/** Top-level sessions one OpenCode working directory may hold before the listing is refused. */
+export const MAX_OPENCODE_SESSIONS = 1_000;
+/** Part rows read per query while paging a session. */
+export const OPENCODE_PAGE_ROWS = 200;
+/** Part rows one window read may touch in total. */
+export const MAX_OPENCODE_WINDOW_ROWS = 4_000;
+const OPENCODE_DATABASE = "opencode.db";
+/** Separates the database path from the session id in a candidate's `path`. */
+const OPENCODE_SESSION_SEPARATOR = "#";
+
+/**
+ * XDG_DATA_HOME decides where OpenCode keeps its data, the way
+ * CLAUDE_CONFIG_DIR does for claude. Its sessions live in one SQLite database.
+ */
+export function opencodeDataDir(env: Readonly<Record<string, string | undefined>>): ConfigDirectory {
+  const configured = env.XDG_DATA_HOME;
+  if (configured !== undefined && configured.trim().length > 0) {
+    return { dir: join(configured, "opencode"), fromEnvironment: true };
+  }
+  return { dir: join(homedir(), ".local", "share", "opencode"), fromEnvironment: false };
+}
+
+/** One OpenCode session: the database that holds it and its id. */
+export interface OpencodeSessionRef {
+  databasePath: string;
+  sessionId: string;
+}
+
+/**
+ * A session has no file of its own, so its stored `path` names the database
+ * and the session together. `parseOpencodeSessionPath` is the only reader.
+ */
+export function opencodeSessionPath(ref: OpencodeSessionRef): string {
+  return `${ref.databasePath}${OPENCODE_SESSION_SEPARATOR}${ref.sessionId}`;
+}
+
+export function parseOpencodeSessionPath(path: string): Result<OpencodeSessionRef, TranscriptUnreadable> {
+  const at = path.lastIndexOf(OPENCODE_SESSION_SEPARATOR);
+  const databasePath = at < 0 ? "" : path.slice(0, at);
+  const sessionId = at < 0 ? "" : path.slice(at + 1);
+  if (!databasePath.endsWith(OPENCODE_DATABASE) || sessionId.length === 0) {
+    return Result.err(unreadable("path invalid", `${path} does not name an OpenCode session`));
+  }
+  return Result.ok({ databasePath, sessionId });
+}
+
+/** Opens the database read-only for one body. Open and query failures are "could not look". */
+function withOpencodeDatabase<T>(path: string, body: (db: Database) => T): Result<T, TranscriptUnreadable> {
+  return Result.try({
+    try: () => {
+      const db = new Database(path, { readonly: true, strict: true });
+      try {
+        return body(db);
+      } finally {
+        db.close();
+      }
+    },
+    catch: (cause) => unreadable("database read failed", `${path} (${String(cause)})`),
+  });
+}
+
+function opencodeAt(milliseconds: number): string | null {
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function opencodePartTurns(role: string | null, at: string | null, part: JsonObject): SessionTurn[] {
+  switch (part.type) {
+    case "text": {
+      // Synthetic parts are text the harness added, not what was said.
+      if (part.synthetic === true) return [];
+      const text = (textField(part, "text") ?? "").trim();
+      const speaker = role === "user" ? "user" : role === "assistant" ? "assistant" : null;
+      if (text.length === 0 || speaker === null) return [];
+      return [{ kind: "turn", role: speaker, text, tool: null, at, sidechain: false }];
+    }
+    case "tool": {
+      const state = objectField(part, "state");
+      const status = state === null ? null : textField(state, "status");
+      const outcome = status === "completed" ? "ok" : status === "error" ? "error" : "unknown";
+      return [{
+        kind: "tool",
+        role: null,
+        text: summarise(state?.input),
+        tool: { name: textField(part, "tool") ?? "tool", outcome },
+        at,
+        sidechain: false,
+      }];
+    }
+    default:
+      return [];
+  }
+}
+
+interface OpencodeSessionRow {
+  id: string;
+  time_created: number;
+  size_bytes: number;
+}
+
+function opencodeFirstUserText(db: Database, sessionId: string): string | null {
+  const row = db
+    .query<{ text: string | null }, { sessionId: string }>(
+      `SELECT json_extract(p.data, '$.text') AS text
+         FROM part p JOIN message m ON m.id = p.message_id
+        WHERE p.session_id = $sessionId
+          AND json_extract(m.data, '$.role') = 'user'
+          AND json_extract(p.data, '$.type') = 'text'
+          AND COALESCE(json_extract(p.data, '$.synthetic'), 0) = 0
+        ORDER BY p.rowid
+        LIMIT 1`,
+    )
+    .get({ sessionId });
+  return row === null || row.text === null ? null : row.text.trim();
+}
+
+function opencodeCandidates(
+  db: Database,
+  databasePath: string,
+  cwd: string,
+): Result<SessionCandidate[], TranscriptUnreadable> {
+  const rows = db
+    .query<OpencodeSessionRow, { cwd: string; limit: number }>(
+      `SELECT s.id, s.time_created,
+              (SELECT COALESCE(SUM(LENGTH(p.data)), 0) FROM part p WHERE p.session_id = s.id) AS size_bytes
+         FROM session s
+        WHERE s.directory = $cwd AND s.parent_id IS NULL
+        ORDER BY s.time_created DESC
+        LIMIT $limit`,
+    )
+    .all({ cwd, limit: MAX_OPENCODE_SESSIONS + 1 });
+  if (rows.length > MAX_OPENCODE_SESSIONS) {
+    return Result.err(unreadable("list bounded", `more than ${MAX_OPENCODE_SESSIONS} sessions for ${cwd}`));
+  }
+  return Result.ok(rows.map((row) => ({
+    sessionId: row.id,
+    path: opencodeSessionPath({ databasePath, sessionId: row.id }),
+    startedAt: opencodeAt(row.time_created),
+    sizeBytes: row.size_bytes,
+    cwd,
+    firstUserText: opencodeFirstUserText(db, row.id),
+  })));
+}
+
+interface OpencodePartRow {
+  seq: number;
+  time_created: number;
+  role: string | null;
+  data: string;
+}
+
+function opencodePartRows(db: Database, sessionId: string, before: number): OpencodePartRow[] {
+  return db
+    .query<OpencodePartRow, { sessionId: string; before: number; limit: number }>(
+      `SELECT p.rowid AS seq, p.time_created, json_extract(m.data, '$.role') AS role, p.data
+         FROM part p JOIN message m ON m.id = p.message_id
+        WHERE p.session_id = $sessionId AND p.rowid < $before
+        ORDER BY p.rowid DESC
+        LIMIT $limit`,
+    )
+    .all({ sessionId, before, limit: OPENCODE_PAGE_ROWS });
+}
+
+function opencodeRowTurns(row: OpencodePartRow): SessionTurn[] {
+  const part = parseJsonLine(row.data);
+  return part === null ? [] : opencodePartTurns(row.role, opencodeAt(row.time_created), part);
+}
+
+/**
+ * Turns newest first, whole part rows only, until `limit` turns or the row
+ * bound. The cursor is the part rowid, which never changes for a stored part.
+ */
+function opencodePage(db: Database, sessionId: string, before: number | null, limit: number): SessionWindow {
+  const picked: SessionTurn[][] = [];
+  let counted = 0;
+  let cursor = before ?? Number.MAX_SAFE_INTEGER;
+  let rowsRead = 0;
+  let bytesRead = 0;
+  scan: while (rowsRead < MAX_OPENCODE_WINDOW_ROWS) {
+    const rows = opencodePartRows(db, sessionId, cursor);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      const turns = opencodeRowTurns(row);
+      if (turns.length > 0 && counted > 0 && counted + turns.length > limit) break scan;
+      rowsRead += 1;
+      bytesRead += row.data.length;
+      cursor = row.seq;
+      if (turns.length === 0) continue;
+      picked.unshift(turns);
+      counted += turns.length;
+      if (counted >= limit) break scan;
+    }
+  }
+  const older = db
+    .query<{ one: number }, { sessionId: string; cursor: number }>(
+      `SELECT 1 AS one FROM part WHERE session_id = $sessionId AND rowid < $cursor LIMIT 1`,
+    )
+    .get({ sessionId, cursor });
+  return { turns: picked.flat(), nextBefore: older === null ? null : cursor, bytesRead };
+}
+
+export const opencodeAdapter: TranscriptAdapter = {
+  harness: "opencode",
+
+  async locate(pane, reader) {
+    const { dir } = opencodeDataDir(pane.env);
+    const listed = await reader.list(dir);
+    if (listed.isErr()) return Result.err(listed.error);
+    if (listed.value === null || !listed.value.includes(OPENCODE_DATABASE)) return Result.ok([]);
+    const databasePath = join(dir, OPENCODE_DATABASE);
+    const found = withOpencodeDatabase(databasePath, (db) => opencodeCandidates(db, databasePath, pane.cwd));
+    return found.isErr() ? Result.err(found.error) : found.value;
+  },
+
+  identify(head) {
+    for (const line of head.split("\n")) {
+      const row = parseJsonLine(line);
+      if (row === null) continue;
+      return { startedAt: textField(row, "at"), cwd: null };
+    }
+    return { startedAt: null, cwd: null };
+  },
+
+  /** One line is `{"role", "at", "part"}`: a part row joined with its message role. */
+  parse(line) {
+    const row = parseJsonLine(line);
+    if (row === null) return [];
+    const part = objectField(row, "part");
+    return part === null ? [] : opencodePartTurns(textField(row, "role"), textField(row, "at"), part);
+  },
+
+  async readSession(path, reader, options) {
+    const ref = parseOpencodeSessionPath(path);
+    if (ref.isErr()) return Result.err(ref.error);
+    const sized = await reader.size(ref.value.databasePath);
+    if (sized.isErr()) return Result.err(sized.error);
+    return withOpencodeDatabase(ref.value.databasePath, (db) =>
+      opencodePage(db, ref.value.sessionId, options.before, options.limit));
+  },
+};
+
 async function codexDayDirs(
   root: string,
   reader: WindowReader,
@@ -679,7 +1070,7 @@ function firstUserTextOf(adapter: TranscriptAdapter, head: string): string | nul
   return null;
 }
 
-const ADAPTERS: readonly TranscriptAdapter[] = [claudeAdapter, codexAdapter, grokAdapter];
+const ADAPTERS: readonly TranscriptAdapter[] = [claudeAdapter, codexAdapter, grokAdapter, piAdapter, opencodeAdapter];
 
 export function adapterFor(harness: string | null): Result<TranscriptAdapter, TranscriptUnsupported> {
   const found = ADAPTERS.find((adapter) => adapter.harness === harness);
@@ -729,7 +1120,10 @@ export function chooseSession(
 
 export interface SessionWindow {
   turns: SessionTurn[];
-  /** Byte offset to page backward from, or null at the start of the file. */
+  /**
+   * Where to page backward from, or null at the start of the session: a byte
+   * offset for a file-based adapter, the adapter's own cursor for `readSession`.
+   */
   nextBefore: number | null;
   bytesRead: number;
 }
@@ -838,6 +1232,7 @@ export async function readWindow(
   reader: WindowReader,
   options: { before: number | null; limit: number },
 ): Promise<Result<SessionWindow, TranscriptUnreadable>> {
+  if (adapter.readSession !== undefined) return adapter.readSession(path, reader, options);
   const sized = await reader.size(path);
   if (sized.isErr()) return Result.err(sized.error);
   const end = Math.min(options.before ?? sized.value, sized.value);
