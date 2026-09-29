@@ -21,6 +21,7 @@ import {
   claudeConfigDir,
   codexAdapter,
   codexHome,
+  codexSessionId,
   grokAdapter,
   grokEncodedCwd,
   grokHome,
@@ -200,8 +201,8 @@ describe("locating a session", () => {
         source: { subagent: false },
       },
     });
-    const path = "/Users/demo/.codex/sessions/2026/08/19/rollout-2026-08-19T08-00-00-9f2.jsonl";
-    const other = "/Users/demo/.codex/sessions/2026/08/19/rollout-2026-08-19T09-00-00-aa1.jsonl";
+    const path = "/Users/demo/.codex/sessions/2026/08/19/rollout-2026-08-19T08-00-00-01a0a001-0000-7000-8000-000000009f20.jsonl";
+    const other = "/Users/demo/.codex/sessions/2026/08/19/rollout-2026-08-19T09-00-00-01a0a001-0000-7000-8000-00000000aa10.jsonl";
     const reader = countingReader({
       [path]: transcript([meta]),
       [other]: transcript([
@@ -748,7 +749,7 @@ describe("the session endpoint", () => {
         claudeLine("user", "start the work", "2026-08-19T08:00:00.000Z"),
         claudeLine("assistant", "Starting now.", "2026-08-19T08:00:01.000Z"),
       ]),
-      [`${codexDir}/rollout-2026-08-19T09-00-00-9f2.jsonl`]: transcript([
+      [`${codexDir}/rollout-2026-08-19T09-00-00-01a0a001-0000-7000-8000-000000009f20.jsonl`]: transcript([
         JSON.stringify({
           type: "session_meta",
           payload: { session_id: "9f2", cwd: CWD, timestamp: "2026-08-19T09:00:00.000Z" },
@@ -1020,7 +1021,7 @@ describe("session mapping selection", () => {
       [`${claudeDir}/claude-session.jsonl`]: transcript([
         claudeLine("user", "Claude session", "2026-08-19T08:00:00.000Z"),
       ]),
-      [`${codexDir}/rollout-2026-08-19T09-00-00-codex.jsonl`]: transcript([
+      [`${codexDir}/rollout-2026-08-19T09-00-00-01a0a001-0000-7000-8000-00000000c0de.jsonl`]: transcript([
         JSON.stringify({
           type: "session_meta",
           payload: { session_id: "codex", cwd: CWD, timestamp: "2026-08-19T09:00:00.000Z" },
@@ -1031,7 +1032,7 @@ describe("session mapping selection", () => {
           payload: { type: "message", role: "assistant", content: [{ type: "text", text: "Codex session." }] },
         }),
       ]),
-      [`${codexDir}/rollout-2026-08-19T09-01-00-second.jsonl`]: transcript([
+      [`${codexDir}/rollout-2026-08-19T09-01-00-01a0a001-0000-7000-8000-000000000002.jsonl`]: transcript([
         JSON.stringify({
           type: "session_meta",
           payload: { session_id: "second", cwd: CWD, timestamp: "2026-08-19T09:01:00.000Z" },
@@ -1055,18 +1056,18 @@ describe("session mapping selection", () => {
 
     const selected = await hub.post(
       "/api/herdr/agents/w1:p1/session/select",
-      { sessionId: "2026-08-19T09-00-00-codex" },
+      { sessionId: "01a0a001-0000-7000-8000-00000000c0de" },
       operator,
     );
     expect(selected.status).toBe(200);
     expect(await sessionSelection(selected)).toEqual({
       state: "ready",
-      sessionId: "2026-08-19T09-00-00-codex",
+      sessionId: "01a0a001-0000-7000-8000-00000000c0de",
     });
     expect(hub.hub.store.findSessionMapping("term-1")).toMatchObject({
       harness: "codex",
-      session_id: "2026-08-19T09-00-00-codex",
-      session_path: `${codexDir}/rollout-2026-08-19T09-00-00-codex.jsonl`,
+      session_id: "01a0a001-0000-7000-8000-00000000c0de",
+      session_path: `${codexDir}/rollout-2026-08-19T09-00-00-01a0a001-0000-7000-8000-00000000c0de.jsonl`,
       confidence: "exact",
     });
 
@@ -1075,7 +1076,7 @@ describe("session mapping selection", () => {
     );
     expect(next.source.state).toBe("ready");
     expect(next.source.harness).toBe("codex");
-    expect(next.source.sessionPath).toBe(`${codexDir}/rollout-2026-08-19T09-00-00-codex.jsonl`);
+    expect(next.source.sessionPath).toBe(`${codexDir}/rollout-2026-08-19T09-00-00-01a0a001-0000-7000-8000-00000000c0de.jsonl`);
     expect(next.mapping).toEqual({ confidence: "exact", candidates: [] });
     expect(texts(next.turns)).toEqual(["Codex session."]);
   });
@@ -1108,5 +1109,68 @@ describe("session mapping selection", () => {
     expect(response.status).toBe(400);
     expect((await refusedSession(response)).error).toContain("more than one");
     expect(hub.hub.store.findSessionMapping("term-1")).toBeNull();
+  });
+});
+
+describe("codex session files as current Codex writes them", () => {
+  const ID = "01a0ecc7-8f86-7b32-8dab-960741609479";
+  const DAY = "/Users/demo/.codex/sessions/2026/09/29";
+  const NAME = `rollout-2026-09-29T12-48-16-${ID}.jsonl`;
+
+  function injected(text: string): string {
+    return JSON.stringify({
+      type: "response_item",
+      timestamp: "2026-09-29T10:48:20.000Z",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+    });
+  }
+
+  test("the session id is the UUID in the file name", () => {
+    expect(codexSessionId(NAME)).toBe(ID);
+    expect(codexSessionId("rollout-2026-09-29T12-48-16-9f2.jsonl")).toBeNull();
+  });
+
+  test("reads a session record longer than 16 KB and skips injected context", async () => {
+    const meta = JSON.stringify({
+      type: "session_meta",
+      payload: { id: ID, cwd: CWD, timestamp: "2026-09-29T10:48:16.539Z", base_instructions: "x".repeat(18_000) },
+    });
+    const reader = countingReader({
+      [`${DAY}/${NAME}`]: transcript([
+        meta,
+        injected("# AGENTS.md instructions\n\n<INSTRUCTIONS>rules</INSTRUCTIONS>"),
+        injected(`<environment_context>\n  <cwd>${CWD}</cwd>\n</environment_context>`),
+        injected("You are worker. Reply OK."),
+      ]),
+    });
+
+    const located = await codexAdapter.locate({ cwd: CWD, env: { CODEX_HOME: "/Users/demo/.codex" } }, reader);
+
+    expect(located.unwrap("locate")).toEqual([
+      expect.objectContaining({
+        sessionId: ID,
+        startedAt: "2026-09-29T10:48:16.539Z",
+        cwd: CWD,
+        firstUserText: "You are worker. Reply OK.",
+      }),
+    ]);
+  });
+});
+
+describe("an inferred mapping", () => {
+  test("lists its one candidate, so the operator can confirm it", () => {
+    const only: SessionCandidate = {
+      sessionId: "only",
+      path: "/sessions/only.jsonl",
+      startedAt: "2099-01-01T00:00:00.000Z",
+      sizeBytes: 10,
+      cwd: CWD,
+      firstUserText: "Start the work.",
+    };
+    expect(chooseSession([only], { handle: "worker", startedAt: "2026-01-01T00:00:00.000Z" })).toEqual({
+      confidence: "inferred",
+      chosen: only,
+      candidates: [only],
+    });
   });
 });

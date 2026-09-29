@@ -354,6 +354,26 @@ export function codexHome(env: Readonly<Record<string, string | undefined>>): Co
   return { dir: join(homedir(), ".codex"), fromEnvironment: false };
 }
 
+/**
+ * Codex starts a session file with an 18 KB session record and about 65 KB of
+ * injected instructions and context before the first real prompt. Its head
+ * window is larger than HEAD_BYTES so both are in it.
+ */
+export const CODEX_HEAD_BYTES = 262_144;
+
+const CODEX_SESSION_FILE = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u;
+
+/** The session UUID in a rollout file name, which `codex resume <id>` accepts. */
+export function codexSessionId(fileName: string): string | null {
+  return CODEX_SESSION_FILE.exec(fileName)?.[1] ?? null;
+}
+
+/** Codex sends these as user messages; they are harness context, not the session. */
+function codexInjectedText(text: string): boolean {
+  return text.startsWith("# AGENTS.md instructions") ||
+    /^<(environment_context|user_instructions|permissions instructions)[\s>]/u.test(text);
+}
+
 export const codexAdapter: TranscriptAdapter = {
   harness: "codex",
 
@@ -369,18 +389,19 @@ export const codexAdapter: TranscriptAdapter = {
       if (listed.isErr()) return Result.err(listed.error);
       if (listed.value === null) continue;
       for (const name of listed.value) {
-        if (!name.startsWith("rollout-") || !name.endsWith(".jsonl")) continue;
+        const sessionId = codexSessionId(name);
+        if (sessionId === null) continue;
         const path = join(dayDir, name);
         const sized = await reader.size(path);
         if (sized.isErr()) return Result.err(sized.error);
-        const head = await reader.slice(path, 0, Math.min(HEAD_BYTES, sized.value));
+        const head = await reader.slice(path, 0, Math.min(CODEX_HEAD_BYTES, sized.value));
         if (head.isErr()) return Result.err(head.error);
         const identity = codexAdapter.identify(head.value);
         // The recorded cwd is the only honest filter: one day directory holds
         // every workspace's sessions.
         if (identity.cwd !== null && identity.cwd !== pane.cwd) continue;
         candidates.push({
-          sessionId: name.replace(/^rollout-/u, "").replace(/\.jsonl$/u, ""),
+          sessionId,
           path,
           startedAt: identity.startedAt,
           sizeBytes: sized.value,
@@ -421,7 +442,7 @@ export const codexAdapter: TranscriptAdapter = {
         // `developer` and system roles are harness scaffolding, not the session.
         if (role === null) return [];
         const text = textFromContent(payload.content);
-        if (text.length === 0) return [];
+        if (text.length === 0 || codexInjectedText(text)) return [];
         return [{ kind: "turn", role, text, tool: null, at, sidechain: false }];
       }
       case "function_call":
@@ -807,7 +828,8 @@ const OPENCODE_SESSION_SEPARATOR = "#";
 
 /**
  * XDG_DATA_HOME decides where OpenCode keeps its data, the way
- * CLAUDE_CONFIG_DIR does for claude. Its sessions live in one SQLite database.
+ * CLAUDE_CONFIG_DIR does for claude. Its sessions live in a SQLite database,
+ * in JSON files under `storage/`, or in both, depending on the build.
  */
 export function opencodeDataDir(env: Readonly<Record<string, string | undefined>>): ConfigDirectory {
   const configured = env.XDG_DATA_HOME;
@@ -817,43 +839,73 @@ export function opencodeDataDir(env: Readonly<Record<string, string | undefined>
   return { dir: join(homedir(), ".local", "share", "opencode"), fromEnvironment: false };
 }
 
-/** One OpenCode session: the database that holds it and its id. */
-export interface OpencodeSessionRef {
-  databasePath: string;
-  sessionId: string;
-}
+/** Top-level project directories under OpenCode's JSON session storage. */
+export const MAX_OPENCODE_PROJECT_DIRS = 1_024;
+/** Session files read across all project directories for one listing. */
+export const MAX_OPENCODE_STORAGE_SESSIONS = 4_096;
+/** Message files one stored session may hold before a read is refused. */
+export const MAX_OPENCODE_STORAGE_MESSAGES = 10_000;
+/** Messages read, oldest first, to find a stored session's first user text. */
+export const MAX_OPENCODE_FIRST_TEXT_MESSAGES = 50;
+/** Part files one message may hold before a read is refused. */
+export const MAX_OPENCODE_PARTS_PER_MESSAGE = 1_000;
+/** Bytes one JSON record may hold. Session, message, and part records are small. */
+export const MAX_OPENCODE_RECORD_BYTES = 4_194_304;
+const OPENCODE_STORAGE = "storage";
+const OPENCODE_JSON = ".json";
 
 /**
- * A session has no file of its own, so its stored `path` names the database
- * and the session together. `parseOpencodeSessionPath` is the only reader.
+ * Where one OpenCode session is stored. OpenCode 1.1 writes JSON files under
+ * `storage/`; older and newer builds write the SQLite database. Both can exist.
  */
-export function opencodeSessionPath(ref: OpencodeSessionRef): string {
-  return `${ref.databasePath}${OPENCODE_SESSION_SEPARATOR}${ref.sessionId}`;
+export type OpencodeSessionLocation =
+  | { kind: "database"; databasePath: string; sessionId: string }
+  | { kind: "storage"; sessionFile: string; sessionId: string };
+
+/**
+ * The stored `path` of a candidate. A database session has no file of its own,
+ * so it is `<database>#<session id>`; a JSON storage session is its session
+ * file. `parseOpencodeSessionPath` is the only reader of this form.
+ */
+export function opencodeSessionPath(location: OpencodeSessionLocation): string {
+  switch (location.kind) {
+    case "database":
+      return `${location.databasePath}${OPENCODE_SESSION_SEPARATOR}${location.sessionId}`;
+    case "storage":
+      return location.sessionFile;
+  }
 }
 
-export function parseOpencodeSessionPath(path: string): Result<OpencodeSessionRef, TranscriptUnreadable> {
+export function parseOpencodeSessionPath(path: string): Result<OpencodeSessionLocation, TranscriptUnreadable> {
   const at = path.lastIndexOf(OPENCODE_SESSION_SEPARATOR);
-  const databasePath = at < 0 ? "" : path.slice(0, at);
-  const sessionId = at < 0 ? "" : path.slice(at + 1);
-  if (!databasePath.endsWith(OPENCODE_DATABASE) || sessionId.length === 0) {
-    return Result.err(unreadable("path invalid", `${path} does not name an OpenCode session`));
+  if (at >= 0 && path.slice(0, at).endsWith(OPENCODE_DATABASE) && at + 1 < path.length) {
+    return Result.ok({ kind: "database", databasePath: path.slice(0, at), sessionId: path.slice(at + 1) });
   }
-  return Result.ok({ databasePath, sessionId });
+  const segments = path.split("/");
+  const name = segments.at(-1) ?? "";
+  // storage/session/<project>/<session>.json
+  if (segments.at(-3) === "session" && segments.at(-4) === OPENCODE_STORAGE && name.endsWith(OPENCODE_JSON)) {
+    const sessionId = name.slice(0, -OPENCODE_JSON.length);
+    if (sessionId.length > 0) return Result.ok({ kind: "storage", sessionFile: path, sessionId });
+  }
+  return Result.err(unreadable("path invalid", `${path} does not name an OpenCode session`));
 }
 
 /** Opens the database read-only for one body. Open and query failures are "could not look". */
 function withOpencodeDatabase<T>(path: string, body: (db: Database) => T): Result<T, TranscriptUnreadable> {
-  return Result.try({
-    try: () => {
-      const db = new Database(path, { readonly: true, strict: true });
-      try {
-        return body(db);
-      } finally {
-        db.close();
-      }
-    },
-    catch: (cause) => unreadable("database read failed", `${path} (${String(cause)})`),
-  });
+  let db: Database;
+  try {
+    db = new Database(path, { readonly: true, strict: true });
+  } catch (cause) {
+    return Result.err(unreadable("database read failed", `${path} (${String(cause)})`));
+  }
+  try {
+    return Result.ok(body(db));
+  } catch (cause) {
+    return Result.err(unreadable("database read failed", `${path} (${String(cause)})`));
+  } finally {
+    db.close();
+  }
 }
 
 function opencodeAt(milliseconds: number): string | null {
@@ -892,7 +944,14 @@ function opencodePartTurns(role: string | null, at: string | null, part: JsonObj
 interface OpencodeSessionRow {
   id: string;
   time_created: number;
+  time_updated: number;
   size_bytes: number;
+}
+
+/** One candidate and when its store last changed it, for choosing between two stores. */
+interface OpencodeFound {
+  candidate: SessionCandidate;
+  updatedMs: number;
 }
 
 function opencodeFirstUserText(db: Database, sessionId: string): string | null {
@@ -915,10 +974,10 @@ function opencodeCandidates(
   db: Database,
   databasePath: string,
   cwd: string,
-): Result<SessionCandidate[], TranscriptUnreadable> {
+): Result<OpencodeFound[], TranscriptUnreadable> {
   const rows = db
     .query<OpencodeSessionRow, { cwd: string; limit: number }>(
-      `SELECT s.id, s.time_created,
+      `SELECT s.id, s.time_created, s.time_updated,
               (SELECT COALESCE(SUM(LENGTH(p.data)), 0) FROM part p WHERE p.session_id = s.id) AS size_bytes
          FROM session s
         WHERE s.directory = $cwd AND s.parent_id IS NULL
@@ -930,12 +989,15 @@ function opencodeCandidates(
     return Result.err(unreadable("list bounded", `more than ${MAX_OPENCODE_SESSIONS} sessions for ${cwd}`));
   }
   return Result.ok(rows.map((row) => ({
-    sessionId: row.id,
-    path: opencodeSessionPath({ databasePath, sessionId: row.id }),
-    startedAt: opencodeAt(row.time_created),
-    sizeBytes: row.size_bytes,
-    cwd,
-    firstUserText: opencodeFirstUserText(db, row.id),
+    updatedMs: row.time_updated,
+    candidate: {
+      sessionId: row.id,
+      path: opencodeSessionPath({ kind: "database", databasePath, sessionId: row.id }),
+      startedAt: opencodeAt(row.time_created),
+      sizeBytes: row.size_bytes,
+      cwd,
+      firstUserText: opencodeFirstUserText(db, row.id),
+    },
   })));
 }
 
@@ -996,6 +1058,219 @@ function opencodePage(db: Database, sessionId: string, before: number | null, li
   return { turns: picked.flat(), nextBefore: older === null ? null : cursor, bytesRead };
 }
 
+
+/** A JSON record decoded at its boundary. A file that is not a JSON object reads as null, a skip. */
+async function readOpencodeRecord(
+  reader: WindowReader,
+  path: string,
+): Promise<Result<{ record: JsonObject | null; bytes: number }, TranscriptUnreadable>> {
+  const sized = await reader.size(path);
+  if (sized.isErr()) return Result.err(sized.error);
+  if (sized.value > MAX_OPENCODE_RECORD_BYTES) {
+    return Result.err(unreadable("record bounded", `${path} is ${sized.value} bytes, over ${MAX_OPENCODE_RECORD_BYTES}`));
+  }
+  const body = await reader.slice(path, 0, sized.value);
+  if (body.isErr()) return Result.err(body.error);
+  const parsed = Result.try({ try: (): JsonValue => JSON.parse(body.value), catch: () => null });
+  const record = parsed.isErr() ? null : decodeObject(parsed.value).unwrapOr(null);
+  return Result.ok({ record, bytes: sized.value });
+}
+
+/** File names of one storage directory in id order, which OpenCode makes time order. */
+async function opencodeStorageNames(
+  reader: WindowReader,
+  dir: string,
+  bound: number,
+): Promise<Result<string[], TranscriptUnreadable>> {
+  const listed = await reader.list(dir);
+  if (listed.isErr()) return Result.err(listed.error);
+  if (listed.value === null) return Result.ok([]);
+  const names = listed.value.filter((name) => name.endsWith(OPENCODE_JSON)).sort();
+  if (names.length > bound) {
+    return Result.err(unreadable("list bounded", `${dir} holds ${names.length} records, over ${bound}`));
+  }
+  return Result.ok(names);
+}
+
+function recordMilliseconds(record: JsonObject, field: "created" | "updated"): number | null {
+  const time = objectField(record, "time");
+  const value = time === null ? undefined : time[field];
+  // A JSON number decodes to itself; any other value decodes to NaN here.
+  const milliseconds = value === undefined || value === null || isObject(value) || Array.isArray(value) || isString(value)
+    ? Number.NaN
+    : Number(value);
+  return Number.isFinite(milliseconds) && value !== true && value !== false ? milliseconds : null;
+}
+
+/** One stored message and its parts, in part id order. */
+interface OpencodeStoredMessage {
+  role: string | null;
+  at: string | null;
+  parts: JsonObject[];
+  bytes: number;
+}
+
+async function readOpencodeMessage(
+  reader: WindowReader,
+  storage: string,
+  sessionId: string,
+  messageFile: string,
+): Promise<Result<OpencodeStoredMessage, TranscriptUnreadable>> {
+  const message = await readOpencodeRecord(reader, join(storage, "message", sessionId, messageFile));
+  if (message.isErr()) return Result.err(message.error);
+  const messageId = messageFile.slice(0, -OPENCODE_JSON.length);
+  const partNames = await opencodeStorageNames(reader, join(storage, "part", messageId), MAX_OPENCODE_PARTS_PER_MESSAGE);
+  if (partNames.isErr()) return Result.err(partNames.error);
+  const parts: JsonObject[] = [];
+  let bytes = message.value.bytes;
+  for (const name of partNames.value) {
+    const part = await readOpencodeRecord(reader, join(storage, "part", messageId, name));
+    if (part.isErr()) return Result.err(part.error);
+    bytes += part.value.bytes;
+    if (part.value.record !== null) parts.push(part.value.record);
+  }
+  const record = message.value.record;
+  const created = record === null ? null : recordMilliseconds(record, "created");
+  return Result.ok({
+    role: record === null ? null : textField(record, "role"),
+    at: created === null ? null : opencodeAt(created),
+    parts,
+    bytes,
+  });
+}
+
+function storedMessageTurns(message: OpencodeStoredMessage): SessionTurn[] {
+  return message.parts.flatMap((part) => opencodePartTurns(message.role, message.at, part));
+}
+
+/** The first text of the earliest user message, within MAX_OPENCODE_FIRST_TEXT_MESSAGES messages. */
+async function opencodeStoredFirstUserText(
+  reader: WindowReader,
+  storage: string,
+  sessionId: string,
+): Promise<Result<string | null, TranscriptUnreadable>> {
+  const names = await opencodeStorageNames(reader, join(storage, "message", sessionId), MAX_OPENCODE_STORAGE_MESSAGES);
+  if (names.isErr()) return Result.err(names.error);
+  for (const name of names.value.slice(0, MAX_OPENCODE_FIRST_TEXT_MESSAGES)) {
+    const message = await readOpencodeMessage(reader, storage, sessionId, name);
+    if (message.isErr()) return Result.err(message.error);
+    if (message.value.role !== "user") continue;
+    const said = storedMessageTurns(message.value).find((turn) => turn.kind === "turn");
+    if (said !== undefined) return Result.ok(said.text);
+  }
+  return Result.ok(null);
+}
+
+/** One stored session record as a candidate, or null when it is another cwd's or a sub-agent's. */
+async function opencodeStoredCandidate(
+  reader: WindowReader,
+  storage: string,
+  sessionFile: string,
+  cwd: string,
+): Promise<Result<OpencodeFound | null, TranscriptUnreadable>> {
+  const read = await readOpencodeRecord(reader, sessionFile);
+  if (read.isErr()) return Result.err(read.error);
+  const record = read.value.record;
+  if (record === null || textField(record, "directory") !== cwd) return Result.ok(null);
+  // A session with a parent is a sub-agent session inside another session.
+  if (textField(record, "parentID") !== null) return Result.ok(null);
+  const sessionId = textField(record, "id");
+  const created = recordMilliseconds(record, "created");
+  if (sessionId === null) return Result.ok(null);
+  const firstUserText = await opencodeStoredFirstUserText(reader, storage, sessionId);
+  if (firstUserText.isErr()) return Result.err(firstUserText.error);
+  return Result.ok({
+    updatedMs: recordMilliseconds(record, "updated") ?? created ?? 0,
+    candidate: {
+      sessionId,
+      path: opencodeSessionPath({ kind: "storage", sessionFile, sessionId }),
+      startedAt: created === null ? null : opencodeAt(created),
+      // The session record only; its messages are separate files.
+      sizeBytes: read.value.bytes,
+      cwd,
+      firstUserText: firstUserText.value,
+    },
+  });
+}
+
+/** Candidates from JSON storage. A missing storage directory is no sessions. */
+async function opencodeStoredCandidates(
+  reader: WindowReader,
+  storage: string,
+  cwd: string,
+): Promise<Result<OpencodeFound[], TranscriptUnreadable>> {
+  const projectsDir = join(storage, "session");
+  const projects = await reader.list(projectsDir);
+  if (projects.isErr()) return Result.err(projects.error);
+  if (projects.value === null) return Result.ok([]);
+  if (projects.value.length > MAX_OPENCODE_PROJECT_DIRS) {
+    return Result.err(unreadable("list bounded", `${projects.value.length} projects, over ${MAX_OPENCODE_PROJECT_DIRS}`));
+  }
+  const found: OpencodeFound[] = [];
+  let read = 0;
+  for (const project of projects.value) {
+    const names = await opencodeStorageNames(reader, join(projectsDir, project), MAX_OPENCODE_STORAGE_SESSIONS);
+    if (names.isErr()) return Result.err(names.error);
+    read += names.value.length;
+    if (read > MAX_OPENCODE_STORAGE_SESSIONS) {
+      return Result.err(unreadable("list bounded", `more than ${MAX_OPENCODE_STORAGE_SESSIONS} stored sessions`));
+    }
+    for (const name of names.value) {
+      const candidate = await opencodeStoredCandidate(reader, storage, join(projectsDir, project, name), cwd);
+      if (candidate.isErr()) return Result.err(candidate.error);
+      if (candidate.value !== null) found.push(candidate.value);
+    }
+  }
+  return Result.ok(found);
+}
+
+/**
+ * One candidate per session id. When both stores hold the same id, the one
+ * whose record was updated last wins: that is the store the running OpenCode
+ * writes. A tie keeps the JSON storage copy.
+ */
+function mergeOpencodeCandidates(database: readonly OpencodeFound[], storage: readonly OpencodeFound[]): SessionCandidate[] {
+  const byId = new Map<string, OpencodeFound>();
+  for (const found of [...database, ...storage]) {
+    const held = byId.get(found.candidate.sessionId);
+    if (held === undefined || found.updatedMs >= held.updatedMs) byId.set(found.candidate.sessionId, found);
+  }
+  return [...byId.values()].map((found) => found.candidate);
+}
+
+/**
+ * Turns newest first, whole messages only, from JSON storage. The cursor is
+ * the index of the oldest message included, in message id order.
+ */
+async function opencodeStoredPage(
+  reader: WindowReader,
+  location: Extract<OpencodeSessionLocation, { kind: "storage" }>,
+  options: { before: number | null; limit: number },
+): Promise<Result<SessionWindow, TranscriptUnreadable>> {
+  const storage = join(location.sessionFile, "..", "..", "..");
+  const names = await opencodeStorageNames(reader, join(storage, "message", location.sessionId), MAX_OPENCODE_STORAGE_MESSAGES);
+  if (names.isErr()) return Result.err(names.error);
+  const picked: SessionTurn[][] = [];
+  let counted = 0;
+  let bytesRead = 0;
+  let partsRead = 0;
+  let cursor = Math.min(options.before ?? names.value.length, names.value.length);
+  while (cursor > 0 && partsRead < MAX_OPENCODE_WINDOW_ROWS) {
+    const message = await readOpencodeMessage(reader, storage, location.sessionId, names.value[cursor - 1] ?? "");
+    if (message.isErr()) return Result.err(message.error);
+    const turns = storedMessageTurns(message.value);
+    if (turns.length > 0 && counted > 0 && counted + turns.length > options.limit) break;
+    cursor -= 1;
+    bytesRead += message.value.bytes;
+    partsRead += message.value.parts.length;
+    if (turns.length === 0) continue;
+    picked.unshift(turns);
+    counted += turns.length;
+    if (counted >= options.limit) break;
+  }
+  return Result.ok({ turns: picked.flat(), nextBefore: cursor <= 0 ? null : cursor, bytesRead });
+}
+
 export const opencodeAdapter: TranscriptAdapter = {
   harness: "opencode",
 
@@ -1003,10 +1278,17 @@ export const opencodeAdapter: TranscriptAdapter = {
     const { dir } = opencodeDataDir(pane.env);
     const listed = await reader.list(dir);
     if (listed.isErr()) return Result.err(listed.error);
-    if (listed.value === null || !listed.value.includes(OPENCODE_DATABASE)) return Result.ok([]);
+    if (listed.value === null) return Result.ok([]);
     const databasePath = join(dir, OPENCODE_DATABASE);
-    const found = withOpencodeDatabase(databasePath, (db) => opencodeCandidates(db, databasePath, pane.cwd));
-    return found.isErr() ? Result.err(found.error) : found.value;
+    const database = listed.value.includes(OPENCODE_DATABASE)
+      ? withOpencodeDatabase(databasePath, (db) => opencodeCandidates(db, databasePath, pane.cwd)).andThen((found) => found)
+      : Result.ok<OpencodeFound[], TranscriptUnreadable>([]);
+    if (database.isErr()) return Result.err(database.error);
+    const storage = listed.value.includes(OPENCODE_STORAGE)
+      ? await opencodeStoredCandidates(reader, join(dir, OPENCODE_STORAGE), pane.cwd)
+      : Result.ok<OpencodeFound[], TranscriptUnreadable>([]);
+    if (storage.isErr()) return Result.err(storage.error);
+    return Result.ok(mergeOpencodeCandidates(database.value, storage.value));
   },
 
   identify(head) {
@@ -1027,12 +1309,18 @@ export const opencodeAdapter: TranscriptAdapter = {
   },
 
   async readSession(path, reader, options) {
-    const ref = parseOpencodeSessionPath(path);
-    if (ref.isErr()) return Result.err(ref.error);
-    const sized = await reader.size(ref.value.databasePath);
-    if (sized.isErr()) return Result.err(sized.error);
-    return withOpencodeDatabase(ref.value.databasePath, (db) =>
-      opencodePage(db, ref.value.sessionId, options.before, options.limit));
+    const location = parseOpencodeSessionPath(path);
+    if (location.isErr()) return Result.err(location.error);
+    switch (location.value.kind) {
+      case "database": {
+        const { databasePath, sessionId } = location.value;
+        const sized = await reader.size(databasePath);
+        if (sized.isErr()) return Result.err(sized.error);
+        return withOpencodeDatabase(databasePath, (db) => opencodePage(db, sessionId, options.before, options.limit));
+      }
+      case "storage":
+        return opencodeStoredPage(reader, location.value, options);
+    }
   },
 };
 
@@ -1110,8 +1398,11 @@ export function chooseSession(
     : candidates.filter(
         (candidate) => candidate.startedAt !== null && candidate.startedAt >= startedAt,
       );
-  if (fenced.length === 1) {
-    return { confidence: "inferred", chosen: fenced[0] ?? null, candidates: [] };
+  // The one inferred candidate is also listed, so the human can confirm it;
+  // a confirmation stores it as exact, which makes it a resume point.
+  const [inferred] = fenced;
+  if (fenced.length === 1 && inferred !== undefined) {
+    return { confidence: "inferred", chosen: inferred, candidates: [inferred] };
   }
 
   const ambiguous = fenced.length > 1 ? fenced : [...candidates];
