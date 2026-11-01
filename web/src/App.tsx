@@ -54,7 +54,7 @@ import { CommandMenu, CommandMenuTrigger } from "@/components/commands/command-m
 import { CommandDraftProvider } from "@/components/commands/draft-provider"
 import { CommandReturnProvider } from "@/components/commands/command-return-provider"
 import { commandFocus, commandKeyIntent } from "@/commands/navigation-keys"
-import { shellRoutePath, useShellRouter, type ShellRoute, type ShellRouter } from "@/shell-routing"
+import { routeChannelName, shellRoutePath, useShellRouter, type ShellRoute, type ShellRouter } from "@/shell-routing"
 import { PAIR_PATH, pageSite } from "@/remote-access"
 import { DevicesPanel } from "@/components/remote/devices-panel"
 import { PairPage } from "@/components/remote/pair-page"
@@ -1457,7 +1457,7 @@ function WorkspaceMain({ controller, router }: { controller: AppController; rout
             <Button
               aria-label={`Show ${activeChannel?.memberCount ?? selectedMembers.length} channel members`}
               className="-mx-2 h-auto shrink-0 gap-1.5 px-2 py-1 text-xs font-normal text-muted-foreground"
-              onClick={() => dispatchAction("channel.members")}
+              onClick={() => openMembers(routeChannelName(router.route) ?? selectedChannel)}
               variant="ghost"
             >
               <UserRound aria-hidden="true" className="size-3.5" />

@@ -84,6 +84,13 @@ function spawnAgentDestination(
   }
 }
 
+// mouseenter writes focusedChannelRow for the row menu. A pointer pass is not keyboard focus.
+function keyboardFocusedChannelRow(): string | undefined {
+  const active = globalThis.document.activeElement
+  if (!(active instanceof HTMLElement)) return undefined
+  return active.closest<HTMLElement>("[data-channel-row]")?.dataset.channelRow
+}
+
 function routeStatesFromTopology(snapshot: WorkspaceList): ReadonlyMap<string, RouteState> {
   return new Map(snapshot.workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => (
     pane.participant === null || pane.participantRouteState === null
@@ -1539,7 +1546,7 @@ export function useAppController(
       ["channel.next", () => moveChannel(1)],
       ["channel.prev", () => moveChannel(-1)],
       ["channel.picker", () => setChannelPickerOpen(true)],
-      ["channel.members", () => openMembers(focusedChannelRow ?? selectedChannel)],
+      ["channel.members", () => openMembers(keyboardFocusedChannelRow() ?? selectedChannel)],
       ["menu.open", openFocusedContextMenu],
       ["channel.create", openCreateChannel],
       ["workspace.create", openCreateWorkspace],
@@ -1599,7 +1606,6 @@ export function useAppController(
       openAddReporter,
       openFocusedPaneAction,
       openSpawnAgent,
-      focusedChannelRow,
       selectedChannel,
       composerRef,
       searchInputRef,
