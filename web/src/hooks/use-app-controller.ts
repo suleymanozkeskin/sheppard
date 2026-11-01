@@ -1347,8 +1347,16 @@ export function useAppController(
       if (nextChannel === undefined) return
       selectChannel(nextChannel.name, nextChannel.kind)
       setFocusedMessageId(undefined)
+      switch (nextChannel.kind) {
+        case "chat":
+          navigateShell({ channel: nextChannel.name, kind: "channel" })
+          break
+        case "direct":
+          navigateShell({ channel: nextChannel.name, kind: "conversation" })
+          break
+      }
     },
-    [channelState, directConversations, selectChannel, selectedChannel],
+    [channelState, directConversations, navigateShell, selectChannel, selectedChannel],
   )
 
   const {

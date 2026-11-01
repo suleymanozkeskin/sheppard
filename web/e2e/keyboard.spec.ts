@@ -236,9 +236,11 @@ test("@guard dispatches the default navigation and utility actions", async ({ pa
 
   await page.keyboard.press("]")
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "research" })).toBeVisible()
+  await expect(page).toHaveURL(/\/channels\/research$/)
   await expect(messageLocator(page, 5)).toBeVisible()
   await page.keyboard.press("[")
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
+  await expect(page).toHaveURL(/\/channels\/ops$/)
   await expect(messageLocator(page, 1)).toBeVisible()
 
   await page.keyboard.press("j")
