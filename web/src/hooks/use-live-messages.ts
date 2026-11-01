@@ -51,6 +51,7 @@ export function useLiveMessages(
   const [streamState, setStreamState] = useState<StreamState>("connecting")
   const buffersRef = useRef(new Map<string, Message[]>())
   const readyChannelsRef = useRef(new Set<string>())
+  const loadEpochRef = useRef(new Map<string, number>())
   const selectedChannelRef = useRef(selectedChannel)
   const mountedRef = useRef(true)
 
@@ -73,11 +74,12 @@ export function useLiveMessages(
   const loadSnapshot = useMemo(
     () => (channel: string | undefined, catchUp: boolean) => {
       if (channel === undefined || sessionExpired) return
+      const epoch = nextLoadEpoch(loadEpochRef.current, channel)
       if (!catchUp) setMessageState({ status: "loading" })
       readyChannelsRef.current.delete(channel)
       if (!buffersRef.current.has(channel)) buffersRef.current.set(channel, [])
       void apiCall(api, fallback, (client) => client.listMessages(channel)).then((result) => {
-        if (!mountedRef.current) return
+        if (!mountedRef.current || !loadEpochIsCurrent(loadEpochRef.current, channel, epoch)) return
         result.match({
           ok: ({ messages }) => {
             const buffered = buffersRef.current.get(channel) ?? []
@@ -108,13 +110,14 @@ export function useLiveMessages(
   const loadContext = useMemo(
     () => (channel: string | undefined, messageId: number | undefined) => {
       if (channel === undefined || messageId === undefined || sessionExpired) return
+      const epoch = nextLoadEpoch(loadEpochRef.current, channel)
       setMessageState({ status: "loading" })
       readyChannelsRef.current.delete(channel)
       if (!buffersRef.current.has(channel)) buffersRef.current.set(channel, [])
       void apiCall(api, fallback, (client) =>
         client.context(channel, { around: messageId, span: 20 }),
       ).then((result) => {
-        if (!mountedRef.current) return
+        if (!mountedRef.current || !loadEpochIsCurrent(loadEpochRef.current, channel, epoch)) return
         result.match({
           ok: ({ messages }) => {
             const buffered = buffersRef.current.get(channel) ?? []
@@ -269,6 +272,18 @@ export function useLiveMessages(
 }
 
 const EMPTY_RECEIPT_UPDATES: ReadonlyMap<string, number> = new Map()
+
+/** The next load for one channel. An older load for that channel is no longer current. */
+export function nextLoadEpoch(epochs: Map<string, number>, channel: string): number {
+  const epoch = (epochs.get(channel) ?? 0) + 1
+  epochs.set(channel, epoch)
+  return epoch
+}
+
+/** True when no later load has started for this channel. */
+export function loadEpochIsCurrent(epochs: ReadonlyMap<string, number>, channel: string, epoch: number): boolean {
+  return epochs.get(channel) === epoch
+}
 
 function isUnauthorized(error: ApiError): boolean {
   return error.match({

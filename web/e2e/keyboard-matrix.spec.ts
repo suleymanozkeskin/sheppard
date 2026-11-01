@@ -94,6 +94,60 @@ async function fulfillJson(route: Route, payload: JsonValue): Promise<void> {
   await route.fulfill({ body: JSON.stringify(payload), contentType: "application/json", status: 200 })
 }
 
+function deferredGate() {
+  let release = (): void => undefined
+  const promise = new Promise<void>((resolve) => {
+    release = () => resolve()
+  })
+  return { promise, release }
+}
+
+async function fulfillMarkedJson(route: Route, payload: JsonValue, marker: string): Promise<void> {
+  await route.fulfill({
+    body: JSON.stringify(payload),
+    contentType: "application/json",
+    headers: { "x-test-load": marker },
+    status: 200,
+  })
+}
+
+function memberList(handle: string): JsonValue {
+  return {
+    members: [{
+      agentKind: "claude",
+      handle,
+      joinedAt: "2026-08-12T08:00:00.000Z",
+      kind: "agent",
+      routeState: "active",
+      unread: 0,
+    }],
+  }
+}
+
+function opsSnapshot(id: number, body: string): JsonValue {
+  return {
+    messages: [{
+      attachments: [],
+      body,
+      channel: "ops",
+      createdAt: "2026-08-17T10:00:00.000Z",
+      id,
+      sender: "planner",
+      senderAgentKind: "claude",
+      senderKind: "agent",
+    }],
+  }
+}
+
+/** The locator must stay absent while a late response would still be able to render. */
+async function expectCountStaysZero(locator: Locator): Promise<void> {
+  const started = Date.now()
+  while (Date.now() - started < 750) {
+    expect(await locator.count()).toBe(0)
+    await locator.page().waitForTimeout(50)
+  }
+}
+
 async function installApiMocks(page: Page, options: OpenAppOptions = {}): Promise<void> {
   const messages = cloneMessages()
 
@@ -351,6 +405,107 @@ test("@guard m manages members for the focused channel row", async ({ page }) =>
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
   await expect(opener).toBeFocused()
+})
+
+test("@guard a later members open ignores the earlier members response", async ({ page }) => {
+  await openApp(page)
+  const gate = deferredGate()
+  let heldOps = 0
+  await page.route("**/api/channels/*/members", async (route) => {
+    const url = new URL(route.request().url())
+    if (route.request().method() !== "GET") {
+      await route.fallback()
+      return
+    }
+    const channel = decodeURIComponent(url.pathname.split("/").at(-2) ?? "")
+    if (channel === "ops") {
+      heldOps += 1
+      await gate.promise
+      await fulfillMarkedJson(route, memberList("stale-ops"), "stale-ops")
+      return
+    }
+    if (channel === "research") {
+      await fulfillJson(route, memberList("fresh-research"))
+      return
+    }
+    await route.fallback()
+  })
+
+  try {
+    await page.locator('[data-channel-row="ops"] a').click()
+    await page.keyboard.press("m")
+    const dialog = page.getByRole("dialog")
+    await expect(dialog.getByRole("heading", { name: "Members · #ops" })).toBeVisible()
+
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await page.locator('[data-channel-row="research"] a').click()
+    await page.keyboard.press("m")
+    await expect(dialog.getByRole("heading", { name: "Members · #research" })).toBeVisible()
+    await expect(dialog.locator('[data-member-handle="fresh-research"]')).toBeVisible()
+    expect(heldOps).toBeGreaterThan(0)
+
+    const staleMembers = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes("/members")
+      && response.headers()["x-test-load"] === "stale-ops",
+    )
+    gate.release()
+    await staleMembers
+    await expect(dialog.locator('[data-member-handle="fresh-research"]')).toBeVisible()
+    await expectCountStaysZero(dialog.locator('[data-member-handle="stale-ops"]'))
+  } finally {
+    gate.release()
+  }
+})
+
+test("@guard a later message load ignores the earlier snapshot", async ({ page }) => {
+  await openApp(page)
+  await expect(page.getByText("The release checklist is ready")).toBeVisible()
+  const gate = deferredGate()
+  let holdOpsSnapshots = true
+  let heldOpsSnapshots = 0
+  await page.route("**/api/channels/ops/messages**", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback()
+      return
+    }
+    if (!holdOpsSnapshots) {
+      await fulfillJson(route, opsSnapshot(501, "fresh snapshot"))
+      return
+    }
+    heldOpsSnapshots += 1
+    await gate.promise
+    await fulfillMarkedJson(route, opsSnapshot(101, "stale snapshot"), "stale-snapshot")
+  })
+
+  try {
+    await page.locator('[data-channel-row="research"] a').click()
+    await expect(page.getByRole("heading", { exact: true, level: 1, name: "research" })).toBeVisible()
+    await page.locator('[data-channel-row="ops"] a').click()
+    await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
+    await page.locator('[data-channel-row="research"] a').click()
+    await expect(page.getByRole("heading", { exact: true, level: 1, name: "research" })).toBeVisible()
+    expect(heldOpsSnapshots).toBeGreaterThan(0)
+
+    holdOpsSnapshots = false
+    await page.locator('[data-channel-row="ops"] a').click()
+    await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
+    await expect(page.getByText("fresh snapshot", { exact: true })).toBeVisible()
+    await expect(page.getByText("The release checklist is ready")).toHaveCount(0)
+
+    const staleSnapshot = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes("/api/channels/ops/messages")
+      && response.headers()["x-test-load"] === "stale-snapshot",
+    )
+    gate.release()
+    await staleSnapshot
+    await expect(page.getByText("fresh snapshot", { exact: true })).toBeVisible()
+    await expectCountStaysZero(page.getByText("stale snapshot", { exact: true }))
+  } finally {
+    gate.release()
+  }
 })
 
 test("@guard Shift+N opens the workspace-create shell page", async ({ page }) => {

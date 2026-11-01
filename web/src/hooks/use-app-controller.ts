@@ -258,6 +258,7 @@ export function useAppController(
   const [membersPanelChannel, setMembersPanelChannel] = useState<string | undefined>()
   const [membersPanelMembers, setMembersPanelMembers] = useState<Member[]>([])
   const [membersPanelError, setMembersPanelError] = useState<string | undefined>()
+  const membersRequestRef = useRef(0)
   const [focusedChannelRow, setFocusedChannelRow] = useState<string | undefined>()
   const [memberHandle, setMemberHandle] = useState("")
   const [memberAddState, setMemberAddState] = useState<MemberAddState>({ status: "idle" })
@@ -465,11 +466,15 @@ export function useAppController(
       setStorageNotice("Select a channel before opening members.")
       return
     }
+    const request = membersRequestRef.current + 1
+    membersRequestRef.current = request
     setMembersPanelChannel(channel)
+    setMembersPanelMembers([])
     setMembersOpen(true)
     setMemberAddState({ status: "idle" })
     setMembersPanelError(undefined)
     void apiCall(api, fallbackApi, (client) => client.listMembers(channel)).then((result) => {
+      if (membersRequestRef.current !== request) return
       result.match({
         ok: ({ members }) => setMembersPanelMembers(members),
         err: (error) => setMembersPanelError(formatApiError(error)),
