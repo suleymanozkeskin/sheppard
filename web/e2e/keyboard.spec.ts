@@ -193,6 +193,14 @@ async function installApiMocks(page: Page): Promise<void> {
   })
 }
 
+function deferredGate() {
+  let release = (): void => undefined
+  const promise = new Promise<void>((resolve) => {
+    release = () => resolve()
+  })
+  return { promise, release }
+}
+
 async function waitForWorkspace(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
   await expect(page.getByRole("list", { name: "Messages" })).toBeVisible()
@@ -473,6 +481,36 @@ test("@guard supports composer newline, send, and the eight-line grow cap", asyn
   await composer.press("Enter")
   await sendRequest
   await expect(page.getByText("sent from the keyboard", { exact: true })).toBeVisible()
+})
+
+test("@guard a send keeps a draft typed while that send is in flight", async ({ page }) => {
+  const gate = deferredGate()
+  await page.route("**/api/channels/ops/messages", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback()
+      return
+    }
+    await gate.promise
+    await route.fallback()
+  })
+
+  try {
+    const composer = page.locator("#message-composer")
+    await composer.fill("first note")
+    const sendStarted = page.waitForRequest((request) =>
+      request.method() === "POST" && request.url().endsWith("/api/channels/ops/messages"),
+    )
+    await composer.press("Enter")
+    await sendStarted
+    await composer.fill("second note")
+    await expect(composer).toHaveValue("second note")
+
+    gate.release()
+    await expect(page.getByText("first note", { exact: true })).toBeVisible()
+    await expect(composer).toHaveValue("second note")
+  } finally {
+    gate.release()
+  }
 })
 
 test("@guard keeps composer behavior after automatic identification", async ({ page }) => {

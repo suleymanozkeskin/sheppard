@@ -33,7 +33,8 @@ type ComposerAction =
   | { type: "attachment.remove"; path: string }
   | { type: "attachment.errors"; message: string }
   | { type: "status"; status: ComposerStatus }
-  | { type: "sent" }
+  | { type: "clear" }
+  | { type: "sent"; attachmentPaths: readonly string[]; draft: string }
 
 const initialComposerModel: ComposerModel = {
   attachmentInputOpen: false,
@@ -109,8 +110,26 @@ function composerReducer(state: ComposerModel, action: ComposerAction): Composer
       }
     case "status":
       return { ...state, status: action.status }
-    case "sent":
+    case "clear":
       return { ...state, attachments: [], draft: "", status: { status: "idle" } }
+    case "sent":
+      return applyComposerSent(state, action.draft, action.attachmentPaths)
+  }
+}
+
+/** Keep a draft or attachment that arrived after the send. Clear the text only when it is still the sent text. */
+export function applyComposerSent(
+  state: ComposerModel,
+  sentDraft: string,
+  sentAttachmentPaths: readonly string[],
+): ComposerModel {
+  const sentPaths = new Set(sentAttachmentPaths)
+  const draft = state.draft.trim() === sentDraft ? "" : state.draft
+  return {
+    ...state,
+    attachments: state.attachments.filter((attachment) => !sentPaths.has(attachment.path)),
+    draft,
+    status: draft.length === 0 ? { status: "idle" } : state.status,
   }
 }
 
@@ -123,7 +142,8 @@ export interface ComposerController extends ComposerModel {
   removeAttachmentPath: (path: string) => void
   setDraft: (value: string) => void
   setStatus: (status: ComposerStatus) => void
-  markSent: () => void
+  clearComposer: () => void
+  markSent: (draft: string, attachmentPaths: readonly string[]) => void
   setUploadProgress: (path: string, progress: number) => void
   toggleAttachmentInput: () => void
   completeUpload: (path: string, storedPath: string) => void
@@ -156,7 +176,10 @@ export function useComposerState(): ComposerController {
     dispatch({ message, path, type: "attachment.error" })
   }, [])
   const setStatus = useCallback((status: ComposerStatus) => dispatch({ status, type: "status" }), [])
-  const markSent = useCallback(() => dispatch({ type: "sent" }), [])
+  const clearComposer = useCallback(() => dispatch({ type: "clear" }), [])
+  const markSent = useCallback((draft: string, attachmentPaths: readonly string[]) => {
+    dispatch({ attachmentPaths, draft, type: "sent" })
+  }, [])
   const setUploadProgress = useCallback((path: string, progress: number) => {
     dispatch({ path, progress, type: "attachment.progress" })
   }, [])
@@ -171,6 +194,7 @@ export function useComposerState(): ComposerController {
     addUploadPlaceholder,
     completeUpload,
     handleAttachmentInputChange,
+    clearComposer,
     markAttachmentErrors,
     markUploadError,
     markSent,
