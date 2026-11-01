@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { shellParentRoute, shellRouteFromLocation, shellRoutePath, type ShellRoute } from "./shell-routing"
+import { routeChannelName, shellParentRoute, shellRouteFromLocation, shellRoutePath, type ShellRoute } from "./shell-routing"
 
 describe("shell routes", () => {
   test("round trips control-plane pages", () => {
@@ -57,6 +57,14 @@ describe("shell routes", () => {
   test("unknown agent views use the session", () => {
     expect(shellRouteFromLocation({ pathname: "/agents/reviewer", search: "?view=unknown" })).toEqual({ kind: "agent", handle: "reviewer" })
     expect(shellRoutePath({ kind: "agent", handle: "reviewer", view: "session" })).toBe("/agents/reviewer")
+  })
+
+  test("names the channel on a channel route and on a conversation route", () => {
+    expect(routeChannelName({ channel: "ops", kind: "channel" })).toBe("ops")
+    expect(routeChannelName({ channel: "ops", kind: "channel", messageId: 4 })).toBe("ops")
+    expect(routeChannelName({ channel: "dm-1", kind: "conversation" })).toBe("dm-1")
+    expect(routeChannelName({ kind: "channels" })).toBeUndefined()
+    expect(routeChannelName({ kind: "current" })).toBeUndefined()
   })
 
   test("gives every nested page an explicit parent", () => {

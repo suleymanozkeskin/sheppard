@@ -353,6 +353,29 @@ test("@guard m manages members for the focused channel row", async ({ page }) =>
   await expect(opener).toBeFocused()
 })
 
+test("@guard channel members follow the open channel after a sidebar hover", async ({ page }) => {
+  await openApp(page)
+  await page.locator('[data-channel-row="ops"] a').click()
+  await expect(page).toHaveURL(/\/channels\/ops$/)
+  await expect(page.getByRole("heading", { exact: true, level: 1, name: "ops" })).toBeVisible()
+
+  // Leave the pointer on another row. A click must not move the pointer onto that row.
+  await page.locator('[data-channel-row="research"] a').hover()
+  await page.getByRole("button", { name: /Show \d+ channel members/ }).dispatchEvent("click")
+
+  const dialog = page.getByRole("dialog")
+  await expect(dialog.getByRole("heading", { name: "Members · #ops" })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(dialog).toHaveCount(0)
+
+  await page.locator('[data-channel-row="research"] a').hover()
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  })
+  await page.keyboard.press("m")
+  await expect(page.getByRole("heading", { name: "Members · #ops" })).toBeVisible()
+})
+
 test("@guard Shift+N opens the workspace-create shell page", async ({ page }) => {
   await openApp(page)
   await focusChannelRow(page)

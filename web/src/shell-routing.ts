@@ -251,6 +251,36 @@ export function shellRouteFromLocation(location: Pick<Location, "pathname" | "se
   return routeFromSegments(segments, location.search)
 }
 
+/** The channel a route addresses. Other routes do not name one. */
+export function routeChannelName(route: ShellRoute): string | undefined {
+  switch (route.kind) {
+    case "channel":
+    case "conversation":
+      return route.channel
+    case "current":
+    case "search":
+    case "attachments":
+    case "workspaces":
+    case "workspace":
+    case "channels":
+    case "direct":
+    case "agents":
+    case "agent":
+    case "launchers":
+    case "create-launcher":
+    case "edit-launcher":
+    case "staffing":
+    case "create-role":
+    case "edit-role":
+    case "create-model":
+    case "create-workspace":
+    case "create-channel":
+    case "create-direct":
+    case "spawn-agent":
+      return undefined
+  }
+}
+
 export function shellRoutePath(route: ShellRoute): string {
   switch (route.kind) {
     case "current":
