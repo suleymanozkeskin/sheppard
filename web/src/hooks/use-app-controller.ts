@@ -363,7 +363,7 @@ export function useAppController(
     handleAttachmentInputChange: handleDirectAttachmentInputChange,
     markAttachmentErrors: markDirectAttachmentErrors,
     markUploadError: markDirectUploadError,
-    markSent: markDirectSent,
+    clearComposer: markDirectSent,
     removeAttachmentPath: removeDirectAttachmentPath,
     setUploadProgress: setDirectUploadProgress,
     toggleAttachmentInput: toggleDirectAttachmentInput,
@@ -766,8 +766,9 @@ export function useAppController(
         return
       }
       setComposerStatus({ status: "sending" })
+      const sentAttachmentPaths = attachments.map((attachment) => attachment.path)
       const send = (client: MsgrApi) => client.sendMessage(selectedChannel, {
-        attachments: attachments.map((attachment) => attachment.path),
+        attachments: sentAttachmentPaths,
         body: normalized,
       })
       const sendResult = selectedChannelKind === "chat" && !isSelectedMember
@@ -780,7 +781,7 @@ export function useAppController(
         result.match({
           ok: (message) => {
             mergeChannelMessages(selectedChannel, [message])
-            markSent()
+            markSent(normalized, sentAttachmentPaths)
           },
           err: (error) => {
             const message = formatApiError(error)

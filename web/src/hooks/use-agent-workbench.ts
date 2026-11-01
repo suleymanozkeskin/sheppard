@@ -137,11 +137,13 @@ export function useAgentConversation(controller: AppController, handle: string) 
     }
     pending.current = true
     setState({ kind: "sending" })
+    const sentBody = started.value.body
+    const sentAttachmentPaths = attachments.attachments.map((attachment) => attachment.path)
     const result = await sendAgentMessage(
       controller.api,
       handle,
-      started.value.body,
-      attachments.attachments.map((attachment) => attachment.path),
+      sentBody,
+      sentAttachmentPaths,
     )
     pending.current = false
     result.match({
@@ -150,7 +152,7 @@ export function useAgentConversation(controller: AppController, handle: string) 
           throw new Error("Agent message returned a non-conversation destination")
         setCreated({ kind: "existing", channel: destination.channel })
         store.complete(key)
-        attachments.markSent()
+        attachments.markSent(sentBody, sentAttachmentPaths)
         setState({ kind: "sent" })
         setRevision((value) => value + 1)
         controller.reload()
