@@ -73,6 +73,7 @@ import {
   HERDR_TIMEOUT_MS,
   type HerdrPort,
   type PaneInfo,
+  paneReportedSession,
 } from "./herdr";
 import { acquireHubLock } from "./lock";
 import { Notifier } from "./notifier";
@@ -2134,6 +2135,7 @@ async function herdrAgentSession(
   const mapping = chooseSession(located.value, {
     handle: participant?.handle ?? null,
     startedAt: participant?.createdAt ?? null,
+    reported: paneReportedSession(pane),
   });
   const storedCandidate = storedForHarness === null
     ? undefined
@@ -2280,6 +2282,7 @@ async function selectHerdrAgentSession(
   const mapping = chooseSession(located.value, {
     handle: participant?.handle ?? null,
     startedAt: participant?.createdAt ?? null,
+    reported: paneReportedSession(currentPane),
   });
   // An ambiguous mapping lets the human pick one candidate. An inferred
   // mapping lets the human confirm its one candidate, which makes it exact and

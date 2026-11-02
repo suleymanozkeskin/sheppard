@@ -26,6 +26,7 @@ import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type JsonObject, type JsonValue, decodeObject, isObject, isString } from "./json";
+import type { AgentSessionReference, ReportedSession } from "./herdr";
 import type { SessionCandidateView, SessionMappingView, SessionTurnView } from "./types";
 
 /** The harness has no transcript reader: an honest gap, not a failure. */
@@ -1358,6 +1359,15 @@ function firstUserTextOf(adapter: TranscriptAdapter, head: string): string | nul
   return null;
 }
 
+function candidateIsReported(candidate: SessionCandidate, reference: AgentSessionReference): boolean {
+  switch (reference.kind) {
+    case "id":
+      return candidate.sessionId === reference.id;
+    case "path":
+      return candidate.path === reference.path;
+  }
+}
+
 const ADAPTERS: readonly TranscriptAdapter[] = [claudeAdapter, codexAdapter, grokAdapter, piAdapter, opencodeAdapter];
 
 export function adapterFor(harness: string | null): Result<TranscriptAdapter, TranscriptUnsupported> {
@@ -1373,19 +1383,34 @@ export function adapterFor(harness: string | null): Result<TranscriptAdapter, Tr
 }
 
 /**
- * The mapping ladder. Rung 1 is a CONTENT match on the injected briefing, which
- * carries the agent's unique handle; it runs first and is never demoted to a
- * tiebreaker, because the cheap rung below it would otherwise decide. Rung 2
- * fences by start time and requires exactly one survivor. Anything else is
- * ambiguous and says so: a guess that happens to be right is still a guess.
+ * The mapping ladder. Rung 0 is the session the pane's own agent reported
+ * through herdr's integration. When it exists it decides alone: a report the
+ * candidates do not contain yet is ambiguous rather than handed to a lower
+ * rung, because after `/clear` the lower rungs would pick the old session.
+ * Rung 1 is a CONTENT match on the injected briefing, which carries the
+ * agent's unique handle; it is never demoted to a tiebreaker, because the
+ * cheap rung below it would otherwise decide. Rung 2 fences by start time and
+ * requires exactly one survivor. Anything else is ambiguous and says so: a
+ * guess that happens to be right is still a guess.
  */
 export function chooseSession(
   candidates: readonly SessionCandidate[],
-  agent: { handle: string | null; startedAt: string | null },
+  agent: { handle: string | null; startedAt: string | null; reported: ReportedSession },
 ): SessionMapping {
   if (candidates.length === 0) return { confidence: "ambiguous", chosen: null, candidates: [] };
 
-  const { handle, startedAt } = agent;
+  const { handle, startedAt, reported } = agent;
+  switch (reported.kind) {
+    case "reported": {
+      const named = candidates.filter((candidate) => candidateIsReported(candidate, reported.reference));
+      const [only] = named;
+      return named.length === 1 && only !== undefined
+        ? { confidence: "exact", chosen: only, candidates: [] }
+        : { confidence: "ambiguous", chosen: null, candidates: [...candidates] };
+    }
+    case "not-reported":
+      break;
+  }
   if (handle !== null) {
     const marked = candidates.filter((candidate) => candidate.firstUserText?.includes(handle) === true);
     if (marked.length === 1) {

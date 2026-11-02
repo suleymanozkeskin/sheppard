@@ -248,6 +248,111 @@ describe("session mappings", () => {
   });
 });
 
+describe("session route recovery", () => {
+  /** An agent whose route ended on `term-<handle>` after running `session-<handle>`. */
+  function endedWithSession(
+    store: Store,
+    handle: string,
+    confidence: "exact" | "inferred" = "exact",
+  ): number {
+    const id = expectOk(store.createAgent(handle)).participant.id;
+    store.bindRoute(id, { terminalId: `term-${handle}`, paneId: "w1:p1", occupantAgent: "claude" });
+    store.saveSessionMapping({
+      terminal_id: `term-${handle}`,
+      harness: "claude",
+      session_id: `session-${handle}`,
+      session_path: `/sessions/session-${handle}.jsonl`,
+      confidence,
+      cwd: "/Users/demo/work",
+    });
+    store.markRouteStale(id);
+    return id;
+  }
+
+  test("finds the stale identity by session id and by session file", () => {
+    const { store } = freshStore();
+    const scout = endedWithSession(store, "scout");
+
+    const byId = store.staleIdentityForSession("claude", { kind: "id", id: "session-scout" });
+    const byPath = store.staleIdentityForSession("claude", {
+      kind: "path", path: "/sessions/session-scout.jsonl",
+    });
+
+    expect(byId.kind === "matched" ? byId.participant.id : byId.kind).toBe(scout);
+    expect(byPath.kind === "matched" ? byPath.participant.id : byPath.kind).toBe(scout);
+  });
+
+  test("finds none for another harness, an inferred mapping, or an active route", () => {
+    const { store } = freshStore();
+    endedWithSession(store, "scout");
+    endedWithSession(store, "guess", "inferred");
+    const live = endedWithSession(store, "live");
+    store.bindRoute(live, { terminalId: "term-live", paneId: "w1:p2", occupantAgent: "claude" });
+
+    expect(store.staleIdentityForSession("codex", { kind: "id", id: "session-scout" })).toEqual({ kind: "none" });
+    expect(store.staleIdentityForSession("claude", { kind: "id", id: "session-guess" })).toEqual({ kind: "none" });
+    expect(store.staleIdentityForSession("claude", { kind: "id", id: "session-live" })).toEqual({ kind: "none" });
+  });
+
+  test("picks neither identity when two recorded the same session", () => {
+    const { store } = freshStore();
+    endedWithSession(store, "first");
+    const second = endedWithSession(store, "second");
+    store.saveSessionMapping({
+      terminal_id: "term-second",
+      harness: "claude",
+      session_id: "session-first",
+      session_path: "/sessions/session-first.jsonl",
+      confidence: "exact",
+      cwd: "/Users/demo/work",
+    });
+    expect(store.findById(second)?.routeState).toBe("stale");
+
+    expect(store.staleIdentityForSession("claude", { kind: "id", id: "session-first" })).toEqual({
+      kind: "ambiguous",
+    });
+  });
+
+  test("moves the route and its session mapping without stamping last seen", () => {
+    const { store } = freshStore();
+    const scout = endedWithSession(store, "scout");
+    const before = store.findById(scout)?.lastSeenAt ?? null;
+
+    const moved = store.moveStaleRouteToTerminal(scout, {
+      terminalId: "term-new", paneId: "w1:p4", occupantAgent: "claude",
+    });
+
+    expect(moved).toBe(true);
+    expect(store.findById(scout)).toMatchObject({
+      terminalId: "term-new", paneId: "w1:p4", routeState: "active",
+    });
+    expect(store.findById(scout)?.lastSeenAt ?? null).toBe(before);
+    expect(store.findSessionMapping("term-new")).toMatchObject({
+      harness: "claude", session_id: "session-scout", confidence: "exact",
+    });
+  });
+
+  test("refuses a terminal another active route holds, and a route that is not stale", () => {
+    const { store } = freshStore();
+    const scout = endedWithSession(store, "scout");
+    const holder = expectOk(store.createAgent("holder")).participant.id;
+    store.bindRoute(holder, { terminalId: "term-held", paneId: "w1:p5", occupantAgent: "claude" });
+    const active = expectOk(store.createAgent("active")).participant.id;
+    store.bindRoute(active, { terminalId: "term-active", paneId: "w1:p6", occupantAgent: "claude" });
+
+    expect(store.moveStaleRouteToTerminal(scout, {
+      terminalId: "term-held", paneId: "w1:p5", occupantAgent: "claude",
+    })).toBe(false);
+    expect(store.moveStaleRouteToTerminal(active, {
+      terminalId: "term-free", paneId: "w1:p7", occupantAgent: "claude",
+    })).toBe(false);
+
+    expect(store.findById(scout)).toMatchObject({ terminalId: "term-scout", routeState: "stale" });
+    expect(store.findById(active)).toMatchObject({ terminalId: "term-active", routeState: "active" });
+    expect(store.findSessionMapping("term-held")).toBeNull();
+  });
+});
+
 describe("launchers", () => {
   test("persists edits and seed tombstones", () => {
     const { store } = freshStore();

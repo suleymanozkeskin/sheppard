@@ -60,12 +60,96 @@ const PANE_NOT_FOUND = "pane_not_found";
  */
 export type PaneKey = "esc";
 
+/**
+ * The harness session a herdr integration reported for a pane. herdr names the
+ * session either by its id or by its file path, depending on the harness.
+ */
+export type AgentSessionReference =
+  | { readonly kind: "id"; readonly id: string }
+  | { readonly kind: "path"; readonly path: string };
+
+/**
+ * What herdr says about the harness session in a pane.
+ *
+ * - `reported`: an official herdr integration reported this session for the
+ *   pane. `agent` is the harness that reported it.
+ * - `not-reported`: herdr holds no session reference for the pane, for example
+ *   because no integration is installed for the harness.
+ * - `unrecognised`: herdr sent a reference this version cannot read. It is
+ *   never used as identity evidence.
+ */
+export type PaneAgentSession =
+  | { readonly kind: "reported"; readonly agent: string; readonly reference: AgentSessionReference }
+  | { readonly kind: "not-reported" }
+  | { readonly kind: "unrecognised" };
+
+export const AGENT_SESSION_NOT_REPORTED: PaneAgentSession = Object.freeze({ kind: "not-reported" });
+const AGENT_SESSION_UNRECOGNISED: PaneAgentSession = Object.freeze({ kind: "unrecognised" });
+
+/**
+ * Reads herdr's `agent_session` pane field: `{source, agent, kind, value}`.
+ * A field that is missing is `not-reported`. A field with another shape is
+ * `unrecognised`, so a herdr release that changes it cannot fail the pane list.
+ */
+export function decodeAgentSession(value: JsonValue | undefined): PaneAgentSession {
+  if (value === undefined || value === null) return AGENT_SESSION_NOT_REPORTED;
+  const session = decodeObject(value);
+  if (session.isErr()) return AGENT_SESSION_UNRECOGNISED;
+  const agent = requiredString(session.value, "agent");
+  const kind = requiredString(session.value, "kind");
+  const reference = requiredString(session.value, "value");
+  if (agent.isErr() || kind.isErr() || reference.isErr()) return AGENT_SESSION_UNRECOGNISED;
+  if (agent.value.length === 0 || reference.value.length === 0) return AGENT_SESSION_UNRECOGNISED;
+  switch (kind.value) {
+    case "id":
+      return Object.freeze({
+        kind: "reported",
+        agent: agent.value,
+        reference: Object.freeze({ kind: "id", id: reference.value }),
+      });
+    case "path":
+      return Object.freeze({
+        kind: "reported",
+        agent: agent.value,
+        reference: Object.freeze({ kind: "path", path: reference.value }),
+      });
+    default:
+      return AGENT_SESSION_UNRECOGNISED;
+  }
+}
+
+/** A session the pane's own agent reported, or none that can be used. */
+export type ReportedSession =
+  | { readonly kind: "reported"; readonly reference: AgentSessionReference }
+  | { readonly kind: "not-reported" };
+
+const NO_REPORTED_SESSION: ReportedSession = Object.freeze({ kind: "not-reported" });
+
+/**
+ * The session reference the pane's current agent reported. A reference from
+ * another agent kind than the pane holds now is left over from an earlier
+ * occupant, so it is not used.
+ */
+export function paneReportedSession(pane: PaneInfo): ReportedSession {
+  const session = pane.agentSession;
+  switch (session.kind) {
+    case "not-reported":
+    case "unrecognised":
+      return NO_REPORTED_SESSION;
+    case "reported":
+      if (pane.agent === null || pane.agent !== session.agent) return NO_REPORTED_SESSION;
+      return Object.freeze({ kind: "reported", reference: session.reference });
+  }
+}
+
 export interface PaneInfo {
   paneId: string;
   terminalId: string;
   /** The kind of agent occupying the pane, or null for a plain shell. */
   agent: string | null;
   agentStatus: AgentStatus;
+  /** The harness session herdr's integration reported for this pane. */
+  agentSession: PaneAgentSession;
   focused: boolean;
   /** Present when herdr supplies a pane label. */
   label?: string;
@@ -231,6 +315,7 @@ function decodePane(value: JsonValue, command: string): Result<PaneInfo, HerdrCa
       terminalId,
       agent,
       agentStatus: toAgentStatus(status),
+      agentSession: decodeAgentSession(pane["agent_session"]),
       focused,
     };
     if (label !== null) decoded.label = label;
@@ -1055,6 +1140,7 @@ export class FakeHerdr implements HerdrPort {
     this.panes.push({
       agent: "claude",
       agentStatus: "idle",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
       ...pane,
     });
@@ -1090,6 +1176,7 @@ export class FakeHerdr implements HerdrPort {
       terminalId: `term-spawned-${this.panes.length + 1}`,
       agent: null,
       agentStatus: "unknown" as const,
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
       workspaceId,
     };

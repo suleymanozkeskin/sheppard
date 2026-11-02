@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_AGENT_START_TIMEOUT_MS, DEFAULT_ROLES, HOST } from "../src/config";
 import {
+  AGENT_SESSION_NOT_REPORTED,
   FakeHerdr,
   HERDR_AGENT_START_TIMEOUT_MS,
   herdrCallFailed,
@@ -692,6 +693,7 @@ describe("herdr control plane", () => {
       terminalId: "term-spawned-2",
       agent: "claude",
       agentStatus: "unknown",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
       label: "worker",
       workspaceId: "w1",
@@ -921,6 +923,7 @@ describe("herdr control plane", () => {
       terminalId: "term-spawned-2",
       agent: "claude",
       agentStatus: "unknown",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
       label: "worker",
       workspaceId: "w1",
