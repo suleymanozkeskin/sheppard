@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Result } from "better-result";
-import { FakeHerdr, herdrCallFailed, noAgentAtTarget } from "../src/herdr";
+import { AGENT_SESSION_NOT_REPORTED, FakeHerdr, herdrCallFailed, noAgentAtTarget } from "../src/herdr";
 import type { AgentStatus } from "../src/herdr";
 import {
   DELIVERY_CONFIRMATION_WINDOW_MS,
   Notifier,
-  STALE_ROUTE_ESCALATION_PROMPT,
   formatPing,
 } from "../src/notifier";
 import type { NotifierOptions } from "../src/notifier";
@@ -268,6 +267,7 @@ describe("holds", () => {
           paneId: "w1:p1",
           agent: "claude",
           agentStatus: "working",
+          agentSession: AGENT_SESSION_NOT_REPORTED,
           focused: true,
         },
       ];
@@ -294,6 +294,7 @@ describe("holds", () => {
           paneId: "w1:p1",
           agent: "claude",
           agentStatus: "working",
+          agentSession: AGENT_SESSION_NOT_REPORTED,
           focused: true,
         },
       ];
@@ -436,7 +437,7 @@ describe("definitive failures", () => {
 
   test("marks the route stale when another kind of agent took the pane", async () => {
     const { store, herdr, notifier, alice } = twoAgents();
-    herdr.panes = [{ terminalId: "term_bob", paneId: "w1:p1", agent: "codex", agentStatus: "idle", focused: false }];
+    herdr.panes = [{ terminalId: "term_bob", paneId: "w1:p1", agent: "codex", agentStatus: "idle", agentSession: AGENT_SESSION_NOT_REPORTED, focused: false }];
     send(store, alice, "backend", "one");
 
     const outcome = await notifier.tick();
@@ -454,6 +455,7 @@ describe("definitive failures", () => {
       paneId: "w1:p2",
       agent: "claude",
       agentStatus: "idle",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
     }];
     send(store, alice, "backend", "one");
@@ -512,8 +514,8 @@ describe("definitive failures", () => {
   });
 });
 
-describe("stale route escalation", () => {
-  test("does not ask a replacement identity to repair the old route", async () => {
+describe("stale route recovery", () => {
+  test("does not hand a replacement identity's terminal to the old route", async () => {
     const { store, herdr, notifier, alice, bob } = twoAgents();
     send(store, alice, "backend", "one");
     const replacement = expectOk(store.createAgent("replacement")).participant;
@@ -524,85 +526,81 @@ describe("stale route escalation", () => {
     await notifier.tick();
     const second = await notifier.tick();
 
-    expect(second.escalated).toEqual([]);
+    expect(second.recovered).toEqual([]);
+    expect(second.held).toEqual([{ handle: "bob", reason: "stale-route" }]);
     expect(herdr.prompts).toEqual([]);
     expect(store.findById(bob)?.routeState).toBe("stale");
     expect(store.inbox(bob)[0]?.unread).toBe(1);
   });
 
-  test("prompts an idle stale route once after two held ticks", async () => {
+  test("restores a stale route on its live terminal and delivers the backlog in the same tick", async () => {
     const { store, herdr, notifier, alice, bob } = twoAgents();
     send(store, alice, "backend", "one");
     store.markRouteStale(bob);
 
-    const first = await notifier.tick();
-    expect(first.escalated).toEqual([]);
-    expect(first.held).toEqual([{ handle: "bob", reason: "stale-route" }]);
+    const outcome = await notifier.tick();
 
-    const second = await notifier.tick();
-    expect(second.escalated).toEqual(["bob"]);
-    expect(herdr.prompts).toEqual([
-      { paneId: "w1:p1", text: STALE_ROUTE_ESCALATION_PROMPT },
-    ]);
-
-    const third = await notifier.tick();
-    expect(third.escalated).toEqual([]);
+    expect(outcome.recovered).toEqual(["bob"]);
+    expect(outcome.delivered).toEqual(["bob"]);
+    expect(store.findById(bob)?.routeState).toBe("active");
     expect(herdr.prompts).toHaveLength(1);
+    expect(herdr.prompts[0]?.text).toStartWith("[msgr] 1 new message from alice in #backend.");
   });
 
-  test("clears the once-per-outage record when the route heals", async () => {
+  test("moves a stale route to the new terminal that resumed its session", async () => {
     const { store, herdr, notifier, alice, bob } = twoAgents();
-    send(store, alice, "backend", "one");
-    store.markRouteStale(bob);
-
-    await notifier.tick();
-    await notifier.tick();
-    expect(herdr.prompts).toHaveLength(1);
-
-    store.bindRoute(bob, { terminalId: "term_bob", paneId: "w1:p1", occupantAgent: "claude" });
-    expectOk(store.ack(bob, "backend", 1));
-    await notifier.tick();
-
-    send(store, alice, "backend", "two");
-    store.markRouteStale(bob);
-    await notifier.tick();
-    await notifier.tick();
-
-    expect(herdr.prompts).toHaveLength(2);
-    expect(herdr.prompts[1]).toEqual({
-      paneId: "w1:p1",
-      text: STALE_ROUTE_ESCALATION_PROMPT,
+    store.saveSessionMapping({
+      terminal_id: "term_bob",
+      harness: "claude",
+      session_id: "session-bob",
+      session_path: "/sessions/session-bob.jsonl",
+      confidence: "exact",
+      cwd: "/work",
     });
-  });
-
-  test("starts a fresh idle count after stale backlog is read", async () => {
-    const { store, herdr, notifier, alice, bob } = twoAgents();
-    send(store, alice, "backend", "one");
     store.markRouteStale(bob);
+    send(store, alice, "backend", "one");
+    // herdr restarted: the same pane runs the same session in a new terminal.
+    herdr.panes = [{
+      terminalId: "term_bob_after_restart",
+      paneId: "w1:p1",
+      agent: "claude",
+      agentStatus: "idle",
+      agentSession: { kind: "reported", agent: "claude", reference: { kind: "id", id: "session-bob" } },
+      focused: false,
+    }];
 
-    await notifier.tick();
-    expectOk(store.ack(bob, "backend", 1));
-    await notifier.tick();
+    const outcome = await notifier.tick();
 
-    send(store, alice, "backend", "two");
-    await notifier.tick();
-    expect(herdr.prompts).toHaveLength(0);
-    await notifier.tick();
-    expect(herdr.prompts).toHaveLength(1);
+    expect(outcome.recovered).toEqual(["bob"]);
+    expect(outcome.delivered).toEqual(["bob"]);
+    expect(store.findById(bob)?.terminalId).toBe("term_bob_after_restart");
+    expect(store.findById(bob)?.routeState).toBe("active");
+    expect(store.findSessionMapping("term_bob_after_restart")).toMatchObject({
+      session_id: "session-bob", confidence: "exact",
+    });
+    expect(herdr.prompts.map((prompt) => prompt.paneId)).toEqual(["w1:p1"]);
   });
 
-  test("does not escalate while the bound pane is working or blocked", async () => {
-    for (const status of ["working", "blocked"] as const) {
+  test("never sends a reconnection prompt to a route that stays stale", async () => {
+    for (const status of ["idle", "done", "working", "blocked"] as const) {
       const { store, herdr, notifier, alice, bob } = twoAgents(status);
       send(store, alice, "backend", "one");
       store.markRouteStale(bob);
+      herdr.panes = [{
+        terminalId: "term_someone_else",
+        paneId: "w1:p1",
+        agent: "claude",
+        agentStatus: status,
+        agentSession: AGENT_SESSION_NOT_REPORTED,
+        focused: false,
+      }];
 
-      await notifier.tick();
-      const second = await notifier.tick();
+      for (let tick = 0; tick < 4; tick += 1) await notifier.tick();
+      const last = await notifier.tick();
 
       expect(`${status}: ${herdr.prompts.length}`).toBe(`${status}: 0`);
-      expect(second.escalated).toEqual([]);
-      expect(store.stalePendingNotifications()).toHaveLength(1);
+      expect(last.held).toEqual([{ handle: "bob", reason: "route-missing" }]);
+      expect(store.findById(bob)?.routeState).toBe("stale");
     }
   });
 });
@@ -843,6 +841,7 @@ describe("route healing", () => {
       paneId: "w1:p1-renumbered",
       agent: "claude",
       agentStatus: "idle",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
     }];
     send(store, alice, "backend", "one");
@@ -869,6 +868,7 @@ describe("route healing", () => {
       paneId: "w1:p1",
       agent: "claude",
       agentStatus: "idle",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
     }];
     send(store, alice, "backend", "one");
@@ -889,6 +889,7 @@ describe("route healing", () => {
       paneId: "w1:p1-renumbered",
       agent: "codex",
       agentStatus: "idle",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
     }];
     send(store, alice, "backend", "one");
@@ -900,18 +901,18 @@ describe("route healing", () => {
     expect(herdr.prompts).toEqual([]);
   });
 
-  test("bounds escalation prompts while a route stays stale", async () => {
+  test("follows a renumbered pane when a stale route comes back", async () => {
     const { store, herdr, notifier, alice, bob } = twoAgents();
     send(store, alice, "backend", "one");
     store.markRouteStale(bob);
     expect(store.findByHandle("bob")?.routeState).toBe("stale");
 
-    // The pane renumbers while stale: the healing prompt must reach the new id.
     herdr.panes = [{
       terminalId: "term_bob",
       paneId: "w1:p1-renumbered",
       agent: "claude",
       agentStatus: "idle",
+      agentSession: AGENT_SESSION_NOT_REPORTED,
       focused: false,
     }];
 
@@ -919,7 +920,8 @@ describe("route healing", () => {
 
     expect(herdr.prompts).toHaveLength(1);
     expect(herdr.prompts[0]?.paneId).toBe("w1:p1-renumbered");
-    expect(herdr.prompts[0]?.text).toBe(STALE_ROUTE_ESCALATION_PROMPT);
+    expect(herdr.prompts[0]?.text).toStartWith("[msgr] ");
     expect(store.findByHandle("bob")?.paneId).toBe("w1:p1-renumbered");
+    expect(store.findByHandle("bob")?.routeState).toBe("active");
   });
 });

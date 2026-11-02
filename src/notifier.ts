@@ -12,14 +12,13 @@
  */
 
 import type { HerdrPort, PaneInfo } from "./herdr";
+import { occupantChanged, recoverStaleRoutes } from "./route-recovery";
 import type { Store } from "./store";
 import type { PendingNotification } from "./types";
 
 export const DEFAULT_INTERVAL_MS = 5_000;
 export const DEFAULT_WORKING_PING_COOLDOWN_MS = 0;
 export const DELIVERY_CONFIRMATION_WINDOW_MS = 120_000;
-export const STALE_ROUTE_ESCALATION_PROMPT =
-  "your msgr route is stale; run any msgr command to heal and read your pings";
 
 /** Why a receiver was passed over on this tick. */
 export type HoldReason =
@@ -39,13 +38,14 @@ export interface TickOutcome {
   /** False on a quiet tick: no pending rows means herdr is never called. */
   calledHerdr: boolean;
   delivered: string[];
-  escalated: string[];
+  /** Handles whose stale route came back on this tick, before delivery. */
+  recovered: string[];
   held: Array<{ handle: string; reason: HoldReason }>;
   staled: string[];
 }
 
 function emptyOutcome(ran: boolean, calledHerdr: boolean): TickOutcome {
-  return { ran, calledHerdr, delivered: [], escalated: [], held: [], staled: [] };
+  return { ran, calledHerdr, delivered: [], recovered: [], held: [], staled: [] };
 }
 
 function plural(count: number, word: string): string {
@@ -88,9 +88,12 @@ function groupByParticipant(
   return grouped;
 }
 
-/** A route without a recorded occupant cannot prove that delivery is safe. */
-export function occupantChanged(recorded: string | null, current: string | null): boolean {
-  return recorded === null || recorded !== current;
+export { occupantChanged } from "./route-recovery";
+
+/** Why a route that recovery left stale cannot receive its backlog. */
+function staleHoldReason(pane: PaneInfo | undefined, recordedOccupant: string | null): HoldReason {
+  if (pane === undefined) return "route-missing";
+  return occupantChanged(recordedOccupant, pane.agent) ? "occupant-changed" : "stale-route";
 }
 
 type InjectionDisposition =
@@ -166,8 +169,6 @@ export class Notifier {
   private readonly onTick: (() => void | Promise<void>) | undefined;
   private readonly lastWorkingDeliveryAt = new Map<number, number>();
   private readonly pendingConfirmations = new Map<number, PendingConfirmation>();
-  private readonly staleIdleTicks = new Map<number, number>();
-  private readonly staleEscalated = new Set<number>();
   private readonly queuedChannels = new Set<string>();
   private inFlight = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -241,15 +242,8 @@ export class Notifier {
 
   private async deliver(channelName: string | null = null): Promise<TickOutcome> {
     this.resolveConfirmations();
-    this.clearRecoveredStaleState();
     const pending = this.store.pendingNotifications(channelName);
     const stalePending = this.store.stalePendingNotifications(channelName);
-    if (channelName === null) {
-      const observed = new Set(stalePending.map((row) => row.participantId));
-      for (const participantId of this.staleIdleTicks.keys()) {
-        if (!observed.has(participantId)) this.staleIdleTicks.delete(participantId);
-      }
-    }
     if (pending.length === 0 && stalePending.length === 0) return emptyOutcome(true, false);
 
     const panes = await this.herdr.paneList();
@@ -260,7 +254,13 @@ export class Notifier {
 
     const outcome = emptyOutcome(true, true);
 
-    for (const [participantId, rows] of groupByParticipant(pending)) {
+    // A stale route that the pane list proves live again receives this tick's
+    // backlog with the other routes, so its rows are read again after recovery.
+    const recovery = recoverStaleRoutes(this.store, panes.value);
+    outcome.recovered.push(...recovery.sameTerminal, ...recovery.sameSession);
+    const deliverable = outcome.recovered.length === 0 ? pending : this.store.pendingNotifications(channelName);
+
+    for (const [participantId, rows] of groupByParticipant(deliverable)) {
       const first = rows[0];
       if (first === undefined) continue;
 
@@ -346,71 +346,13 @@ export class Notifier {
       outcome.delivered.push(first.handle);
     }
 
-    // Stale routes keep their unread rows visible to this pass. A matching
-    // pane that stays idle or done for two ticks gets one direct healing prompt.
-    const currentStalePending = this.store.stalePendingNotifications(channelName);
-    for (const [participantId, rows] of groupByParticipant(currentStalePending)) {
+    // A route still stale after recovery keeps its unread rows. Its reason is
+    // reported, and nothing is sent to its pane.
+    for (const [participantId, rows] of groupByParticipant(this.store.stalePendingNotifications(channelName))) {
       const first = rows[0];
       if (first === undefined) continue;
-
       const pane = this.resolveRoutedPane(panes.value, participantId, first);
-      if (pane === undefined) {
-        this.staleIdleTicks.delete(participantId);
-        outcome.held.push({ handle: first.handle, reason: "route-missing" });
-        continue;
-      }
-
-      if (occupantChanged(first.occupantAgent, pane.agent)) {
-        this.staleIdleTicks.delete(participantId);
-        outcome.held.push({ handle: first.handle, reason: "occupant-changed" });
-        continue;
-      }
-
-      const identity = this.store.identityForRoute({
-        terminalId: pane.terminalId, paneId: pane.paneId, occupantAgent: pane.agent,
-      });
-      if (identity.kind !== "matched" || identity.participant.id !== participantId) {
-        this.staleIdleTicks.delete(participantId);
-        outcome.held.push({ handle: first.handle, reason: "stale-route" });
-        continue;
-      }
-
-      if (pane.agentStatus !== "idle" && pane.agentStatus !== "done") {
-        this.staleIdleTicks.delete(participantId);
-        outcome.held.push({ handle: first.handle, reason: "status" });
-        continue;
-      }
-
-      const idleTicks = (this.staleIdleTicks.get(participantId) ?? 0) + 1;
-      this.staleIdleTicks.set(participantId, idleTicks);
-      if (idleTicks <= 1) {
-        outcome.held.push({ handle: first.handle, reason: "stale-route" });
-        continue;
-      }
-      if (this.staleEscalated.has(participantId)) {
-        outcome.held.push({ handle: first.handle, reason: "stale-route" });
-        continue;
-      }
-
-      // Record the attempt before awaiting the transport. This makes the
-      // once-per-outage rule hold even when the pane prompt itself fails.
-      this.staleEscalated.add(participantId);
-      const escalated = await this.herdr.agentPrompt(
-        pane.paneId,
-        STALE_ROUTE_ESCALATION_PROMPT,
-      );
-      if (escalated.isErr()) {
-        escalated.error.match({
-          NoAgentAtTarget: () => {
-            outcome.held.push({ handle: first.handle, reason: "route-missing" });
-          },
-          HerdrCallFailed: () => {
-            outcome.held.push({ handle: first.handle, reason: "delivery-failed" });
-          },
-        });
-        continue;
-      }
-      outcome.escalated.push(first.handle);
+      outcome.held.push({ handle: first.handle, reason: staleHoldReason(pane, first.occupantAgent) });
     }
 
     return outcome;
@@ -434,21 +376,6 @@ export class Notifier {
     if (pane === undefined) return undefined;
     if (pane.paneId !== route.paneId) this.store.healRoutePane(participantId, pane.paneId);
     return pane;
-  }
-
-  private clearRecoveredStaleState(): void {
-    const tracked = new Set([...this.staleIdleTicks.keys(), ...this.staleEscalated]);
-    for (const participantId of tracked) {
-      const participant = this.store.findById(participantId);
-      if (
-        participant === null ||
-        participant.deactivated ||
-        participant.routeState === "active"
-      ) {
-        this.staleIdleTicks.delete(participantId);
-        this.staleEscalated.delete(participantId);
-      }
-    }
   }
 
   /**

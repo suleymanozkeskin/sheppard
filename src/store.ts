@@ -45,6 +45,7 @@ import {
 import { MAX_PAIRING_FAILURES, PAIRING_TTL_MS, remoteOrigin } from "./remote";
 import { hashToken, mintToken } from "./tokens";
 import type { UnrecognizedReason } from "./blocked-dialog";
+import type { AgentSessionReference } from "./herdr";
 import { isObject, isString, type JsonValue } from "./json";
 import type { ModelConfig, RoleConfig } from "./config";
 import type {
@@ -97,6 +98,16 @@ export type PaneIdentity =
   | Readonly<{ kind: "mismatch" }>;
 
 const PANE_IDENTITY_CANDIDATE_LIMIT = 2;
+
+/**
+ * The stale identity whose recorded harness session a pane now runs.
+ * `none` means no stale identity recorded that session. `ambiguous` means two
+ * or more did, so the hub picks none of them.
+ */
+export type SessionIdentity =
+  | Readonly<{ kind: "matched"; participant: Readonly<Participant> }>
+  | Readonly<{ kind: "none" }>
+  | Readonly<{ kind: "ambiguous" }>;
 
 /**
  * Column types narrower than TEXT are sound because the schema CHECK
@@ -1110,6 +1121,111 @@ export class Store {
       )
       .get({ participantId, terminalId, paneId });
     return changed !== null;
+  }
+
+  /**
+   * Finds the stale agent identity whose exact session mapping names this
+   * harness session. A reference by id matches the mapped session id; a
+   * reference by path matches the mapped session file.
+   *
+   * Only exact mappings count: an inferred mapping was a guess. Reads at most
+   * two rows and changes nothing.
+   */
+  staleIdentityForSession(harness: string, reference: AgentSessionReference): SessionIdentity {
+    const matchColumn = (() => {
+      switch (reference.kind) {
+        case "id":
+          return { clause: "sm.session_id = $reference", value: reference.id };
+        case "path":
+          return { clause: "sm.session_path = $reference", value: reference.path };
+      }
+    })();
+    const rows = this.db
+      .query<ParticipantRow, { harness: string; reference: string; limit: number }>(
+        `SELECT p.* FROM participants p
+           JOIN session_mappings sm ON sm.terminal_id = p.terminal_id
+          WHERE p.kind = 'agent' AND p.deactivated = 0 AND p.route_state = 'stale'
+            AND p.occupant_agent = $harness
+            AND sm.confidence = 'exact' AND sm.harness = $harness
+            AND ${matchColumn.clause}
+          LIMIT $limit`,
+      )
+      .all({ harness, reference: matchColumn.value, limit: PANE_IDENTITY_CANDIDATE_LIMIT });
+    if (rows.length === 0) return Object.freeze({ kind: "none" });
+    if (rows.length > 1) return Object.freeze({ kind: "ambiguous" });
+    const row = rows[0];
+    if (row === undefined) panic("Session identity query returned one row without a participant");
+    return Object.freeze({ kind: "matched", participant: Object.freeze(toParticipant(row)) });
+  }
+
+  /**
+   * Moves a stale route to the terminal that now runs its harness session, and
+   * carries the session mapping to that terminal.
+   *
+   * The evidence is the session reference that herdr's integration reported
+   * for the pane, matched by `staleIdentityForSession`. The move happens only
+   * while the route is still stale and no other active route holds the
+   * terminal; both tests live inside the statement. Memberships, cursors, and
+   * `last_seen_at` stay unchanged, because the participant has not acted.
+   * Returns whether the route moved. A refused move changes nothing.
+   */
+  moveStaleRouteToTerminal(participantId: number, route: Route): boolean {
+    return this.tx(() => {
+      const previous = this.db
+        .query<{ terminal_id: string | null }, { participantId: number }>(
+          `SELECT terminal_id FROM participants WHERE id = $participantId`,
+        )
+        .get({ participantId });
+      const moved = this.db
+        .query<{ id: number }, {
+          participantId: number;
+          terminalId: string;
+          paneId: string;
+          occupantAgent: string | null;
+        }>(
+          `UPDATE participants
+              SET terminal_id = $terminalId, pane_id = $paneId,
+                  occupant_agent = $occupantAgent, route_state = 'active'
+            WHERE id = $participantId
+              AND kind = 'agent'
+              AND deactivated = 0
+              AND route_state = 'stale'
+              AND NOT EXISTS (
+                SELECT 1 FROM participants AS holder
+                 WHERE holder.terminal_id = $terminalId
+                   AND holder.route_state = 'active'
+                   AND holder.deactivated = 0
+                   AND holder.id != $participantId
+              )
+            RETURNING id`,
+        )
+        .get({
+          participantId,
+          terminalId: route.terminalId,
+          paneId: route.paneId,
+          occupantAgent: route.occupantAgent,
+        });
+      if (moved === null) return false;
+      const from = previous?.terminal_id ?? null;
+      if (from !== null && from !== route.terminalId) {
+        this.db
+          .query<never, { from: string; to: string; resolvedAt: string }>(
+            `INSERT INTO session_mappings
+               (terminal_id, harness, session_id, session_path, confidence, cwd, resolved_at)
+             SELECT $to, harness, session_id, session_path, confidence, cwd, $resolvedAt
+               FROM session_mappings WHERE terminal_id = $from
+             ON CONFLICT (terminal_id) DO UPDATE SET
+               harness = excluded.harness,
+               session_id = excluded.session_id,
+               session_path = excluded.session_path,
+               confidence = excluded.confidence,
+               cwd = excluded.cwd,
+               resolved_at = excluded.resolved_at`,
+          )
+          .run({ from, to: route.terminalId, resolvedAt: new Date().toISOString() });
+      }
+      return true;
+    });
   }
 
   /** Records an authenticated request without changing the participant route. */

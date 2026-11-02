@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { Result } from "better-result";
-import { FakeHerdr } from "../src/herdr";
+import { FakeHerdr, type ReportedSession } from "../src/herdr";
 import { SessionRecorder } from "../src/session-recorder";
 import {
   type SessionCandidate,
@@ -37,6 +37,7 @@ import { auth, provision, testHub } from "./http-support";
 import type { TestHub } from "./http-support";
 
 const CWD = "/Users/demo/Projects/app";
+const NOT_REPORTED: ReportedSession = { kind: "not-reported" };
 
 interface CountingReader extends WindowReader {
   bytesRead: number;
@@ -344,6 +345,7 @@ describe("choosing among candidates", () => {
     const mapping = chooseSession([newer, briefed], {
       handle: "worker-tabs",
       startedAt: "2026-08-19T07:00:00.000Z",
+      reported: NOT_REPORTED,
     });
 
     expect(mapping.confidence).toBe("exact");
@@ -369,6 +371,7 @@ describe("choosing among candidates", () => {
     const mapping = chooseSession([first, second], {
       handle: null,
       startedAt: "2026-08-19T08:00:00.000Z",
+      reported: NOT_REPORTED,
     });
 
     expect(mapping.confidence).toBe("ambiguous");
@@ -392,10 +395,65 @@ describe("choosing among candidates", () => {
       startedAt: "2026-08-19T08:05:00.000Z",
     };
 
-    const mapping = chooseSession([stale, live], { handle: null, startedAt: "2026-08-19T08:00:00.000Z" });
+    const mapping = chooseSession([stale, live], {
+      handle: null,
+      startedAt: "2026-08-19T08:00:00.000Z",
+      reported: NOT_REPORTED,
+    });
 
     expect(mapping.confidence).toBe("inferred");
     expect(mapping.chosen?.sessionId).toBe("after-the-agent");
+  });
+
+  test("a session the pane's agent reported beats the briefing match", () => {
+    const briefed: SessionCandidate = {
+      sessionId: "before-clear",
+      path: "/s/before-clear.jsonl",
+      startedAt: "2026-08-19T08:00:00.000Z",
+      sizeBytes: 400,
+      cwd: CWD,
+      firstUserText: "You are worker-tabs. Review the active workspace brief.",
+    };
+    const cleared: SessionCandidate = {
+      ...briefed,
+      sessionId: "after-clear",
+      path: "/s/after-clear.jsonl",
+      startedAt: "2026-08-19T09:00:00.000Z",
+      firstUserText: "continue",
+    };
+
+    const byId = chooseSession([briefed, cleared], {
+      handle: "worker-tabs",
+      startedAt: "2026-08-19T07:00:00.000Z",
+      reported: { kind: "reported", reference: { kind: "id", id: "after-clear" } },
+    });
+    const byPath = chooseSession([briefed, cleared], {
+      handle: "worker-tabs",
+      startedAt: "2026-08-19T07:00:00.000Z",
+      reported: { kind: "reported", reference: { kind: "path", path: "/s/after-clear.jsonl" } },
+    });
+
+    expect(byId).toEqual({ confidence: "exact", chosen: cleared, candidates: [] });
+    expect(byPath).toEqual({ confidence: "exact", chosen: cleared, candidates: [] });
+  });
+
+  test("a reported session with no transcript yet is ambiguous, never a lower rung", () => {
+    const briefed: SessionCandidate = {
+      sessionId: "before-clear",
+      path: "/s/before-clear.jsonl",
+      startedAt: "2026-08-19T08:00:00.000Z",
+      sizeBytes: 400,
+      cwd: CWD,
+      firstUserText: "You are worker-tabs. Review the active workspace brief.",
+    };
+
+    const mapping = chooseSession([briefed], {
+      handle: "worker-tabs",
+      startedAt: "2026-08-19T07:00:00.000Z",
+      reported: { kind: "reported", reference: { kind: "id", id: "not-written-yet" } },
+    });
+
+    expect(mapping).toEqual({ confidence: "ambiguous", chosen: null, candidates: [briefed] });
   });
 });
 
@@ -1155,6 +1213,51 @@ describe("recording sessions for resume", () => {
     expect(hub.hub.store.findSessionMapping("term-1")).toBeNull();
   });
 
+  test("the recorder stores the session the pane's agent reported", async () => {
+    const hub = testHub();
+    const herdr = paneHerdr();
+    const pane = herdr.panes[0];
+    if (pane === undefined) throw new Error("pane fixture is missing");
+    herdr.panes[0] = {
+      ...pane,
+      agentSession: { kind: "reported", agent: "claude", reference: { kind: "id", id: "plain" } },
+    };
+    const worker = hub.hub.store.createAgent("worker").unwrap("worker fixture").participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "claude" });
+    const reader = countingReader({
+      [`${dir()}/plain.jsonl`]: transcript([claudeLine("user", "Start the work.", AFTER_CREATION)]),
+      [`${dir()}/other.jsonl`]: transcript([claudeLine("user", "Also start.", AFTER_CREATION)]),
+    });
+    const recorder = new SessionRecorder({ store: hub.hub.store, herdr, reader });
+
+    expect(await recorder.tick()).toEqual([{ kind: "recorded", handle: "worker", sessionId: "plain" }]);
+    expect(hub.hub.store.findSessionMapping("term-1")).toMatchObject({ session_id: "plain", confidence: "exact" });
+  });
+
+  test("the recorder follows the pane to a new session after /clear", async () => {
+    const hub = testHub();
+    const herdr = paneHerdr();
+    const worker = hub.hub.store.createAgent("worker").unwrap("worker fixture").participant;
+    hub.hub.store.bindRoute(worker.id, { terminalId: "term-1", paneId: "w1:p1", occupantAgent: "claude" });
+    const reader = countingReader({
+      [`${dir()}/marked.jsonl`]: transcript([claudeLine("user", "You are worker. Start.", AFTER_CREATION)]),
+      [`${dir()}/cleared.jsonl`]: transcript([claudeLine("user", "continue", AFTER_CREATION)]),
+    });
+    const recorder = new SessionRecorder({ store: hub.hub.store, herdr, reader });
+    expect(await recorder.tick()).toEqual([{ kind: "recorded", handle: "worker", sessionId: "marked" }]);
+
+    const pane = herdr.panes[0];
+    if (pane === undefined) throw new Error("pane fixture is missing");
+    herdr.panes[0] = {
+      ...pane,
+      agentSession: { kind: "reported", agent: "claude", reference: { kind: "id", id: "cleared" } },
+    };
+
+    expect(await recorder.tick()).toEqual([{ kind: "recorded", handle: "worker", sessionId: "cleared" }]);
+    expect(hub.hub.store.findSessionMapping("term-1")).toMatchObject({ session_id: "cleared", confidence: "exact" });
+    expect(await recorder.tick()).toEqual([]);
+  });
+
   test("the operator confirms an inferred mapping, which makes it exact", async () => {
     const hub = testHub();
     hub.hub.herdr = paneHerdr();
@@ -1228,7 +1331,11 @@ describe("an inferred mapping", () => {
       cwd: CWD,
       firstUserText: "Start the work.",
     };
-    expect(chooseSession([only], { handle: "worker", startedAt: "2026-01-01T00:00:00.000Z" })).toEqual({
+    expect(chooseSession([only], {
+      handle: "worker",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      reported: NOT_REPORTED,
+    })).toEqual({
       confidence: "inferred",
       chosen: only,
       candidates: [only],

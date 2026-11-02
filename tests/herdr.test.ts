@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CliHerdr, HerdrCallFailed, NoAgentAtTarget } from "../src/herdr";
+import { CliHerdr, HerdrCallFailed, NoAgentAtTarget, decodeAgentSession } from "../src/herdr";
 import { expectErr, expectOk } from "./support";
 
 /**
@@ -45,6 +45,12 @@ const PANE_LIST = JSON.stringify({
         terminal_title_stripped: "Review worker",
         tab_id: "w1H:t1",
         workspace_id: "w1H",
+        agent_session: {
+          source: "herdr:claude",
+          agent: "claude",
+          kind: "id",
+          value: "4d840b57-be88-4662-9c85-3b5eaa52c7bf",
+        },
       },
       {
         agent_status: "unknown",
@@ -71,6 +77,11 @@ describe("pane list", () => {
           terminalId: "term_6593b7c0b71d34a",
           agent: "claude",
           agentStatus: "idle",
+          agentSession: {
+            kind: "reported",
+            agent: "claude",
+            reference: { kind: "id", id: "4d840b57-be88-4662-9c85-3b5eaa52c7bf" },
+          },
           focused: false,
           terminalTitle: "Review worker",
           cwd: "/workspace/projects/sheppard",
@@ -80,6 +91,7 @@ describe("pane list", () => {
           terminalId: "term_659314e709c2040",
           agent: null,
           agentStatus: "unknown",
+          agentSession: { kind: "not-reported" },
           focused: true,
           terminalTitle: "Raw title",
           cwd: "/workspace/projects/raw-cwd",
@@ -89,6 +101,22 @@ describe("pane list", () => {
     } finally {
       stub.cleanup();
     }
+  });
+
+  test("decodes a session reported by file path", () => {
+    expect(decodeAgentSession({
+      source: "herdr:pi", agent: "pi", kind: "path", value: "/sessions/one.jsonl",
+    })).toEqual({ kind: "reported", agent: "pi", reference: { kind: "path", path: "/sessions/one.jsonl" } });
+  });
+
+  test("keeps a session reference this version cannot read out of identity evidence", () => {
+    expect(decodeAgentSession({ source: "herdr:x", agent: "x", kind: "url", value: "v" }))
+      .toEqual({ kind: "unrecognised" });
+    expect(decodeAgentSession({ source: "herdr:x", agent: "x", kind: "id" })).toEqual({ kind: "unrecognised" });
+    expect(decodeAgentSession({ source: "herdr:x", agent: "", kind: "id", value: "v" }))
+      .toEqual({ kind: "unrecognised" });
+    expect(decodeAgentSession("not an object")).toEqual({ kind: "unrecognised" });
+    expect(decodeAgentSession(null)).toEqual({ kind: "not-reported" });
   });
 
   test("treats an unreachable socket as transient", async () => {

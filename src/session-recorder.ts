@@ -4,13 +4,14 @@
  *
  * The agent page resolves a session only while someone looks at it. This
  * recorder runs the same mapping ladder on a timer for each routed agent pane
- * whose terminal has no exact mapping yet. It stores a mapping only when the
- * ladder is exact; an inferred mapping is a guess and waits for the human to
- * confirm it on the agent page.
+ * whose terminal has no exact mapping yet, or whose agent reported a session
+ * other than the mapped one (for example after `/clear`). It stores a mapping
+ * only when the ladder is exact; an inferred mapping is a guess and waits for
+ * the human to confirm it on the agent page.
  */
 
-import type { HerdrPort, PaneInfo } from "./herdr";
-import type { Store } from "./store";
+import { type HerdrPort, type PaneInfo, type ReportedSession, paneReportedSession } from "./herdr";
+import type { SessionMappingRow, Store } from "./store";
 import { type WindowReader, adapterFor, bunWindowReader, chooseSession } from "./transcripts";
 
 export const SESSION_RECORD_INTERVAL_MS = 60_000;
@@ -78,7 +79,8 @@ export class SessionRecorder {
         if (pane.agent === null || pane.cwd === undefined) return false;
         if (this.store.findActiveAgentByTerminal(pane.terminalId) === null) return false;
         const stored = this.store.findSessionMapping(pane.terminalId);
-        return stored === null || stored.confidence !== "exact" || stored.harness !== pane.agent;
+        if (stored === null || stored.confidence !== "exact" || stored.harness !== pane.agent) return true;
+        return !mappingMatchesReport(stored, paneReportedSession(pane));
       })
       .slice(0, MAX_SESSION_RECORDS_PER_PASS);
   }
@@ -94,7 +96,11 @@ export class SessionRecorder {
       this.reader,
     );
     if (located.isErr()) return { kind: "unreadable", handle, reason: located.error.reason };
-    const mapping = chooseSession(located.value, { handle: participant.handle, startedAt: participant.createdAt });
+    const mapping = chooseSession(located.value, {
+      handle: participant.handle,
+      startedAt: participant.createdAt,
+      reported: paneReportedSession(pane),
+    });
     if (mapping.confidence !== "exact" || mapping.chosen === null) return { kind: "not-exact", handle };
     this.store.saveSessionMapping({
       terminal_id: pane.terminalId,
@@ -105,5 +111,20 @@ export class SessionRecorder {
       cwd: pane.cwd,
     });
     return { kind: "recorded", handle, sessionId: mapping.chosen.sessionId };
+  }
+}
+
+/** True when no session is reported, or the reported one is the mapped one. */
+function mappingMatchesReport(stored: SessionMappingRow, reported: ReportedSession): boolean {
+  switch (reported.kind) {
+    case "not-reported":
+      return true;
+    case "reported":
+      switch (reported.reference.kind) {
+        case "id":
+          return stored.session_id === reported.reference.id;
+        case "path":
+          return stored.session_path === reported.reference.path;
+      }
   }
 }

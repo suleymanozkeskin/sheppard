@@ -236,3 +236,97 @@ describe("stale route reconciliation", () => {
     expect(store.staleRoutedParticipants()).toHaveLength(1);
   });
 });
+
+describe("session route recovery", () => {
+  /** An agent routed to `term-<handle>` whose exact mapping names `session-<handle>`. */
+  function routedWithSession(store: Store, handle: string): number {
+    const id = store.createAgent(handle).unwrap().participant.id;
+    store.bindRoute(id, { terminalId: `term-${handle}`, paneId: "w1:p1", occupantAgent: "claude" });
+    store.saveSessionMapping({
+      terminal_id: `term-${handle}`,
+      harness: "claude",
+      session_id: `session-${handle}`,
+      session_path: `/sessions/session-${handle}.jsonl`,
+      confidence: "exact",
+      cwd: "/work",
+    });
+    return id;
+  }
+
+  function resumedPane(paneId: string, terminalId: string, sessionId: string, agent = "claude") {
+    return {
+      paneId,
+      terminalId,
+      workspaceId: "w1",
+      agent,
+      agentStatus: "idle" as const,
+      agentSession: {
+        kind: "reported" as const,
+        agent: "claude",
+        reference: { kind: "id" as const, id: sessionId },
+      },
+    };
+  }
+
+  test("after a restart, moves the identity to the pane that resumed its session in one refresh", async () => {
+    const { herdr, store } = fixture();
+    const scout = routedWithSession(store, "scout");
+    herdr.withPane(resumedPane("w1:p1", "term-after-restart", "session-scout"));
+    const before = store.findById(scout)?.lastSeenAt ?? null;
+    const topology = new HerdrTopology({ herdr, store, onChange: () => undefined });
+
+    expect(await topology.refresh()).toBe(true);
+
+    expect(store.findById(scout)).toMatchObject({ terminalId: "term-after-restart", routeState: "active" });
+    expect(store.findById(scout)?.lastSeenAt ?? null).toBe(before);
+    expect(herdr.prompts).toHaveLength(0);
+  });
+
+  test("leaves the identity stale when two panes report its session", async () => {
+    const { herdr, store } = fixture();
+    const scout = routedWithSession(store, "scout");
+    herdr.withPane(resumedPane("w1:p1", "term-a", "session-scout"));
+    herdr.withPane(resumedPane("w1:p2", "term-b", "session-scout"));
+    const topology = new HerdrTopology({ herdr, store, onChange: () => undefined });
+
+    await topology.refresh();
+
+    expect(store.findById(scout)).toMatchObject({ terminalId: "term-scout", routeState: "stale" });
+  });
+
+  test("ignores a session reference left by another agent kind than the pane holds", async () => {
+    const { herdr, store } = fixture();
+    const scout = routedWithSession(store, "scout");
+    herdr.withPane(resumedPane("w1:p1", "term-a", "session-scout", "codex"));
+    const topology = new HerdrTopology({ herdr, store, onChange: () => undefined });
+
+    await topology.refresh();
+
+    expect(store.findById(scout)?.routeState).toBe("stale");
+  });
+
+  test("does not take a pane that already belongs to an active identity", async () => {
+    const { herdr, store } = fixture();
+    const scout = routedWithSession(store, "scout");
+    const holder = store.createAgent("holder").unwrap().participant.id;
+    store.bindRoute(holder, { terminalId: "term-held", paneId: "w1:p2", occupantAgent: "claude" });
+    herdr.withPane(resumedPane("w1:p2", "term-held", "session-scout"));
+    const topology = new HerdrTopology({ herdr, store, onChange: () => undefined });
+
+    await topology.refresh();
+
+    expect(store.findById(scout)?.routeState).toBe("stale");
+    expect(store.findById(holder)).toMatchObject({ terminalId: "term-held", routeState: "active" });
+  });
+
+  test("a fresh session in the old pane does not take the old identity", async () => {
+    const { herdr, store } = fixture();
+    const scout = routedWithSession(store, "scout");
+    herdr.withPane(resumedPane("w1:p1", "term-after-restart", "a-new-session"));
+    const topology = new HerdrTopology({ herdr, store, onChange: () => undefined });
+
+    await topology.refresh();
+
+    expect(store.findById(scout)).toMatchObject({ terminalId: "term-scout", routeState: "stale" });
+  });
+});

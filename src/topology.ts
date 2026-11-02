@@ -5,7 +5,7 @@ import {
   type HerdrTab,
   type PaneInfo,
 } from "./herdr";
-import { occupantChanged } from "./notifier";
+import { recoverStaleRoutes } from "./route-recovery";
 import type { Store } from "./store";
 import type { HerdrPaneView, HerdrTopologySnapshot } from "./types";
 
@@ -179,8 +179,10 @@ export class HerdrTopology {
 
     this.currentPanes = [...panes.value];
 
-    this.reconcileStaleRoutes(panes.value);
+    // Ending routes first lets a route whose terminal just ended move to the
+    // pane that resumed its session in the same pass.
     this.store.endRoutesWithoutTerminal(new Set(panes.value.map((pane) => pane.terminalId)));
+    recoverStaleRoutes(this.store, panes.value);
 
     const viewForPane = (pane: PaneInfo): HerdrPaneView => {
       const routedParticipant = this.store.agentRouteForTerminal(pane.terminalId);
@@ -251,23 +253,4 @@ export class HerdrTopology {
     this.onChange(next);
     return true;
   }
-
-  /**
-   * Restores a unique stale identity when its terminal has a matching occupant.
-   * Active owners and ambiguous stale identities prevent recovery. A pane move
-   * updates the public pane ID. Memberships, cursors, and last seen stay unchanged.
-   */
-  private reconcileStaleRoutes(panes: readonly PaneInfo[]): void {
-    for (const route of this.store.staleRoutedParticipants()) {
-      if (route.terminalId === null || route.paneId === null) continue;
-      const pane = panes.find((candidate) => candidate.terminalId === route.terminalId);
-      if (pane === undefined || occupantChanged(route.occupantAgent, pane.agent)) continue;
-      const identity = this.store.identityForRoute({
-        terminalId: route.terminalId, paneId: route.paneId, occupantAgent: pane.agent,
-      });
-      if (identity.kind !== "matched" || identity.participant.id !== route.id) continue;
-      void this.store.reactivateRoute(route.id, route.terminalId, pane.paneId);
-    }
-  }
-
 }
